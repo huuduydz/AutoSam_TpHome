@@ -1,0 +1,17 @@
+name: Minify Lua
+on: [push]
+
+jobs:
+  minify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - run: |
+          python lua_minify.py autosam.lua autosam_min.lua
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autosam_minified
+          path: autosam_min.lua
