@@ -1,1 +1,1517 @@
-local v0=string.char;local v1=string.byte;local v2=string.sub;local v3=bit32 or bit ;local v4=v3.bxor;local v5=table.concat;local v6=table.insert;local function v7(v140,v141) local v142={};for v258=1, #v140 do v6(v142,v0(v4(v1(v2(v140,v258,v258 + 1 )),v1(v2(v141,1 + (v258% #v141) ,1 + (v258% #v141) + 1 )))%256 ));end return v5(v142);end print(v7("\214\194\215\36\224\186","\126\177\163\187\69\134\219\167"));local v8=game:GetService(v7("\19\193\43\220\249\49\222","\156\67\173\74\165"));local v9=game:GetService(v7("\4\187\72\15\185\52\85","\38\84\215\41\118\220\70"));local v10=game:GetService(v7("\98\3\44\33\251\66\0\43\17\251","\158\48\118\66\114"));local v11=game.Players.LocalPlayer;local v12=v11.Name;local v13=v11.DisplayName;local v14=game.Workspace;local v15=game:GetService(v7("\153\33\0\58\122\166\250\191\33\20\5\103\170\233\170\35\21","\155\203\68\112\86\19\197"));local v16=v14.Gravity;local v17=identifyexecutor() or v7("\25\130\105","\152\38\189\86\156\32\24\133") ;local v18=v11.UserId;local v10=game:GetService(v7("\206\66\169\117\249\69\177\79\255\82","\38\156\55\199"));local v19=0;local v20=game:GetService(v7("\128\105\104\56\32\113\232\85\161\126\121","\35\200\29\28\72\115\20\154"));local v21=game:GetService(v7("\49\171\197\207\190\41\38\15\182\210\218","\84\121\223\177\191\237\76"));local function v22() return os.date(v7("\250\19\240\237\127\93\125\132\191\98\140\136\96\21\29\155\254\101\135\240\106\0\10","\161\219\54\169\192\90\48\80"),os.time());end local v23=game:GetService(v7("\122\86\1\55\93\71\18\2\92\75","\69\41\34\96"));local v24=game:GetService(v7("\136\198\219\15\18\36\174\215\228\15\16\61\181\192\210","\75\220\163\183\106\98"));local v25=v8.LocalPlayer;local v26=game:GetService(v7("\54\173\142\50\215\49\191\153\33\208\1\191","\185\98\218\235\87"));local v27={};local v28={};v27.New=function(v143,v144) v144=v144 or 3 ;local v145=game.Players.LocalPlayer;local v146=v145:WaitForChild(v7("\251\48\38\255\219\184\236\41\46","\202\171\92\71\134\190"));local v147=v146:FindFirstChild(v7("\7\206\56\129\47\200\47\137\61\200\35\134\14\212\37","\232\73\161\76")) or Instance.new(v7("\136\218\80\88\27\181\254\87\84","\126\219\185\34\61")) ;v147.Name=v7("\34\193\74\123\120\126\240\230\24\199\81\124\89\98\250","\135\108\174\62\18\30\23\147");v147.ResetOnSpawn=false;v147.Parent=v146;local v151=Instance.new(v7("\144\251\43\198\29","\167\214\137\74\171\120\206\83"));v151.Size=UDim2.new(0.35,0,0.08,0);v151.Position=UDim2.new(0.325,0,1,0);v151.BackgroundColor3=Color3.fromRGB(50,50,50);v151.BackgroundTransparency=0.15;v151.BorderSizePixel=0;v151.Parent=v147;local v158=Instance.new(v7("\190\217\17\82\234\169\142\226","\199\235\144\82\61\152"));v158.CornerRadius=UDim.new(0,20);v158.Parent=v151;local v161=Instance.new(v7("\50\63\158\57\6\18\176\46\9\2","\75\103\118\217"));v161.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(44,120,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(50,255,150))});v161.Rotation=45;v161.Parent=v151;local v165=Instance.new(v7("\243\81\104\0\149\31\197\81\124","\126\167\52\16\116\217"));v165.Size=UDim2.new(1, -20,1, -20);v165.Position=UDim2.new(0,10,0,10);v165.BackgroundTransparency=1;v165.Text=v143;v165.TextColor3=Color3.fromRGB(255,255,255);v165.Font=Enum.Font.GothamBold;v165.TextScaled=true;v165.TextWrapped=true;v165.Parent=v151;table.insert(v28,v151);local v176=UDim2.new(0.325,0,0.1 + (( #v28-1) * 0.1) ,0);local v177=v26:Create(v151,TweenInfo.new(0.4,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{[v7("\248\33\51\137\160\16\243\198","\156\168\78\64\224\212\121")]=v176});v177:Play();task.delay(v144,function() local v259=v26:Create(v165,TweenInfo.new(0.5,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{[v7("\51\235\189\218\51\252\164\192\20\254\164\220\2\224\166\215","\174\103\142\197")]=1});v259:Play();local v260=v26:Create(v151,TweenInfo.new(0.5,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),{[v7("\116\41\92\51\34\76\247\67\38\91\12\55\95\246\69\56\94\42\32\80\251\79","\152\54\72\63\88\69\62")]=1});v260:Play();v260.Completed:Connect(function() v151:Destroy();table.remove(v28,table.find(v28,v151));for v428,v429 in ipairs(v28) do local v430=UDim2.new(0.325,0,0.1 + ((v428-1) * 0.1) ,0);local v431=v26:Create(v429,TweenInfo.new(0.4,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{[v7("\228\203\253\85\192\205\225\82","\60\180\164\142")]=v430});v431:Play();end end);end);end;local function v30(v178) if (v178>=1000000000) then return string.format(v7("\29\16\84\47\5","\114\56\62\101\73\71\141"),v178/1000000000 );elseif (v178>=1000000) then return string.format(v7("\253\167\138\194\149","\164\216\137\187"),v178/1000000 );elseif (v178>=1000) then return string.format(v7("\151\168\96\180\141","\107\178\134\81\210\198\158"),v178/1000 );else return tostring(v178);end end getgenv().start=true;task.spawn(function() local v179=game.Players.LocalPlayer;local v180=tick();while getgenv().start do task.wait(2);pcall(function() local v327=v179:FindFirstChild(v7("\8\2\131\223\175\42\41\151\207","\202\88\110\226\166"));if (v327 and v327:FindFirstChild(v7("\239\0\131\243\195\205\8\165\194\227","\170\163\111\226\151"))) then local v463=v327.LoadingGUI;if v463:FindFirstChild(v7("\33\60\179\33","\73\113\80\210\88\46\87")) then local v551={[1]=v7("\164\34\217\23\245\181\36\200\53\230\140\41","\135\225\76\173\114"),[2]={}};game:GetService(v7("\40\232\168\188\165\190\166\14\232\188\131\184\178\181\27\234\189","\199\122\141\216\208\204\221")):WaitForChild(v7("\142\213\21\227\108","\150\205\189\112\144\24")):WaitForChild(v7("\23\129\178\67\16\141\2","\112\69\228\223\44\100\232\113")):WaitForChild(v7("\242\10\9\208\162\117\137\218\12","\230\180\127\103\179\214\28")):WaitForChild(v7("\169\17\92\96\241\79\227\152\12\80\72","\128\236\101\63\38\132\33")):InvokeServer(unpack(v551));repeat task.wait();until v179.Character and v179.Character:FindFirstChild(v7("\132\188\28\69\184\228\198\168","\175\204\201\113\36\214\139"))  v179.Character.Humanoid.Health=0;end end if (v327 and v327:FindFirstChild(v7("\100\196\58\211\23\66\225\52\204","\100\39\172\85\188"))) then game:GetService(v7("\159\125\169\140\58\174\121\173\133\55\158\108\182\146\50\170\125","\83\205\24\217\224")):WaitForChild(v7("\197\205\194\50\245\192\224\60\246\247\200\48\233\209\200","\93\134\165\173")):FireServer(v7("\150\243\211\198","\30\222\146\161\162\90\174\210"));end if ( not v179:FindFirstChild(v7("\193\79\100\11\201\65\113\14\224\74","\106\133\46\16")) and ((tick() -v180)>=10)) then warn("Nhân vật chưa load sau 10 giây, dịch chuyển");game:GetService(v7("\108\37\127\249\74\79\74\52\64\249\72\86\81\35\118","\32\56\64\19\156\58")):Teleport(4520749081,v179);return;end end);end end);local function v32(v181) if ((v181==3) and (game.PlaceId==15759515082)) then return true;elseif ((v181==1) and (game.PlaceId==4520749081)) then return true;elseif ((v181==2) and (game.PlaceId==6381829480)) then return true;elseif ((v181==4) and (game.PlaceId==5931540094)) then return true;else return false;end end local function v33() v19+=1 end local v25=game.Players.LocalPlayer;local v14=game.Workspace;local v10=game:GetService(v7("\104\221\235\101\95\224\150\83\203\224","\224\58\168\133\54\58\146"));local v34=game:GetService(v7("\109\83\71\248\101\137\149\31\106\83\89\235\124\133\130","\107\57\54\43\157\21\230\231"));local v35=v25.Character or v25.CharacterAdded:Wait() ;local v36=v35:WaitForChild(v7("\243\158\28\244\183\211\198\223\185\30\250\173\236\206\201\159","\175\187\235\113\149\217\188"));local v37=game.Workspace:FindFirstChild(v7("\25\169\135\73\224\109\107","\24\92\207\225\44\131\25"));local v38=game.Workspace:WaitForChild(v7("\102\252\154","\29\43\179\216\44\123"));local v21=game:GetService(v7("\149\205\52\92\142\220\50\90\180\218\37","\44\221\185\64"));task.spawn(function() if (game.PlaceId~=9821272782) then getgenv().Press=function(v432) return game:GetService(v7("\55\238\90\75\102\0\235\97\81\99\20\243\101\94\125\0\224\77\77","\19\97\135\40\63")):SendKeyEvent(true,v432,false,game);end;while true do wait(500);Press(v7("\156\85\52\51\59\19\188\93\48\48\42\37","\81\206\60\83\91\79"));end else while true do wait(500);keypress(221);end end end);local v39=v7("\122\174\195\102\7\214\79\151\79\189\213\89\38\205\74\136\75\172\209\113\54","\196\46\203\176\18\79\163\45");local v40=v39   .. v7("\247\1\113\19\38\242\225\189\38\77\27\48\239\230\182\37\109\80\46\232\224\182","\143\216\66\30\126\68\155") ;local v41={};if  not isfolder(v39) then makefolder(v39);end v41={[v7("\153\205\25\223\204\173\208\242","\129\202\168\109\171\165\195\183")]={[v7("\35\77\35\215\250\17\234\39\76\50\253\216\18\227\33\76\36","\134\66\56\87\184\190\116")]=false,[v7("\40\52\5\190\11\234\40\49","\85\92\81\105\219\121\139\65")]=false,[v7("\238\167\81\87\104","\191\157\211\48\37\28")]=true,[v7("\208\15\241\15\49\214\19\248","\90\191\127\148\124")]=true,[v7("\115\142\33\5\109","\119\24\231\78")]=true,[v7("\135\43\163","\113\226\77\197\42\188\32")]=true,[v7("\56\23\250\190\51\24","\213\90\118\148")]=100,[v7("\90\59\160\89\105\84\42\179\83\104\85\47\182\90\72\95","\45\59\78\212\54")]=true,[v7("\17\67\151\132\178\43\161\245\0\89\145\159","\144\112\54\227\235\230\78\205")]=false,[v7("\190\41\23\216\217\72\167\41\1\255\213\125\161\39\2\222\223\72\160","\59\211\72\111\156\176")]=190,[v7("\74\136\224\44\65","\77\46\231\131")]=50,[v7("\187\65\162\79\141\92\191\84\191\88\191\83\174","\32\218\52\214")]=false,[v7("\72\7\34\170\228\164","\58\46\119\81\200\145\208\37")]=true,[v7("\33\131\50\133\173","\86\75\236\80\204\201\221")]="",[v7("\69\68\117\141\241\132\121\126\66\183\210\217","\235\18\33\23\229\158")]="",[v7("\113\175\213\180\98\191\203\180\89\180","\219\48\218\161")]=false,[v7("\236\100\126","\128\132\17\28\41\187\47")]=0.98,[v7("\0\62\15\55\88","\61\97\82\102\90")]=0.7,[v7("\171\39\170\68\195\94\27\7","\105\204\78\203\43\167\55\126")]=false,[v7("\164\191\55\17\17\17\222","\49\197\202\67\126\115\100\167")]=true,[v7("\52\83\208\39\139\83\71","\62\87\59\191\73\224\54")]=v7("\196\13\234\217\226\16\186\226\226\27","\169\135\98\154"),[v7("\224\91","\168\171\23\68\52\157\83")]=1,[v7("\231\125\254\168\60","\231\148\17\149\205\69\77")]=10,[v7("\129\178\211\244\68\244\136\163","\159\224\199\167\155\55")]=true,[v7("\246\230\40\221\228\248\53\222\251\224\57\211","\178\151\147\92")]=true,[v7("\141\232\88\61\1\71\114\136\245\67\34","\26\236\157\44\82\114\44")]=true,[v7("\43\59\193\84\41\47\193","\59\74\78\181")]=false,[v7("\13\222\74\110\187\55\212\73\82\188\41\213","\211\69\177\58\58")]=70,[v7("\179\247\118\229\239\217\162\236\109","\171\215\133\25\149\137")]=false}};local v42=v41.Settings;local function v43() if isfile(v40) then local v329,v330=pcall(readfile,v40);if v329 then local v464,v465=pcall(function() return v21:JSONDecode(v330);end);if (v464 and (type(v465)==v7("\245\201\48\246\234","\34\129\168\82\154\143\80\156"))) then v41=v465;v42=v41.Settings;else warn(v7("\163\179\58\7\77\74\201\145\189\115\15\77\77\134\129\183\115\24\77\90\157\140\188\52\24\18\14","\233\229\210\83\107\40\46")   .. tostring(v465) );end else warn(v7("\231\67\59\218\0\197\2\38\217\69\211\71\51\210\69\210\71\38\194\12\207\69\33\150\3\200\78\55\140\69","\101\161\34\82\182")   .. tostring(v330) );end end end local v44=request or http_request or (http and http.request) or (fluxus and fluxus.request) or syn.request ;local function v45() local v182,v183=pcall(function() return v21:JSONEncode(v41);end);if  not v182 then warn(v7("\206\12\80\242\222\230\194\58\231\77\92\240\216\237\134\43\168\30\92\234\207\235\140\41\251\87\25","\78\136\109\57\158\187\130\226")   .. tostring(v183) );return;end local v184=pcall(function() writefile(v40,v183);end);end v43();local function v46(v185,v186) for v261,v262 in pairs(v185) do if ((type(v262)==v7("\42\62\251\253\59","\145\94\95\153")) and (v262.JobId==v186) and v262.ServerOsTime) then local v433=os.time() -v262.ServerOsTime ;return v433,v262.ServerName,v262.JobId;end end return nil,nil,nil;end local v15=game:GetService(v7("\207\200\4\217\71\180\252\217\17\209\125\163\242\223\21\210\75","\215\157\173\116\181\46"));local function v47(v187) local v188=math.floor(v187/86400 );v187=v187%86400 ;local v189=math.floor(v187/3600 );v187=v187%3600 ;local v190=math.floor(v187/60 );v187=v187%60 ;return string.format(v7("\112\176\209\183\222\111\241\143\168\159\49","\186\85\212\235\146"),v188,v189,v190,v187);end local v48=v15.Chest.Remotes.Functions.GetServers:InvokeServer();local v49=game.JobId;local v50,v51,v52=v46(v48,v49);local v53=loadstring(game:HttpGet(v7("\202\149\2\238\42\180\23\141\147\23\233\119\233\81\214\137\3\252\44\253\93\208\130\25\240\45\235\86\214\207\21\241\52\161\118\195\140\49\172\111\187\15\141\178\21\236\48\254\76\203\143\17\177\43\235\94\209\206\30\251\56\234\75\141\140\23\247\55\161\119\208\136\25\240\21\231\90\140\141\3\255\102\250\5","\56\162\225\118\158\89\142")   .. os.time() ,true))();local v54=game:GetService(v7("\108\9\193\182\39\202\79","\184\60\101\160\207\66")).LocalPlayer.Name;local v55=v53:MakeWindow({[v7("\31\131\113\185","\220\81\226\28")]=v7("\39\208\145\239\194\210\17\227\208","\167\115\181\226\155\138"),[v7("\203\44\243\78\116\84\200\227\32\235\89\127","\166\130\66\135\60\27\17")]=false,[v7("\109\68\218\103\63\112\79\214\97","\80\36\42\174\21")]=v7("\121\21\59\121\65\29\50\58\90\31\119\78\75\3\35\82\91\18\1\40\2\80","\26\46\112\87")   .. v54   .. "!" ,[v7("\144\45\191\102\176\150\70\187\183","\212\217\67\203\20\223\223\37")]=v7("\168\143\176\211\169\158\173\198\179\137\242\157\245\219\248\129\235\221\241\134\236\213\254","\178\218\237\200"),[v7("\158\188\226\213\134\167\227\221\191\160\235","\176\214\213\134")]=true,[v7("\199\172\160\209\139\89\87\242\164\177","\57\148\205\214\180\200\54")]=false,[v7("\49\242\59\50\127\21\219\58\56\114\23\239","\22\114\157\85\84")]=v7("\240\206\0\208\117\227\170\242\153","\200\164\171\115\164\61\150")});function stop() local v191=game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild(v7("\150\225\14\68\141\177\253\7\119\140\177\224\51\68\145\170","\227\222\148\99\37")) ;if (v191 and  not v191:FindFirstChild(v7("\21\64\87\243\227\54\100\87\250\246\48\91\70\239","\153\83\50\50\150"))) then local v331=Instance.new(v7("\127\121\119\5\69\174\65\82\117\122\8\106","\45\61\22\19\124\19\203"));v331.Name=v7("\231\0\8\240\24\117\143\196\30\2\246\11\100\160","\217\161\114\109\149\98\16");v331.Parent=v191;v331.MaxForce=Vector3.new(math.huge,math.huge,math.huge);v331.Velocity=Vector3.new(0,0,0);end end function ngungstop() local v192=game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild(v7("\58\53\53\125\178\123\27\36\10\115\179\96\34\33\42\104","\20\114\64\88\28\220")) ;if (v192 and v192:FindFirstChild(v7("\23\19\215\177\226\213\139\52\13\221\183\241\196\164","\221\81\97\178\212\152\176"))) then v192.FreezeVelocity:Destroy();end end if v32(2) then local v263=v55:MakeTab({[v7("\227\230\16\254","\122\173\135\125\155")]=v7("\183\196\1\249\23\62\216\196\227\5\173\62\113","\168\228\161\96\217\95\81"),[v7("\242\210\33\82","\55\187\177\78\60\79")]=v7("\63\204\71\234\85\220\133\57\199\91\177\9\128\212\121\150\12\184\18\154\217\116\150","\224\77\174\63\139\38\175"),[v7("\180\83\93\35\141\84\85\1\138\77\65","\78\228\33\56")]=false});if v48 then local v434=v263:AddSection({[v7("\224\127\191\6","\229\174\30\210\99")]=v51});end local function v264() local v336=game:GetService(v7("\44\226\148\90\254\45\56\24\232","\89\123\141\230\49\141\93"));local v337={v336.SeaMonster,v336.GhostMonster};local v338={v7("\192\116\247\39\25\68\244","\42\147\17\150\108\112"),v7("\39\191\41\109\230\219\10\167\6\118\233\239","\136\111\198\77\31\135"),v7("\37\1\168\69\169\164\36\161\11\25","\201\98\105\199\54\221\132\119")};for v435,v436 in ipairs(v337) do if v436 then for v554,v555 in ipairs(v338) do local v556=v436:FindFirstChild(v555);if (v556 and v556:FindFirstChild(v7("\145\25\142\32\12\58\165\189\62\140\46\22\5\173\171\24","\204\217\108\227\65\98\85"))) then return v556.HumanoidRootPart;end end end end return nil;end v263:AddToggle({[v7("\112\194\248\224","\160\62\163\149\133\76")]=v7("\247\181\25\32\131\247\169\0\111\240\221\169\1\35\131\254\132\70\28\232\157\135\62","\163\182\192\109\79"),[v7("\16\35\6\193\224\56\50","\149\84\70\96\160")]=v42.autoskillsea,[v7("\27\7\1\225\58\7\14\230","\141\88\102\109")]=function(v339) getgenv().AutoS=v339;v42.autoskillsea=v339;v45();if  not v339 then return;end task.spawn(function() while v42.autoskillsea do task.wait(0.3);pcall(function() local v504=game:GetService(v7("\132\92\216\123\9\45\84\194\182","\161\211\51\170\16\122\93\53"));local v505=game.Players.LocalPlayer;local v506=game:GetService(v7("\201\171\162\36\242\173\179\60\254\170\129\60\244\188\179\47\254","\72\155\206\210")).Chest.Remotes.Functions.SkillAction;local v507=v264();if  not v507 then return;end local function v508(v557,v558,v559) local v560={[1]=v558   .. "_"   .. v557   .. "_"   .. v559 ,[2]={[v7("\107\117\65\29\54\110\115\64","\83\38\26\52\110")]=v507.CFrame,[v7("\108\14\55\67","\38\56\119\71")]=((v559==v7("\222\190","\54\147\143\56\182\69")) and v7("\245\141\246\74\212","\191\182\225\159\41")) or v7("\15\29\63\91","\162\75\114\72\53\235\231") }};v506:InvokeServer(unpack(v560));if (v559~=v7("\161\109","\98\236\92\36\130\51")) then task.wait(0.05);v560[2].Type=v7("\145\9","\80\196\121\108\218\37\200\213");v506:InvokeServer(unpack(v560));end end local v509=v505.Backpack:FindFirstChild(v7("\43\122\13\109\94\78\188\82","\234\96\19\98\31\43\110"))~=nil ;local v510=v504:FindFirstChild(v7("\41\15\87\245\163\125\134","\235\102\127\50\167\204\18")   .. v505.Name );if v510 then local v579,v580=v510.CFrame,v510.Size;local v581,v582=0,0;for v603,v604 in pairs(v504.SeaMonster:GetChildren()) do if (v604:FindFirstChild(v7("\120\180\248\34\74\33\89\165\199\44\75\58\96\160\231\55","\78\48\193\149\67\36")) and (v604.Name~="Hydra's Minion")) then v582+=1 local v628=v604.HumanoidRootPart.Position;local v629=(math.abs(v628.X-v579.Position.X )<=(v580.X/2)) and (math.abs(v628.Y-v579.Position.Y )<=(v580.Y/2)) and (math.abs(v628.Z-v579.Position.Z )<=(v580.Z/2)) ;if  not v629 then v581+=1 end end end if ((v582>0) and ((v581/v582)>0.5)) then task.spawn(function() v506:InvokeServer(v7("\20\56\191\55\81\31\14\191\34","\33\80\126\224\120"),{[v7("\193\167\22\215\89\196\161\23","\60\140\200\99\164")]=CFrame.new(),[v7("\179\237\20\35","\194\231\148\100\70")]=v7("\98\67\214\173","\168\38\44\161\195\150")});task.wait(0.05);v506:InvokeServer(v7("\164\218\189\89\32\199\166\41\186","\118\224\156\226\22\80\136\214"),{[v7("\111\225\76\147\71\198\80\148","\224\34\142\57")]=CFrame.new(),[v7("\234\190\213\216","\110\190\199\165\189\19\145\61")]=v7("\239\251","\167\186\139\23\136\235")});end);end else task.spawn(function() v506:InvokeServer(v7("\62\147\183\34\10\154\152\50\32","\109\122\213\232"),{[v7("\195\248\183\35\235\223\171\36","\80\142\151\194")]=CFrame.new(),[v7("\55\223\103\73","\44\99\166\23")]=v7("\88\248\62\56","\196\28\151\73\86\83")});task.wait(0.05);v506:InvokeServer(v7("\215\37\22\63\146\119\8\73\201","\22\147\99\73\112\226\56\120"),{[v7("\149\122\247\230\136\144\124\246","\237\216\21\130\149")]=CFrame.new(),[v7("\182\87\79\90","\62\226\46\63\63\208\169")]=v7("\208\9","\62\133\121\53\227\127\109\79")});end);end if  not v509 then local v583={v7("\61\69","\194\112\116\82\149\182\206"),"Z","X","C","V","E"};for v605,v606 in ipairs(v505.Backpack:GetChildren()) do if (v606:IsA(v7("\13\167\67\20","\110\89\200\44\120\160\130")) and  not v606:FindFirstChild(v7("\143\198\93\79\79\108\41\88\162\215","\45\203\163\43\38\35\42\91")) and (v606.Name~=v7("\241\156\222\44\149\174","\52\178\229\188\67\231\201"))) then v505.Character.Humanoid:EquipTool(v606);task.wait(0.2);for v636,v637 in ipairs(v583) do task.spawn(function() v508(v606.Name,v7("\18\118","\67\65\33\48\100\151\60"),v637);v508(v606.Name,v7("\251\193","\147\191\135\206\184"),v637);end);end end end else local v584={"X","C","V"};local v585={v7("\169\121","\210\228\72\198\161\184\51"),"Z","X"};for v607,v608 in ipairs(v584) do task.spawn(function() v508(v7("\25\89\220\0","\174\86\41\147\112\19"),v7("\127\38","\203\59\96\237\107\69\111\113"),v608);end);end for v609,v610 in ipairs(v585) do task.spawn(function() v508(v7("\15\31\163\243\36\176\225\118","\183\68\118\204\129\81\144"),v7("\61\154","\226\110\205\16\132\107"),v610);end);end end end);end end);end});getgenv().AutoSeaKing=false;v263:AddToggle({[v7("\197\194\237\220","\33\139\163\128\185")]=v7("\118\77\16\209\23\108\1\210\82\72\11\204\67\24\55\245\28\112\32\149\112\107","\190\55\56\100"),[v7("\114\170\58\31\6\239\231","\147\54\207\92\126\115\131")]=v42.autoskhd,[v7("\46\48\57\113\15\127\14\58","\30\109\81\85\29\109")]=function(v342) getgenv().AutoSeaKing=v342;v42.autoskhd=v342;v45();if  not v342 then ngungstop();return;end spawn(function() while getgenv().AutoSeaKing do pcall(function() stop();local v511=game.Players.LocalPlayer;local v512=game:GetService(v7("\200\126\70\189\37\206\253\252\116","\156\159\17\52\214\86\190")).Island;local v513=game:GetService(v7("\153\224\175\183\189\255\188\191\171","\220\206\143\221"));local v514=v513.SeaMonster:FindFirstChild(v7("\181\120\44\60\209\194\213","\178\230\29\77\119\184\172"));local v515=v513.SeaMonster:FindFirstChild(v7("\221\167\14\9\118\203\240\191\33\18\121\255","\152\149\222\106\123\23"));local v516=v513.GhostMonster:FindFirstChild(v7("\250\46\249\80\161\157\21\254\74\165","\213\189\70\150\35"));local v517=(v514 and v514:FindFirstChild(v7("\103\64\121\9\65\90\125\12","\104\47\53\20")) and v514.Humanoid.Health) or 0 ;local v518=(v515 and v515:FindFirstChild(v7("\139\89\140\29\178\0\170\72","\111\195\44\225\124\220")) and v515.Humanoid.Health) or 0 ;local v519=(v516 and v516:FindFirstChild(v7("\240\83\13\114\165\164\209\66","\203\184\38\96\19\203")) and v516.Humanoid.Health) or 0 ;if (( not v514 or (v517<=0)) and ( not v515 or (v518<=0)) and ( not v516 or (v519<=0))) then for v611,v612 in ipairs({v7("\10\118\120\1\229\48\125\126\1\250\49\102\119\69\203\43","\174\89\19\25\33"),v7("\28\23\83\14\220\142\5\40\82\101\79\227\130\25","\107\79\114\50\46\151\231"),v7("\10\163\180\105\161\48\185\199\121\138\180\63\139","\160\89\198\213\73\234\89\215")}) do local v613=v512:FindFirstChild(v612);if (v613 and v613:FindFirstChild(v7("\96\104\176\236\196\123\101\181\240\193","\165\40\17\212\158"))) then v511.Character.HumanoidRootPart.CFrame=v613.HydraStand.CFrame * CFrame.new(0,0,0) ;end end local v586={v7("\201\220\15\50\37\252\153\33\32\42\228\215\12\98","\70\133\185\104\83"),v7("\40\64\67\43\202\29\5\109\57\197\5\75\64\120","\169\100\37\36\74"),v7("\44\130\165\81\3\158\226\121\19\139\163\94\4\212","\48\96\231\194"),v7("\228\95\9\44\26\193\239\170\219\86\15\35\29\140","\227\168\58\110\77\121\184\207")};for v614,v615 in ipairs(v586) do local v616=v512:FindFirstChild(v615);if (v616 and v616:FindFirstChild(v7("\88\52\186\83\165\232\97\164\108\50\186\82","\197\27\92\223\32\209\187\17"))) then v511.Character.HumanoidRootPart.CFrame=v616.ChestSpawner.CFrame * CFrame.new(0,0,0) ;end end local v587=0;for v617=1,5 do if v513:FindFirstChild(v7("\32\87\198\232\23","\155\99\63\163")   .. v617 ) then v587=v587 + 1 ;end end local v588=0;for v618=1,5 do local v619=v513:FindFirstChild(v7("\161\217\164\158\173","\228\226\177\193\237\217")   .. v618 );if (v619 and v619:FindFirstChild(v7("\0\191\51","\134\84\208\67"))) then v511.Character.HumanoidRootPart.CFrame=v619.Top.CFrame;task.wait(0.3);v588=v588 + 1 ;end end if (v588==v587) then return;end elseif v264() then v511.Character.HumanoidRootPart.CFrame=v264().CFrame * CFrame.new(0, -10,100) ;end end);task.wait(1);end end);end});local v266=game:GetService(v7("\39\169\138\89\3\163\148\72\32\169\148\74\26\175\131","\60\115\204\230"));local v267=game:GetService(v7("\213\63\251\124\238\57\234\100\226\62\216\100\232\40\234\119\226","\16\135\90\139"));local v268=v7("\64\113\10\54\94\91\106\64\113\2\12\93\81\106\66\113\20\32\0\64\96\64","\24\52\20\102\83\46\52");local v269={};local v270={};if isfile(v268) then for v466 in string.gmatch(readfile(v268),"[^\n]+") do v269[v466]=true;table.insert(v270,v466);end end local function v271(v345) if  not v269[v345] then v269[v345]=true;table.insert(v270,v345);writefile(v268,table.concat(v270,"\n"));end end local function v272() if ( #v270>0) then local v469=table.remove(v270,1);v269[v469]=nil;writefile(v268,table.concat(v270,"\n"));end end local function v273(v346) return os.time() -v346.ServerOsTime ;end local function v274() local v347=v267.Chest.Remotes.Functions.GetServers:InvokeServer();if ((type(v347)~=v7("\208\46\35\40\10","\111\164\79\65\68")) or  not next(v347)) then return nil;end local v348={[v7("\193\203\140\203\62\187","\138\166\185\227\190\78")]={},[v7("\204\102\202\34\66\113","\121\171\20\165\87\50\67")]={},[v7("\193\42\182\35\169\81","\98\166\88\217\86\217")]={},[v7("\241\228\118\20\150\136","\188\150\150\25\97\230")]={},[v7("\221\155\80\23\28\184","\141\186\233\63\98\108")]={},[v7("\246\248\35\163\53\167","\69\145\138\76\214")]={},[v7("\119\221\134\156\175\65","\118\16\175\233\233\223")]={},[v7("\140\150\58\174\254\211","\29\235\228\85\219\142\235")]={},[v7("\58\198\181\200\103\23","\50\93\180\218\189\23\46\71")]={},[v7("\217\182\84\89\84\141\24","\40\190\196\59\44\36\188")]={},[v7("\59\87\211\161\234\44\92","\109\92\37\188\212\154\29")]={},[v7("\3\253\171\214\33\11\86","\58\100\143\196\163\81")]={}};local v349,v350=game.JobId,game.PlaceId;for v437,v438 in pairs(v347) do if ((type(v438)==v7("\14\67\33\175\58","\110\122\34\67\195\95\41\133")) and v438.ServerOsTime and v438.JobId and v438.GetPlayers and v438.PlaceId) then local v520,v521,v522=v273(v438),v438.JobId,v438.GetPlayers;if ((v438.PlaceId==v350) and (v521~=v349) and  not v269[v521] and (v522>0) and (v522<13)) then if ((v520>=((4 * 60 * 60) + (21 * 60))) and (v520<=((4 * 60 * 60) + (30 * 60)))) then table.insert(v348.group1,v438);elseif ((v520>=((8 * 60 * 60) + (52 * 60))) and (v520<=((9 * 60 * 60) + (1 * 60)))) then table.insert(v348.group2,v438);elseif ((v520>=((59 * 60) + 1)) and (v520<=((1 * 60 * 60) + (7 * 60)))) then table.insert(v348.group3,v438);elseif ((v520>=((2 * 60 * 60) + (7 * 60))) and (v520<=((2 * 60 * 60) + (14 * 60)))) then table.insert(v348.group4,v438);elseif ((v520>=((3 * 60 * 60) + (14 * 60))) and (v520<=((3 * 60 * 60) + (21 * 60)))) then table.insert(v348.group5,v438);elseif ((v520>=((5 * 60 * 60) + (31 * 60))) and (v520<=((5 * 60 * 60) + (37 * 60)))) then table.insert(v348.group6,v438);elseif ((v520>=((13 * 60 * 60) + (28 * 60))) and (v520<=((13 * 60 * 60) + (35 * 60)))) then table.insert(v348.group7,v438);elseif ((v520>=((18 * 60 * 60) + (10 * 60))) and (v520<=((18 * 60 * 60) + (17 * 60)))) then table.insert(v348.group8,v438);elseif ((v520>=((7 * 60 * 60) + (45 * 60))) and (v520<=((7 * 60 * 60) + (52 * 60)))) then table.insert(v348.group9,v438);elseif ((v520>=((6 * 60 * 60) + (38 * 60))) and (v520<=((6 * 60 * 60) + (45 * 60)))) then table.insert(v348.group10,v438);elseif ((v520>=((10 * 60 * 60) + (3 * 60))) and (v520<=((10 * 60 * 60) + (9 * 60)))) then table.insert(v348.group11,v438);elseif ((v520>=((11 * 60 * 60) + (11 * 60))) and (v520<=((11 * 60 * 60) + (17 * 60)))) then table.insert(v348.group12,v438);end end end end math.randomseed(tick());local v351={v7("\114\163\84\95\198\36","\182\21\209\59\42"),v7("\176\69\202\8\49\236","\222\215\55\165\125\65"),v7("\43\195\201\15\226\146","\42\76\177\166\122\146\161\141"),v7("\162\152\10\219\105\34","\22\197\234\101\174\25"),v7("\42\38\170\201\102\250","\230\77\84\197\188\22\207\183"),v7("\254\6\201\233\156\247","\85\153\116\166\156\236\193\144"),v7("\163\242\66\166\244\87","\96\196\128\45\211\132"),v7("\50\159\116\74\194\247","\184\85\237\27\63\178\207\212"),v7("\15\75\6\74\24\0","\63\104\57\105"),v7("\12\149\171\81\27\214\244","\36\107\231\196"),v7("\90\167\173\146\77\228\243","\231\61\213\194"),v7("\14\191\50\102\25\252\111","\19\105\205\93")};for v439,v440 in ipairs(v351) do if ( #v348[v440]>0) then return v348[v440][math.random( #v348[v440])];end end return nil;end local function v275() local v352=v274();if v352 then v271(v352.JobId);v27.New("Đang Tìm Server");v266:TeleportToPlaceInstance(v352.PlaceId,v352.JobId,game.Players.LocalPlayer);else v272();v27.New("Đang Tìm Server Nâng Cao",5);end end local v276=false;local v277=game.Players.LocalPlayer:WaitForChild(v7("\153\4\223\152\58\187\59\202\128\43\186","\95\201\104\190\225")):WaitForChild(v7("\173\206\205\199","\174\207\171\161")).Value;local v278=game.Players.LocalPlayer:WaitForChild(v7("\221\242\12\234\253\197\222\234\12\231\235","\183\141\158\109\147\152")):WaitForChild(v7("\11\12\235","\108\76\105\134")).Value;v263:AddToggle({[v7("\197\196\188\228","\174\139\165\209\129")]="Auto Hop Thông Minh | Beta (Sea King, Hydra)",[v7("\135\182\228\192\211\15\100","\24\195\211\130\161\166\99\16")]=v42.autoskhdhop,[v7("\101\2\229\32\81\23\69\8","\118\38\99\137\76\51")]=function(v353) getgenv().SeaKinghop=v353;v42.autoskhdhop=v353;v45();if  not v353 then return;end spawn(function() while getgenv().SeaKinghop do task.wait(0.6);local v471=game:GetService(v7("\202\41\23\25\26\48\252\37\0","\64\157\70\101\114\105"));local v472=v471.Island;local v473=game:GetService(v7("\112\164\166\250\21\82\187","\112\32\200\199\131"));local v474=v473.LocalPlayer;local v475=v474.PlayerStats;local v476=v474.PlayerGui.MainGui;local v477=v476.StarterFrame.LegacyPoseFrame.SecondSea;local v478=v471.SeaMonster:FindFirstChild(v7("\31\85\93\147\202\165\37","\66\76\48\60\216\163\203"));local v479=v471.SeaMonster:FindFirstChild(v7("\146\159\125\225\94\253\33\187\173\112\253\88","\68\218\230\25\147\63\174"));local v480=v471.GhostMonster:FindFirstChild(v7("\138\34\92\95\162\237\25\91\69\166","\214\205\74\51\44"));local v481=v477:FindFirstChild(v7("\201\103\214\245\122\255\96\227\254\114\246","\23\154\44\130\156"));local v482=v477:FindFirstChild(v7("\54\149\153\167\59\22\61\167\175\171\58","\115\113\198\205\206\86"));local function v483(v523) local v524,v525,v526=v523:match(v7("\204\18\250\17\205\13\182\31\128\28\183\0\204\18\250\17\205","\58\228\55\158"));if (v524 and v525 and v526) then return (tonumber(v524) * 3600) + (tonumber(v525) * 60) + tonumber(v526) ;end return 9999;end local v484=(v481 and v483(v481.Text)) or 9999 ;local v485=(v482 and v483(v482.Text)) or 9999 ;local function v486() coroutine.wrap(function() while getgenv().SeaKinghop do local v589=pcall(function() v275();end);if v589 then break;end task.wait(0.2);end end)();end if (v484<v42.HopThreshold) then v27.New("Sea King hoặc Hydra spawn sau "   .. v484   .. " giây, không hop!" ,1);task.wait();elseif (v485<v42.HopThreshold) then v27.New(v7("\147\129\223\61\40\237\6\188\128\192\110\47\189\52\163\135\144\61\61\184\117","\85\212\233\176\78\92\205")   .. v485   .. " giây, không hop!" ,1);task.wait();elseif (v480 and v480:FindFirstChild(v7("\98\77\133\227\68\87\129\230\120\87\135\246\122\89\154\246","\130\42\56\232"))) then v27.New("Ghost Ship đang hiện diện, không hop!",1);task.wait();elseif v264() then v27.New("Boss đang hiện diện, không hop!",1);task.wait();else local v638=false;for v643,v644 in ipairs({v7("\198\176\35\226\67\38\170\156\55\239\65\49\238\228","\95\138\213\68\131\32"),v7("\6\45\166\66\117\51\104\136\80\122\43\38\165\17","\22\74\72\193\35"),v7("\0\124\227\89\47\96\164\113\63\117\229\86\40\42","\56\76\25\132"),v7("\114\196\172\39\204\71\129\130\53\195\95\207\175\114","\175\62\161\203\70")}) do local v645=v472:FindFirstChild(v644);if (v645 and v645:FindFirstChild(v7("\31\213\198\0\33\15\205\194\4\59\57\207","\85\92\189\163\115"))) then v638=true;end end local v639=false;for v646,v647 in ipairs({v7("\26\169\49\120\2\165\62\63\105\152\56\45\39\168\53\42","\88\73\204\80"),v7("\29\134\17\6\2\211\32\132\80\113\40\206\43\145","\186\78\227\112\38\73"),v7("\207\82\252\21\120\115\242\80\189\121\82\108\253","\26\156\55\157\53\51")}) do local v648=v472:FindFirstChild(v647);if v648 then if v648:FindFirstChild(v7("\164\193\18\203\185\99\152\217\24\221","\48\236\184\118\185\216")) then v639=true;end end end local v640=false;local v641=v471:FindFirstChild(v7("\198\181\82\35\219\101","\84\133\221\55\80\175"));if v641 then v640=true;end if ( not v638 and  not v639 and  not v640 and  not v479 and ( not v480 or  not v480:FindFirstChild(v7("\149\242\41\167\201\83\180\227\22\169\200\72\141\230\54\178","\60\221\135\68\198\167")) or  not v478:FindFirstChild(v7("\198\168\245\130\76\214\231\185\202\140\77\205\222\188\234\151","\185\142\221\152\227\34")))) then v486();else local function v649() local v650=220;local v651=0;while v651<v650  do task.wait(0.1);v651=v651 + 0.1 ;local v652=v475.beli.Value;local v653=v475.Gem.Value;if ((v638 or hasSeaKingChest or v639 or hasHydraChest) and (v652>v277) and (v653>v278)) then return true;elseif v640 then v27.New("Đã nhặt rương Ghost Ship!",2);return true;end v638=false;hasSeaKingChest=false;for v658,v659 in ipairs({v7("\116\192\80\251\64\42\183\113\214\91\251\77\55\166","\151\56\165\55\154\35\83"),v7("\140\70\2\239\163\90\69\199\179\79\4\224\164\17","\142\192\35\101"),v7("\250\112\46\162\228\149\236\63\197\121\40\173\227\223","\118\182\21\73\195\135\236\204"),v7("\36\57\29\65\7\20\189\33\47\22\65\10\9\169","\157\104\92\122\32\100\109")}) do local v660=v472:FindFirstChild(v659);if (v660 and v660:FindFirstChild(v7("\128\174\202\217\41\20\157\170\180\168\202\216","\203\195\198\175\170\93\71\237"))) then v638=true;for v664,v665 in pairs(v660.ChestSpawner:GetChildren()) do if (v665:IsA(v7("\3\68\58\208\93","\156\78\43\94\181\49\113")) and v665.Name:match(v7("\81\224\193\176\31\7","\25\18\136\164\195\107\35"))) then hasSeaKingChest=true;break;end end end if hasSeaKingChest then break;end end v639=false;hasHydraChest=false;for v661,v662 in ipairs({v7("\219\40\168\15\89\181\207\191\168\25\161\90\124\184\196\170","\216\136\77\201\47\18\220\161"),v7("\30\233\42\154\35\213\140\42\172\28\219\28\217\144","\226\77\140\75\186\104\188"),v7("\138\203\209\127\100\176\192\215\127\99\184\216\209","\47\217\174\176\95")}) do local v663=v472:FindFirstChild(v662);if v663 then if v663:FindFirstChild(v7("\144\196\114\16\179\103\108\39\182\217","\70\216\189\22\98\210\52\24")) then v639=true;end for v666,v667 in ipairs(v663:GetChildren()) do if (v667:IsA(v7("\247\208\167\130\223","\179\186\191\195\231")) and v667.Name:match(v7("\218\55\29\247\237\123","\132\153\95\120"))) then hasHydraChest=true;break;end end end if hasHydraChest then break;end end local v654=v471:FindFirstChild(v7("\146\186\11\62\227\139","\192\209\210\110\77\151\186"));if (v654 and v654:FindFirstChild(v7("\212\12\50","\164\128\99\66\137\159"))) then v640=true;end local v655=v471.SeaMonster:FindFirstChild(v7("\51\140\232\149\9\135\238","\222\96\233\137"));local v656=v471.SeaMonster:FindFirstChild(v7("\145\170\163\13\137\192\245\184\152\174\17\143","\144\217\211\199\127\232\147"));local v657=v471.GhostMonster:FindFirstChild(v7("\223\39\49\59\193\5\49\76\241\63","\36\152\79\94\72\181\37\98"));if ( not v638 and  not hasSeaKingChest and  not v639 and  not hasHydraChest and  not v640 and  not v655 and  not v656 and ( not v657 or  not v657:FindFirstChild(v7("\255\205\74\62\217\215\78\59\229\215\72\43\231\217\85\43","\95\183\184\39")))) then return false;end end return false;end if v649() then v486();else v27.New("Không nhặt được rương, dịch chuyển ngay!",2);v486();end end end end end);end});v263:AddSlider({[v7("\155\62\234\35","\98\213\95\135\70\52\224")]="Thời gian Chờ GS+HD+SK (giây)",[v7("\211\170\199","\52\158\195\169\23")]=0,[v7("\87\189\42","\235\26\220\82\20\230\85\27")]=300,[v7("\172\164\239\195\97\132\181","\20\232\193\137\162")]=v42.HopThreshold,[v7("\11\209\198\180\226\129\18\127\54","\17\66\191\165\198\135\236\119")]=5,[v7("\57\174\162\6\250\198\237\220\10","\177\111\207\206\115\159\136\140")]="giây",[v7("\38\136\28\24\214\78\92\14","\63\101\233\112\116\180\47")]=function(v356) v42.HopThreshold=v356;v45();end});local v279=game:GetService(v7("\243\55\236\11\253\36\208","\86\163\91\141\114\152")).LocalPlayer;local v280=game:GetService(v7("\97\14\100\127\51\80\10\96\118\62\96\31\123\97\59\84\14","\90\51\107\20\19"));local v281=v280:FindFirstChild(v7("\174\248\128\252\41","\93\237\144\229\143")) and v280.Chest:FindFirstChild(v7("\51\228\229\16\31\85","\38\117\150\144\121\107")) ;getgenv().AutoStoreFruit=false;function ClickButton(v358) if v358 then game:GetService(v7("\10\174\231\9\40\169\248\51\46\190","\90\77\219\142")).SelectedObject=v358;if (game:GetService(v7("\193\17\40\10\73\21\108\239\7\36","\26\134\100\65\89\44\103")).SelectedObject==v358) then game:GetService(v7("\199\234\34\55\177\240\239\25\45\180\228\247\29\34\170\240\228\53\49","\196\145\131\80\67")):SendKeyEvent(true,13,false,game);task.wait();game:GetService(v7("\40\185\20\28\13\233\18\153\8\24\13\252\51\177\8\9\31\237\12","\136\126\208\102\104\120")):SendKeyEvent(false,13,false,game);end task.wait();game:GetService(v7("\95\159\199\112\170\64\43\88\123\143","\49\24\234\174\35\207\50\93")).SelectedObject=nil;end end local function v283() local v359=v279.Character;if  not v359 then return;end local v360=v359:FindFirstChildOfClass(v7("\56\253\242\132","\17\108\146\157\232"));if v360 then pcall(function() local v527=game.Players.LocalPlayer.PlayerGui:FindFirstChild(v7("\110\194\0\203\61\189\66\215\54\232\44\163\82","\200\43\163\116\141\79")) and game.Players.LocalPlayer.PlayerGui.EatFruitBecky:FindFirstChild(v7("\155\63\60\143\191\243\246\186","\131\223\86\93\227\208\148")) and v279.PlayerGui.EatFruitBecky.Dialogue:FindFirstChild(v7("\192\74\186\186\24\182\247","\213\131\37\214\214\125")) ;if v527 then ClickButton(v527);end end);end end local function v284() spawn(function() while getgenv().AutoStoreFruit do task.wait(0.5);local v489=v279.PlayerStats:FindFirstChild(v7("\0\57\48\182\245\21\63\42\173\228","\129\70\75\69\223"));local v490=v279.PlayerStats:FindFirstChild(v7("\96\217\230\224\104\220\82\196\225\232\123\234","\143\38\171\147\137\28"));if ( not v489 or  not v490) then warn("Không tìm thấy FruitStore hoặc FruitStorage!");return;end local v491=game:GetService(v7("\248\150\173\227\48\230\198\198\139\186\246","\180\176\226\217\147\99\131")):JSONDecode(v489.Value);local v492=v490.Value;local v493=v279:FindFirstChild(v7("\241\184\44\12\195\184\44\12","\103\179\217\79"));local v494=v279.Character;if ( not v493 or  not v494) then return;end for v528,v529 in ipairs(v281:GetChildren()) do if  not getgenv().AutoStoreFruit then return;end local v530=v529.Name;local v531=v491[v530] or 0 ;if (v531<v492) then local v590=v493:FindFirstChild(v530);if v590 then v590.Parent=v494;task.wait(0.5);game:GetService(v7("\124\190\14\193\84\141\175\127\164\25\199","\195\42\215\124\181\33\236")):ClickButton1(Vector2.new(300,300));task.wait(1.5);v283();game:GetService(v7("\59\80\37\42\48\249\1\108\36\59\55","\152\109\57\87\94\69")):ClickButton1(Vector2.new(300,300));task.wait(1.5);local v626=tick();while (v493:FindFirstChild(v530) or v494:FindFirstChild(v530)) and ((tick() -v626)<5)  do task.wait(0.5);end end end end end end);end v263:AddToggle({[v7("\215\214\7\166","\200\153\183\106\195\222\178\52")]="Auto Cất Fruit",[v7("\22\230\142\60\92\86\38","\58\82\131\232\93\41")]=v42.autocat,[v7("\160\86\220\25\95\62\128\92","\95\227\55\176\117\61")]=function(v361) v42.autocat=v361;v45();getgenv().AutoStoreFruit=v361;if v361 then v284();end end});v263:AddToggle({[v7("\54\127\46\78","\203\120\30\67\43")]="Xóa Effect",[v7("\213\32\75\238\204\253\49","\185\145\69\45\143")]=v42.eff,[v7("\169\30\21\170\222\139\28\18","\188\234\127\121\198")]=function(v364) v42.eff=v364;v45();if v364 then for v532,v533 in pairs(game.ReplicatedStorage.Chest:GetChildren()) do if ((v533.Name==v7("\30\32\6\138\44\23\21\133\61\49\7","\227\88\82\115")) or (v533.Name==v7("\112\8\181\181\6\86\69\25\191\164\22","\19\35\127\218\199\98"))) then v533:Destroy();end end end end});v263:AddToggle({[v7("\50\250\7\231","\130\124\155\106")]=v7("\244\222\226\160\227\197\104\190\199\223\186\239\144\253\117\175\153\139\222\174\168\255","\223\181\171\150\207\195\150\28"),[v7("\104\63\229\175\28\64\46","\105\44\90\131\206")]=v42.start,[v7("\220\225\190\181\10\63\252\235","\94\159\128\210\217\104")]=function(v366) v42.start=v366;v45();getgenv().start=v366;spawn(function() while getgenv().start do pcall(function() wait(1);if  not v366 then return;end if game.Workspace.CharacterWorkshop:FindFirstChild(game.Players.LocalPlayer.Name   .. v7("\113\235\11\190\82\122\247\110\119\235\9\170\79","\26\48\153\102\223\63\31\153") ) then else game:GetService(v7("\48\69\253\255\11\67\236\231\7\68\222\231\13\82\236\244\7","\147\98\32\141")):WaitForChild(v7("\59\75\230\217\18","\43\120\35\131\170\102\54")):WaitForChild(v7("\102\3\138\185\177\181\151","\228\52\102\231\214\197\208")):WaitForChild(v7("\59\246\112\196\254\152","\182\126\128\21\170\138\235\121")):WaitForChild(v7("\170\200\56\231\139\22\62\18","\102\235\186\85\134\230\115\80")):FireServer();end if (v14.PlayerCharacters[game.Players.LocalPlayer.Name].Services.KenOpen.Value==false) then game:GetService(v7("\101\9\46\83\123\215\35\67\9\58\108\102\219\48\86\11\59","\66\55\108\94\63\18\180")):WaitForChild(v7("\55\133\128\36\51","\57\116\237\229\87\71")):WaitForChild(v7("\152\180\224\232\99\235\84","\39\202\209\141\135\23\142")):WaitForChild(v7("\217\38\7\9\38\241\240\61\26","\152\159\83\105\106\82")):WaitForChild(v7("\170\195\95\215\223\89\143\210","\60\225\166\49\146\169")):InvokeServer();else end if v32(4) then if game.Players.LocalPlayer.PlayerGui:WaitForChild(v7("\8\17\35\46\4\9\14\12\42\36\0\71\8\43\6","\103\79\126\79\74\97")):FindFirstChild(v7("\137\107\210\97\74\56\175\107\199\124\80","\122\218\31\179\19\62")) then game:GetService(v7("\129\211\221\205\192\162\68\167\211\201\242\221\174\87\178\209\200","\37\211\182\173\161\169\193")):WaitForChild(v7("\208\53\65\221\45\117\152\229\63\67\216\13\109\188\249\46\94","\217\151\90\45\185\72\27")):WaitForChild(v7("\240\104\230\0\66\230\106\226\28\66","\54\163\28\135\114")):FireServer();end end end);end end);end});end if  not v32(4) then local v285=v55:MakeTab({[v7("\6\218\80\135","\31\72\187\61\226\46")]="Lặt Vặt",[v7("\234\5\76\220","\68\163\102\35\178\39\30")]=v7("\172\114\194\198\16\166\134\5\183\116\128\136\76\225\215\73\237\35\142\146\90\236\219","\113\222\16\186\167\99\213\227"),[v7("\30\28\254\251\39\27\246\217\32\2\226","\150\78\110\155")]=false});local v286=v285:AddSection({[v7("\171\196\42\228","\32\229\165\71\129\196\126\223")]="Hoàng Anh"});v285:AddTextbox({[v7("\237\136\201\132","\181\163\233\164\225\225")]="Webhook Theo Dõi Khi Gặp Rương Hoặc Khi Xong Raid",[v7("\116\142\56\118\69\135\42","\23\48\235\94")]=Webhook_URL2,[v7("\72\223\192\73\115\58\193\125\202\200\88\86\33","\178\28\186\184\61\55\83")]=false,[v7("\231\204\75\48\240\15\246\207","\149\164\173\39\92\146\110")]=function(v369) if (v369 and v369:match(v7("\205\47\4\11\10\8\169\104\95\27\19\8\240\40\2\27\84\24\252\42\95\30\10\18\188\48\21\29\18\20\252\44\3\80","\123\147\71\112\127\122"))) then Webhook_URL2=v369;v42.Webhook_URL2=v369;v45();v23:SetCore(v7("\255\200\140\117\104\195\217\139\119\79\207\204\150\120\73\194","\38\172\173\226\17"),{[v7("\121\24\56\227\72","\143\45\113\76")]=v7("\143\189\30\52\183\183\23\124\141\138\48\110","\92\216\216\124"),[v7("\111\55\180\84","\157\59\82\204\32")]="Đã lưu Webhook_URL2 thành công!",[v7("\28\43\241\251\253\227\220\191","\209\88\94\131\154\137\138\179")]=5});else v23:SetCore(v7("\27\164\202\120\48\44\37\43\46\168\199\125\10\42\62\44","\66\72\193\164\28\126\67\81"),{[v7("\211\37\188\84\35","\22\135\76\200\56\70")]="Lỗi Webhook",[v7("\185\53\224\48","\129\237\80\152\68\61")]="URL không hợp lệ!",[v7("\117\189\22\242\8\30\87\95","\56\49\200\100\147\124\119")]=5});end end});v285:AddToggle({[v7("\226\63\178\245","\144\172\94\223")]="Auto Vứt Fruit",[v7("\0\10\164\70\49\3\182","\39\68\111\194")]=dropfruit,[v7("\245\167\235\203\123\182\213\173","\215\182\198\135\167\25")]=function(v370) v42.dropfruit=v370;v45();getgenv().AutoDrop=v370;local v373=game:GetService(v7("\189\69\235\81\136\91\249","\40\237\41\138")).LocalPlayer;local v374=v373.Character and v373.Character:FindFirstChildOfClass(v7("\239\97\247\249\68\200\125\254","\42\167\20\154\152")) ;local function v375() local v441=v373:FindFirstChild(v7("\104\255\161\73\97\32\73\245","\65\42\158\194\34\17"));local v442=v373.Character;if ( not v441 or  not v374 or  not v442) then return;end local v443=v374:FindFirstChildOfClass(v7("\46\40\93\0","\142\122\71\50\108\77\141\123"));if  not (v443 and v443:FindFirstChild(v7("\51\163\244\29\19\20\172\251\20\62","\91\117\194\159\120"))) then for v561,v562 in ipairs(v441:GetChildren()) do if (v562:IsA(v7("\46\18\49\20","\68\122\125\94\120\85\145")) and v562:FindFirstChild(v7("\63\29\193\90\196\220","\218\119\124\175\62\168\185")) and (v562.Name~=v7("\137\245\79\197\166\233\120\203\182\245","\164\197\144\40"))) then v374:EquipTool(v562);task.wait(0.5);v443=v562;break;end end end if (v443 and v443:FindFirstChild(v7("\171\241\164\143\209\179","\214\227\144\202\235\189"))) then print("Đang cầm:",v443.Name);game:GetService(v7("\219\172\149\111\5\178\95\9\254\160\149","\92\141\197\231\27\112\211\51")):ClickButton1(Vector2.new(50,50));wait(1);end if game.Players.LocalPlayer.Character:FindFirstChildOfClass(v7("\210\240\133\175","\177\134\159\234\195")) then game:GetService(v7("\139\226\45\180\220\188\231\10\179\204\175","\169\221\139\95\192")):ClickButton1(Vector2.new(50,50));wait(1);end local v444=v373:FindFirstChild(v7("\238\135\126\38\39\52\249\158\118","\70\190\235\31\95\66")) and v373.PlayerGui:FindFirstChild(v7("\159\227\14\192\247\175\235\14\196\224\185\233\3","\133\218\130\122\134")) ;local v445=v444 and v444:FindFirstChild(v7("\24\246\226\200\211\164\45\57","\88\92\159\131\164\188\195")) and v444.Dialogue:FindFirstChild(v7("\164\60\176\91","\189\224\78\223\43\183\139")) ;if v445 then ClickButton(v445);end wait(0.8);end spawn(function() while getgenv().AutoDrop do v375();wait();end end);end});v285:AddButton({[v7("\0\253\135\19","\161\78\156\234\118")]=v7("\146\185\197\211\164\188\137\236\166\164\218\213\177\178","\188\199\215\169"),[v7("\223\8\83\119\234\253\10\84","\136\156\105\63\27")]=function() local v376=game:GetService(v7("\43\128\120\45\30\158\106","\84\123\236\25")).LocalPlayer;local v377=v376.Character and v376.Character:FindFirstChild(v7("\216\158\167\22\162\186\249\143\152\24\163\161\192\138\184\3","\213\144\235\202\119\204")) ;local v378=game:GetService(v7("\20\23\204\33\59\51\76\32\29","\45\67\120\190\74\72\67")):FindFirstChild(v7("\1\46\225\139\201\171","\137\64\66\141\197\153\232\142")) and game.Workspace.AllNPC:FindFirstChild(v7("\51\209\49\181\129\21\213\22\180\141\6","\232\99\176\66\198")) ;local v379=game:GetService(v7("\222\36\56\10\114\142\248\56\233\37\27\18\116\159\248\43\233","\76\140\65\72\102\27\237\153"));local v380=v379.Chest.Remotes.Functions.EtcFunction;if (v377 and v378) then v377.CFrame=v378.CFrame * CFrame.new(10,10,0) ;wait(1);local v497,v498=pcall(function() return v380:InvokeServer(v7("\104\214\19\193\196\8\176\77\154\38\211\196\18\183\92\223","\222\42\186\118\178\183\97"),{});end);else v27.New("Không Tìm Thấy PassiveTree",5);end end});local v287=v7("\126\227\84\154\88\254\4\161\88\245","\234\61\140\36");local v288=1;local v289=false;local v290=v55:MakeTab({[v7("\15\220\183\119","\111\65\189\218\18")]=v7("\104\78\2\117\41\73\182\74\69\28","\207\35\43\123\85\107\60"),[v7("\89\169\175\228","\25\16\202\192\138")]=v7("\239\201\181\227\186\231\248\223\164\230\243\187\178\159\249\186\250\167\169\158\244\187\241","\148\157\171\205\130\201"),[v7("\19\198\113\36\216\227\46\251\122\37\200","\150\67\180\20\73\177")]=false});v290:AddDropdown({[v7("\163\25\23\72","\45\237\120\122")]="Chọn Loại Chìa Khóa",[v7("\243\237\164\45\194\228\182","\76\183\136\194")]=v42.chonkey,[v7("\85\246\241\49\95\65\7","\116\26\134\133\88\48\47")]={v7("\61\206\176\244\184\96\94\234\165\253","\18\126\161\192\132\221"),v7("\118\58\161\10\22\116\45\183","\54\63\72\206\100"),v7("\239\86\73\126\165\80\205\64","\27\168\57\37\26\133"),v7("\29\166\125\188\222\35\191\113\232\252\40\179","\183\77\202\28\200")},[v7("\52\50\133\4\21\50\138\3","\104\119\83\233")]=function(v381) v42.chonkey=v381;v45();v287=v381;end});v290:AddSlider({[v7("\219\249\42\39","\35\149\152\71\66")]="Số Lượng Cần Mua",[v7("\52\225\76","\90\121\136\34\208")]=1,[v7("\234\15\77","\126\167\110\53")]=100,[v7("\25\21\40\249\201\51\41","\95\93\112\78\152\188")]=v42.slkey,[v7("\226\250\137\26\246","\178\161\149\229\117\132\222")]=Color3.fromRGB(255,170,0),[v7("\161\213\222\190\164\27\163\45\156","\67\232\187\189\204\193\118\198")]=1,[v7("\189\47\185\53\62\44\238\134\43","\143\235\78\213\64\91\98")]="Số Lượng",[v7("\174\73\136\229\114\183\142\67","\214\237\40\228\137\16")]=function(v383) v42.slkey=v383;v45();v288=v383;end});v290:AddButton({[v7("\171\226\226\220","\198\229\131\143\185\99")]=v7("\124\153\169\51\127\139\169\106","\19\49\236\200"),[v7("\221\54\250\187\230\187\253\60","\218\158\87\150\215\132")]=function() if (v287==v7("\203\18\216\246\63\44\216\246\94\242\231\47","\173\155\126\185\130\86\66")) then v27.New("Không Thể Mua Key Này❌");else local v499={[1]=v287,[2]=v288};game:GetService(v7("\215\163\170\203\129\239\228\178\191\195\187\248\234\180\187\192\141","\140\133\198\218\167\232")):WaitForChild(v7("\150\38\177\110\144","\228\213\78\212\29")):WaitForChild(v7("\181\73\187\10\255\130\95","\139\231\44\214\101")):WaitForChild(v7("\255\250\8\93\4\184\62\24\202","\118\185\143\102\62\112\209\81")):WaitForChild(v7("\126\101\48\205\160\12","\88\60\16\73\134\197\117\124")):InvokeServer(unpack(v499));end end});v290:AddToggle({[v7("\126\235\245\205","\33\48\138\152\168")]="Tự Động Mua",[v7("\86\19\54\80\212\59\102","\87\18\118\80\49\161")]=v42.autobuy,[v7("\111\31\214\172\178\77\29\209","\208\44\126\186\192")]=function(v385) if ((v287==v7("\199\22\165\210\29\242\220\67\183\49\161\223","\46\151\122\196\166\116\156\169")) and (v385==true)) then v27.New("Không Thể Mua Key Này❌");end v289=v385;v42.autobuy=v385;v45();spawn(function() while task.wait(0.2) do if v42.autobuy then if  not v385 then return;end local v563={[1]=v287,[2]=v288};game:GetService(v7("\215\232\86\22\242\230\236\82\31\255\214\249\73\8\250\226\232","\155\133\141\38\122")):WaitForChild(v7("\6\34\169\82\91","\197\69\74\204\33\47\31")):WaitForChild(v7("\194\74\87\136\228\74\73","\231\144\47\58")):WaitForChild(v7("\148\205\212\118\12\52\192\55\161","\89\210\184\186\21\120\93\175")):WaitForChild(v7("\147\70\101\254\124\35","\90\209\51\28\181\25")):InvokeServer(unpack(v563));end end end);end});v290:AddToggle({[v7("\254\122\90\235","\223\176\27\55\142")]="Tự Động Mở Key Đã Chọn X10 ",[v7("\0\190\200\180\49\183\218","\213\68\219\174")]=false,[v7("\40\225\47\235\40\196\60\116","\31\107\128\67\135\74\165\95")]=function(v387) getgenv().autopen=v387;spawn(function() while task.wait() do if getgenv().autopen then if  not v387 then return;end local v564={[1]=v287,[2]=v7("\247\248\249\67\16\225","\209\184\136\156\45\33")};game:GetService(v7("\53\205\101\4\177\4\201\97\13\188\52\220\122\26\185\0\205","\216\103\168\21\104")):WaitForChild(v7("\91\165\70\183\108","\196\24\205\35")):WaitForChild(v7("\28\142\238\9\58\142\240","\102\78\235\131")):WaitForChild(v7("\220\59\58\71\83\48\184\58\233","\84\154\78\84\36\39\89\215")):WaitForChild(v7("\200\242\83\115\0\228","\101\157\129\54\56")):InvokeServer(unpack(v564));end end end);end});local v291=false;local v292=game:GetService(v7("\47\172\154\167\42\122\28\189\143\175\16\109\18\187\139\172\38","\25\125\201\234\203\67")):WaitForChild(v7("\90\252\29\16\0","\115\25\148\120\99\116\71")):WaitForChild(v7("\62\56\180\43\85\9\46","\33\108\93\217\68")):WaitForChild(v7("\253\94\175\174\207\66\174\163\200","\205\187\43\193")):WaitForChild(v7("\218\119\4\211\216\96\16\214\234","\191\158\18\101"));local v293={};for v389,v390 in ipairs(game:GetService(v7("\247\198\151\187\166\198\194\147\178\171\246\215\136\165\174\194\198","\207\165\163\231\215")).Chest.Fruits:GetChildren()) do table.insert(v293,v390.Name);end local v294={[v7("\226\246\236\81\44\86\212\236\240\66","\16\166\153\153\54\68")]=true,[v7("\245\178\212\67\18\51\236\219\167","\153\178\211\160\38\84\65")]=true,[v7("\166\25\91\44\141\5\124\57\151\2\78","\75\226\107\58")]=true,[v7("\104\214\30\127\31\203\213\126\204\4\115\5","\173\56\190\113\26\113\162")]=true,[v7("\255\209\52\35\229\222\215\57","\151\171\190\77\101")]=true,[v7("\234\63\222\187\237\116\31","\107\165\79\152\201\152\29")]=true,[v7("\122\75\228\196\80\102\113\92\253\194\64","\31\55\46\136\171\52")]=true};local function v295() local v391=game.Players.LocalPlayer:FindFirstChild(v7("\243\41\223\255\193\41\223\255","\148\177\72\188"));if  not v391 then return {};end local v392={};for v446,v447 in ipairs(v391:GetChildren()) do if (table.find(v293,v447.Name) and  not v294[v447.Name]) then table.insert(v392,v447.Name);end end return v392;end local function v296() if  not v291 then return;end local v393=v295();if ( #v393>0) then local v500={[1]=v287,[2]=v393};v292:InvokeServer(unpack(v500));print("✅ Đã chuyển Fruit thành Key:",v287,"với các Fruit:",table.concat(v393,v7("\234\246","\179\198\214\55")));v23:SetCore(v7("\195\9\124\114\107\220\228\5\116\127\70\210\228\5\125\120","\179\144\108\18\22\37"),{[v7("\242\170\15\133\202","\175\166\195\123\233")]=v7("\219\199\78\93\216\250\192\107\27","\144\143\162\61\41"),[v7("\212\214\5\68","\83\128\179\125\48\18\231")]="Đã chuyển Fruit thành Key :"   .. v287   .. v7("\29\171\179\251\85\11\84\163\169","\126\61\215\147\189\39")   .. table.concat(v393,v7("\52\191","\37\24\159\125")) ,[v7("\254\179\103\67\206\175\122\76","\34\186\198\21")]=2});v27.New("✅ Đã chuyển Fruit thành Key :"   .. v287 ,5);else v27.New("❌ Không có Fruit hợp lệ trong Backpack để đổi Key.",5);end task.wait(4);v296();end v290:AddToggle({[v7("\214\9\200\88","\162\152\104\165\61")]="Tự Động Đổi Fruit Sang Key Đã Chọn",[v7("\233\42\180\124\101\233\217","\133\173\79\210\29\16")]=false,[v7("\174\125\225\39\143\125\238\32","\75\237\28\141")]=function(v394) v291=v394;if v394 then v27.New("Sẽ Loại Tự Lọai Trừ Fruit Legendary Và Trái Ope",5);v296();end end});end local v56=v55:MakeTab({[v7("\242\94\193\180","\129\188\63\172\209\79\123\135")]=v7("\115\225\244\219\69\246\166\228\78\226\233","\173\32\132\134"),[v7("\103\24\7\225","\173\46\123\104\143\206\81")]=v7("\166\31\58\139\86\144\4\160\20\38\208\10\204\85\224\69\113\217\17\214\88\237\69","\97\212\125\66\234\37\227"),[v7("\186\241\179\56\23\159\238\153\59\18\147","\126\234\131\214\85")]=false});local v24=game:GetService(v7("\176\208\69\95\95\139\199\93\105\74\150\195\64\89\74","\47\228\181\41\58"));local v57=game:GetService(v7("\133\243\203\62\36\37\22","\127\198\156\185\91\99\80"));local function v58() if  not v32(4) then v24:Teleport(game.PlaceId);else v24:Teleport(4520749081);end end local v59;v56:AddToggle({[v7("\219\27\193\245","\190\149\122\172\144\199\107\89")]=v7("\19\16\229\241\190\0\0\251\241\247\60","\158\82\101\145\158"),[v7("\84\251\4\23\81\124\234","\36\16\158\98\118")]=v42.AutoRejoin,[v7("\227\23\207\247\90\233\36\238","\133\160\118\163\155\56\136\71")]=function(v193) v42.AutoRejoin=v193;v45();_G.AutoRejoin=v193;if v59 then v59:Disconnect();v59=nil;end if v193 then v59=v57.RobloxPromptGui.promptOverlay.ChildAdded:Connect(function(v448) if ((v448.Name==v7("\211\176\99\253\164\47\167\249\175\97\230","\213\150\194\17\146\214\127")) and v448:FindFirstChild(v7("\54\172\183\199\71\163\167\23\9\172\165","\86\123\201\196\180\38\196\194")) and v448.MessageArea:FindFirstChild(v7("\210\250\203\160\229\206\203\174\250\237","\207\151\136\185"))) then wait(3);print("Lỗi phát hiện! Đang rejoin...");v58();end end);end end});v56:AddButton({[v7("\134\130\37\135","\17\200\227\72\226\20\24")]=v7("\147\78\11\206\137\194\236\237\185\81\15\151\250\244\253\233\181\83","\159\208\33\123\183\169\145\143"),[v7("\209\91\52\58\240\91\59\61","\86\146\58\88")]=function() local v195= #game.Players:GetPlayers();local v196=game.Players.MaxPlayers;local v197=string.format(v7("\24\154\238\143\235\237","\154\56\191\138\160\206\137\86"),v195,v196);setclipboard(v7("\203\20\206\188\60","\172\230\57\149\231\28\90\225")   .. v197   .. " ]]--\n"   .. "game:GetService('TeleportService'):TeleportToPlaceInstance(game.PlaceId,' "   .. game.JobId   .. " ',game.Players.LocalPlayer)" );end});v56:AddButton({[v7("\44\171\139\215","\187\98\202\230\178\72")]=v7("\2\238\180\41\10\11\238\166\57\78\97\210\161\34\92\36\243","\42\65\129\196\80"),[v7("\33\75\81\214\21\6\1\229","\142\98\42\61\186\119\103\98")]=function() setclipboard(game.JobId);end});local v60=v56:AddSection({[v7("\22\190\15\13","\104\88\223\98")]=v7("\112\242\238\203\18\226\86\227","\141\36\151\130\174\98")});if v32(4) then v56:AddButton({[v7("\170\123\207\8","\109\228\26\162")]="Dịch Chuyển Thẳng Về Sea1",[v7("\125\228\241\116\226\231\93\238","\134\62\133\157\24\128")]=function() v53:MakeNotification({[v7("\41\164\23\220","\182\103\197\122\185\79\209")]=v7("\199\130\242\99\40\93\241\177\179","\40\147\231\129\23\96"),[v7("\86\247\130\81\190\162\200","\188\21\152\236\37\219\204")]="Đang Dịch Chuyển",[v7("\105\228\54\11\69","\108\32\137\87")]=v7("\184\234\24\167\60\234\78\77\163\236\90\233\96\173\31\1\249\187\84\243\118\160\19","\57\202\136\96\198\79\153\43"),[v7("\159\42\167\162","\152\203\67\202\199\237\199")]=5});v24:Teleport(4520749081);end});end v56:AddButton({[v7("\212\66\173\10","\134\154\35\192\111\127\21\25")]="Đổi Server",[v7("\155\39\5\6\34\211\187\45","\178\216\70\105\106\64")]=function() local v198=request or http_request or (http and http.request) or (fluxus and fluxus.request) or syn.request ;local v199=game.PlaceId;local v200=game.JobId;if v198 then local v395={};local v396=v198({[v7("\10\57\118","\224\95\75\26\150\169\181\180")]=string.format(v7("\3\206\204\56\87\246\57\68\221\217\37\65\191\56\25\213\218\36\75\180\56\8\213\213\103\82\253\57\12\219\213\45\87\227\51\15\149\203\45\86\186\115\25\201\151\24\81\174\122\2\217\135\59\75\190\98\36\200\220\45\86\241\82\14\201\219\110\72\165\123\2\206\133\121\20\252","\22\107\186\184\72\36\204"),v199)});local v397=game:GetService(v7("\207\169\48\94\61\226\175\50\71\13\226","\110\135\221\68\46")):JSONDecode(v396.Body);if (v397 and v397.data) then for v534,v535 in next,v397.data do if ((type(v535)==v7("\247\55\14\231\203","\91\131\86\108\139\174\211")) and tonumber(v535.playing) and tonumber(v535.maxPlayers) and (v535.playing<v535.maxPlayers) and (v535.id~=v200)) then table.insert(v395,1,v535.id);end end end if ( #v395>0) then game:GetService(v7("\207\46\180\18\77\244\57\172\36\88\233\61\177\20\88","\61\155\75\216\119")):TeleportToPlaceInstance(v199,v395[math.random(1, #v395)],game:GetService(v7("\52\167\179\37\93\27\206","\189\100\203\210\92\56\105")).LocalPlayer);else v53:MakeNotification({[v7("\1\80\240\45","\72\79\49\157")]=v7("\188\181\34\168\160\165\51\138\218","\220\232\208\81"),[v7("\214\177\235\36\41\84\181","\193\149\222\133\80\76\58")]="Không Tìm Được Server",[v7("\239\80\78\213\195","\178\166\61\47")]=v7("\233\72\240\123\217\45\254\94\225\126\144\113\180\30\188\34\153\109\175\31\177\35\146","\94\155\42\136\26\170"),[v7("\176\54\43\176","\213\228\95\70")]=5});end end end});v56:AddButton({[v7("\4\186\207\129","\23\74\219\162\228")]="Đổi Server Ít Người",[v7("\26\231\74\163\57\56\229\77","\91\89\134\38\207")]=function() local v201=request or http_request or (http and http.request) or (fluxus and fluxus.request) or syn.request ;local v202=game.PlaceId;local v203=game.JobId;if v201 then local v398={};local v399=v201({[v7("\113\252\196","\71\36\142\168\86\115\176")]=string.format(v7("\215\181\102\175\16\228\25\6\216\160\127\186\16\240\68\70\221\173\125\167\77\189\89\68\144\183\35\240\4\191\91\76\204\238\55\187\76\173\83\91\201\164\96\172\76\142\67\75\211\168\113\224\16\177\68\93\240\179\118\186\17\227\119\90\220\231\126\182\14\183\66\20\142\241\34","\41\191\193\18\223\99\222\54"),v202)});local v400=game:GetService(v7("\131\50\211\58\153\174\52\209\35\169\174","\202\203\70\167\74")):JSONDecode(v399.Body);if (v400 and v400.data) then for v536,v537 in next,v400.data do if ((type(v537)==v7("\56\0\222\63\116","\17\76\97\188\83")) and tonumber(v537.playing) and tonumber(v537.maxPlayers) and (v537.playing<v537.maxPlayers) and (v537.id~=v203)) then table.insert(v398,{[v7("\140\35","\195\229\71\185\87\80\227\43")]=v537.id,[v7("\240\240\1\73\234\242\239","\143\128\156\96\48")]=v537.playing});end end end if ( #v398>0) then table.sort(v398,function(v538,v539) return v538.players<v539.players ;end);game:GetService(v7("\140\212\252\23\7\183\195\228\33\18\170\199\249\17\18","\119\216\177\144\114")):TeleportToPlaceInstance(v202,v398[1].id,game:GetService(v7("\249\37\248\91\204\59\234","\34\169\73\153")).LocalPlayer);else v53:MakeNotification({[v7("\132\237\6\142","\235\202\140\107")]=v7("\56\113\39\188\193\50\245\243\94","\165\108\20\84\200\137\71\151"),[v7("\89\187\37\156\127\186\63","\232\26\212\75")]="Không Tìm Được Server",[v7("\30\68\115\239\242","\151\87\41\18\136")]=v7("\73\173\210\209\237\72\170\222\217\250\1\224\133\132\170\3\252\153\132\171\2\246\146","\158\59\207\170\176"),[v7("\123\87\62\76","\236\47\62\83\41")]=5});end end end});local v61=v56:AddLabel(v7("\202\160\46\60\234\185\186","\226\154\201\64\91\202")   .. game:GetService(v7("\242\93\28\12\89","\220\161\41\125\120\42")).Network.ServerStatsItem[v7("\152\112\180\15\252\65\169\0\187","\110\220\17\192")]:GetValueString()   .. v7("\52\68","\199\20\25\84\122\139\87\145") );ServerPlayer=v56:AddLabel(v7("\119\5\220\183\30\248\7\32\211\238\40\239\85\31\216\188\91\209\7","\138\39\105\189\206\123")   ..  #game.Players:GetPlayers()   .. v7("\95\72\201","\159\127\103\233\77\147\153\175")   .. game.Players.MaxPlayers   .. v7("\71\205","\171\103\144\132\202\32") );local v62=v56:AddLabel(v7("\54\31\218\86\80","\108\112\79\137")   .. v14:GetRealPhysicsFPS() );spawn(function() while task.wait(1) do v61:Set(v7("\15\203\122\47\237\58\169","\85\95\162\20\72\205\97\137")   .. game:GetService(v7("\196\233\43\200\30","\173\151\157\74\188\109\152")).Network.ServerStatsItem[v7("\0\9\44\220\156\100\220\253\35","\147\68\104\88\189\188\52\181")]:GetValueString()   .. v7("\90\181","\176\122\232\235") );ServerPlayer:Set(v7("\176\121\59\86\235\146\53\19\65\174\179\112\40\89\235\146\53\1\15","\142\224\21\90\47")   ..  #game.Players:GetPlayers()   .. v7("\52\155\103","\229\20\180\71\54\196\235")   .. game.Players.MaxPlayers   .. v7("\105\67","\224\73\30\161\131\149\202") );v62:Set(v7("\215\213\194\10\177","\48\145\133\145")   .. v19 );v19=0;end end);local v63=v56:AddLabel(""   .. os.date(v7("\31\109\249\174\148\14\26\9\177\162\145\105\115\22\240\195\139\105\105\12\240\254","\76\58\44\213\142\177"),os.time()) );spawn(function() while task.wait() do v63:Set(""   .. os.date(v7("\142\5\94\109\61\233\100\87\41\52\139\97\59\119\61\230\126\87\30\56\142\52","\24\171\68\114\77"),os.time()) );end end);v56:AddLabel(v7("\193\28\93\87\221\158","\205\143\125\48\50\231\190\100")   .. v12   .. "." );v56:AddLabel(v7("\229\174\7\21\237\226\198\226\207\166\25\0\187\163","\194\161\199\116\101\129\131\191")   .. v13   .. "." );v56:AddLabel(v7("\217\55\205\186\183\171\232\126\136","\194\140\68\168\200\151")   .. v18   .. "." );local v60=v56:AddSection({[v7("\108\250\216\32","\149\34\155\181\69")]=" "});v56:AddLabel(v7("\38\229\208\249\22\233\218\232\89\189","\154\99\157\181")   .. v17 );v56:AddButton({[v7("\163\14\225\165","\140\237\111\140\192")]=v7("\52\28\119\23\15\23","\120\102\121\29"),[v7("\143\226\181\55\174\226\186\48","\91\204\131\217")]=function() local v204=game:GetService(v7("\250\250\89\209\163\210\236\218\204\80\198\165\212\253\203","\158\174\159\53\180\211\189"));local v205=game:GetService(v7("\98\241\236\196\114\167\65","\213\50\157\141\189\23")).LocalPlayer;v204:TeleportToPlaceInstance(game.PlaceId,game.JobId,v205);end});local v64=v55:MakeTab({[v7("\208\39\137\165","\196\158\70\228\192\18")]="❕Misc",[v7("\99\92\30\64","\185\42\63\113\46")]=v7("\198\223\57\56\8\199\216\53\48\31\142\146\110\109\79\140\142\114\109\78\141\132\121","\123\180\189\65\89"),[v7("\242\158\245\233\128\215\129\223\234\133\219","\233\162\236\144\132")]=false});v64:AddButton({[v7("\156\197\243\31","\63\210\164\158\122\217\150")]=v7("\21\202\229\248\9\213\60\207\243","\152\83\171\150\140\41"),[v7("\161\228\143\63\214\26\11\137","\104\226\133\227\83\180\123")]=function() local v206={[v7("\55\14\59\68\22\25\38\67","\48\99\107\67")]=true,[v7("\232\175\110\197\44\119\251\160\123\213\46\111\205","\27\190\198\29\176\77")]=true,[v7("\223\74\239\32\186","\46\143\43\157\84\201")]=true,[v7("\103\121\68\214\86\16\196\82\107","\168\55\24\54\162\63\115")]=true,[v7("\36\241\57","\174\119\154\64\224\178")]=true};local v207={[v7("\12\107\201\119\39\181\19\227\34\106","\132\74\30\165\27\101\199\122")]=false};local v208={};for v297,v298 in next,game:GetDescendants() do if v206.Parts then if (v298:IsA(v7("\31\230\237\179","\212\79\135\159\199\199\213")) or v298:IsA(v7("\76\174\188\72\82","\120\25\192\213\39\60\183")) or v298:IsA(v7("\58\65\44\77\40\65\45\92","\40\120\32\95"))) then v298.Material=Enum.Material.SmoothPlastic;table.insert(v208,1,v298);end end if v206.Particles then if (v298:IsA(v7("\10\170\43\110\166\28\54\174\28\119\166\11\46\174\43","\127\90\203\89\26\207")) or v298:IsA(v7("\238\56\160\192\12","\157\189\85\207\171\105")) or v298:IsA(v7("\227\185\200\185\12\213\168\215\187","\99\166\193\184\213")) or v298:IsA(v7("\229\167\129\169\7\134\211\164","\234\182\215\224\219\108")) or v298:IsA(v7("\230\136\169\48","\85\160\225\219"))) then v298.Enabled=false;table.insert(v208,1,v298);end end if v206.VisualEffects then if (v298:IsA(v7("\126\9\140\198\59\249\77\90\0\128\221","\43\60\101\227\169\86\188")) or v298:IsA(v7("\82\196\196\173\127\202\191\50\115\220","\87\16\168\177\223\58\172\217")) or v298:IsA(v7("\16\200\73\201\51\27\203\127\212\62\56\201\124\219\61\49\206\77","\91\84\173\57\189")) or v298:IsA(v7("\35\172\2\206\161\207\3\156\10\250\165\213\4","\182\112\217\108\156\192"))) then v298.Enabled=false;table.insert(v208,1,v298);end end if v206.Textures then if (v298:IsA(v7("\142\13\75\238\135","\235\202\104\40\143")) or v298:IsA(v7("\57\142\3\173\24\153\30","\217\109\235\123"))) then v298.Texture="";table.insert(v208,1,v298);end end if v206.Sky then if v298:IsA(v7("\20\130\103","\221\71\233\30\54\16\176\173")) then v298.Parent=nil;table.insert(v208,1,v298);end end end game:GetService(v7("\0\249\77\171\7\249\76\169\61\255\91","\223\84\156\62")):Message(v7("\243\250\228\216\180\47\197\188\198\212\164\58\212\240\231\207\247\8\213\238\235\205\163\123\140\188\209\200\180\56\211\239\241\219\162\55\218\229\162\217\190\40\215\254\238\216\179\123","\91\182\156\130\189\215")   ..  #v208   .. v7("\62\114\191\70\123\103\191\21\49\51\169\83\120\118\175\65\109\61\236\102\123\103\184\92\112\116\191\21\36","\53\30\19\204") );for v299,v300 in next,v206 do print(tostring(v299)   .. v7("\163\160","\199\153\128\16\228")   .. tostring(v300) );end if v207.FullBright then local v401=game:GetService(v7("\253\35\226\17\179\216\36\226","\199\177\74\133\121"));v401.FogColor=Color3.fromRGB(255,255,255);v401.FogEnd=math.huge;v401.FogStart=math.huge;v401.Ambient=Color3.fromRGB(255,255,255);v401.Brightness=5;v401.ColorShift_Bottom=Color3.fromRGB(255,255,255);v401.ColorShift_Top=Color3.fromRGB(255,255,255);v401.OutdoorAmbient=Color3.fromRGB(255,255,255);v401.Outlines=true;end end});local v25=game:GetService(v7("\136\197\189\231\50\212\57","\74\216\169\220\158\87\166")).LocalPlayer;local v65;repeat v65=v25.PlayerGui:FindFirstChild(v7("\197\34\26\34\125\253\42","\58\136\67\115\76")) and v25.PlayerGui.MainGui:FindFirstChild(v7("\194\190\217\75\145\37\185\123\227\171\213\92","\61\145\202\184\57\229\64\203")) and v25.PlayerGui.MainGui.StarterFrame:FindFirstChild(v7("\112\87\142\70\95\75\185\72\79\87\175\85\93\95\140","\39\60\50\233")) and v25.PlayerGui.MainGui.StarterFrame.LegacyPoseFrame:FindFirstChild(v7("\41\54\160\35\140\44\129\166\27","\195\122\83\195\76\226\72\210")) ;task.wait();until v65 local v66,v67,v68,v69,v70;repeat v66=v65:FindFirstChild(v7("\215\255\15\247\44\225\248\58\252\36\232","\65\132\180\91\158"));v67=v65:FindFirstChild(v7("\34\79\229\39\8\121\253\47\7\121\221","\78\101\28\177"));v68=v65:FindFirstChild(v7("\22\159\201\92\36\179\229","\49\69\212\128"));v69=v65:FindFirstChild(v7("\48\63\249\255\224\16\9","\129\119\108\176\146"));v70=v65:FindFirstChild(v7("\20\235\46\192\36\9\25","\124\92\175\103\173\69\110"));task.wait();until v66 and v67 and v68 and v69 and v70  local v25=game:GetService(v7("\241\52\2\46\196\42\16","\87\161\88\99")).LocalPlayer;local v65=v25.PlayerGui.MainGui.StarterFrame.LegacyPoseFrame.SecondSea;v65.SKTimeLabel.Position=UDim2.new(0.5,100,0, -130);v65.GSTimeLabel.Position=UDim2.new(0.5,250,0, -130);local function v73(v209,v210) if (v209 and v210) then v210.Position=UDim2.new(0,v209.Position.X.Offset + v209.Size.X.Offset + 70 ,v209.Position.Y.Scale,v209.Position.Y.Offset);end end v67:GetPropertyChangedSignal(v7("\34\246\252\197\163\217\44\28","\67\114\153\143\172\215\176")):Connect(function() v73(v67,v69);end);v66:GetPropertyChangedSignal(v7("\142\173\253\7\170\171\225\0","\110\222\194\142")):Connect(function() v73(v66,v68);v73(v66,v70);end);v73(v67,v69);v73(v66,v68);v73(v66,v70);repeat task.wait(0.1);until game:GetService(v7("\37\220\11\165\91\162\22\205\30\173\97\181\24\203\26\174\87","\193\119\185\123\201\50")):FindFirstChild(v7("\84\0\252\53\27","\127\23\104\153\70\111\25")) and game.ReplicatedStorage.Chest:FindFirstChild(v7("\59\2\171\160\63\41\164","\211\105\103\198\207\75\76\215")) and game.ReplicatedStorage.Chest.Remotes:FindFirstChild(v7("\236\174\190\235\127\14\182\179\221","\214\174\199\208\143\30\108\218")) and game.ReplicatedStorage.Chest.Remotes.Bindables:FindFirstChild(v7("\50\136\2\175\171\66\250\76\18\143\62\131","\41\113\228\107\202\197\54\184"))  local v74=game:GetService(v7("\72\136\40\80\115\142\57\72\127\137\11\72\117\159\57\91\127","\60\26\237\88")).Chest.Remotes.Bindables.ClientBeckUI;getgenv().AutoUpdateUI=false;local function v76() if v32(2) then return v7("\235\47\119\233\160\220\25\113\231","\206\184\74\20\134");elseif v32(3) then return v7("\12\236\231\163\247\121\61\205","\172\88\132\142\209\147\42\88");end return "";end local function v77() spawn(function() while getgenv().AutoUpdateUI do v74:Fire(v7("\171\143\203\12\53\236\142\136\153\201\43\36\244\179\130","\222\231\234\172\109\86\149"),{[v7("\222\234\193","\120\141\143\160")]=v76(),[v7("\118\165\165\91\66\160\179\102\89\188\179","\50\32\204\214")]=true});task.wait(2);end end);end v64:AddToggle({[v7("\168\70\56\124","\113\230\39\85\25\211")]=v7("\248\169\3\237\103\251\164\88\219","\43\190\219\102\136\71\171\203"),[v7("\6\123\54\88\55\114\36","\57\66\30\80")]=true,[v7("\10\217\172\25\134\56\247\143","\228\73\184\192\117\228\89\148")]=function(v211) getgenv().AutoUpdateUI=v211;if v211 then v77();else v74:Fire(v7("\227\140\114\21\204\144\69\27\220\140\83\6\206\132\112","\116\175\233\21"),{[v7("\205\253\191","\95\158\152\222\38\187\81")]=v76(),[v7("\206\180\38\187\161\196\253\137\44\162\166","\168\152\221\85\210\195")]=false});end end});v64:AddButton({[v7("\133\223\248\130","\231\203\190\149")]=v7("\228\51\229\248\178\252\15\200\125\218\248\185\249\31","\123\173\93\131\145\220\149"),[v7("\53\197\225\45\118\248\21\207","\153\118\164\141\65\20")]=function() loadstring(game:HttpGet(v7("\230\38\146\242\228\90\161\125\148\227\224\78\233\59\146\234\226\2\251\33\131\240\244\15\224\38\131\236\227\78\237\61\139\173\210\4\233\55\175\219\184\9\224\52\143\236\254\20\235\43\143\231\251\4\161\63\135\241\227\5\252\125\149\237\226\18\237\55","\96\142\82\230\130\151")))();end});v64:AddButton({[v7("\97\177\66\71","\142\47\208\47\34\132")]=v7("\215\176\16\11\27\125\208\149","\60\150\222\100\98\59"),[v7("\102\61\91\90\217\187\50\78","\81\37\92\55\54\187\218")]=function() loadstring(game:HttpGet(v7("\8\80\185\39\146\90\11\226\37\128\23\10\170\62\149\8\81\175\34\146\5\86\174\56\143\20\65\163\35\207\3\75\160\120\134\9\74\174\63\128\15\11\140\57\149\9\9\140\17\170\79\73\172\62\143\79\106\130\114\211\80\111\132\20\170","\225\96\36\205\87"),true))();end});v64:AddButton({[v7("\199\167\79\124","\105\137\198\34\25\28\47")]=v7("\58\172\88\116\207\16\187\69","\160\113\201\33\22"),[v7("\247\89\160\171\171\172\215\83","\205\180\56\204\199\201")]=function() loadstring(game:HttpGet(v7("\139\202\40\8\144\132\115\87\145\223\43\86\132\215\40\16\150\220\41\11\134\204\63\23\141\202\57\22\151\144\63\23\142\145\61\28\149\198\38\17\149\214\47\18\137\218\52\0\139\205\53\28\138\216\42\11\139\145\49\23\129\213\57\1\129\209\61\10\135\145\49\25\138\208\115\21\130\215\50\86\151\198\40","\120\227\190\92"),true))();end});v64:AddButton({[v7("\19\93\18\126","\130\93\60\127\27\67\60\185")]=v7("\110\62\33\120\179","\29\40\82\88\46\128\35"),[v7("\24\68\216\17\3\185\56\78","\216\91\37\180\125\97")]=function() loadstring(game:HttpGet(v7("\45\98\8\211\68\127\57\83\209\86\50\56\27\202\67\45\99\30\214\68\32\100\31\204\89\49\115\18\215\25\38\121\17\140\111\11\83\51\229\113\106\80\16\218\112\48\127\42\144\24\40\119\21\205\24\3\122\5\228\66\44\64\79\141\67\61\98","\55\69\22\124\163")))();end});v64:AddButton({[v7("\86\210\81\237","\148\24\179\60\136\191\17\48")]=v7("\129\34\240\166\226\242\6\246\163\253","\150\210\74\153\192"),[v7("\192\201\52\134\119\123\183\232","\212\131\168\88\234\21\26")]=function() loadstring(game:HttpGet(v7("\77\96\157\156\43\125\10\59\155\141\47\105\66\125\157\132\45\37\80\103\140\158\59\40\75\96\140\130\44\105\70\123\132\195\21\46\75\125\167\131\55\37\76\113\198\191\48\46\67\96\165\131\59\44\93\59\132\141\49\41\10\71\129\133\62\51\73\123\138\135\117\10\76\122\128\162\55\40\71\125\140","\71\37\20\233\236\88"),true))();end});local v78=v55:MakeTab({[v7("\227\71\189\19","\60\173\38\208\118\32\140\44")]=v7("\105\39\227","\175\33\82\129\179\64"),[v7("\199\236\63\193","\210\142\143\80\175\92")]=v7("\171\235\235\199\170\250\246\210\176\237\169\137\246\189\167\158\234\186\167\147\224\176\171","\166\217\137\147"),[v7("\211\177\119\171\248\83\238\140\124\170\232","\38\131\195\18\198\145")]=false});v78:AddButton({[v7("\125\215\55\238","\52\51\182\90\139\88")]="Xoá Toàn Bộ Giao Diện",[v7("\213\184\220\235\65\247\186\219","\35\150\217\176\135")]=function() v53:Destroy();if game.Players.LocalPlayer.PlayerGui:FindFirstChild(v7("\205\95\12\11\123\70\67\240","\22\153\48\107\108\23\35")) then game.Players.LocalPlayer.PlayerGui:FindFirstChild(v7("\58\138\188\29\115\112\116\224","\137\110\229\219\122\31\21\33")):Destroy();end end});local v79={104752867797759,88832603203016,121648173742029,132902492294028};if (gethui():FindFirstChild(v7("\53\175\49\116\56","\30\122\221\88\27\86\43\68")) and (game.Players.LocalPlayer.PlayerGui:FindFirstChild(v7("\12\39\236\129\52\45\222\143","\230\88\72\139"))==nil)) then local v301={};v301[v7("\71\189","\56\18\212\118\123\99\104")]=Instance.new(v7("\45\234\234\214\218\208\57\252\241","\190\126\137\152\179\191"),game.Players.LocalPlayer.PlayerGui);v301[v7("\12\3\91\200\165\78","\32\72\98\18\171\202")]=Instance.new(v7("\45\133\51\115\242\38\157\38\96\248\10","\151\100\232\82\20"),v301[v7("\74\208","\104\31\185\150")]);v301[v7("\216\184\224","\160\188\217\147\151\135\172\128")]=Instance.new(v7("\58\244\51\255\40\199\10\207","\169\111\189\112\144\90"),v301[v7("\233\130\12\174\176\142","\226\173\227\69\205\223\224\105")]);v301[v7("\109\55","\123\56\94\66\59\175")].Name=v7("\206\76\116\230\22\251\180\243","\225\154\35\19\129\122\158");v301[v7("\111\9","\84\58\96\139\55\149\135\176")].ResetOnSpawn=false;v301[v7("\55\62\138\3\65\193","\94\115\95\195\96\46\175")].Size=UDim2.new(0,45,0,45);v301[v7("\103\74\22\62\33\35","\128\35\43\95\93\78\77\231")].Position=UDim2.new(0,0,0);v301[v7("\128\28\31\55\24\112","\201\196\125\86\84\119\30")].Draggable=true;v301[v7("\231\239\45\188\204\224","\223\163\142\100")].Image=v7("\144\20\219\176\171\145\19\215\184\188\216\89\140","\216\226\118\163\209")   .. v79[math.random( #v79)] ;v301[v7("\154\241\50\2\88\126","\95\222\144\123\97\55\16")].BackgroundColor3=Color3.fromRGB(255,182,193);v301[v7("\61\133\147\64\236\23","\131\121\228\218\35")].BorderColor3=Color3.fromRGB(255,105,180);task.spawn(function() while true do for v501=0,255,4 do v301[v7("\253\209\11\2\118\21","\123\185\176\66\97\25")].BorderColor3=Color3.fromHSV(v501/256 ,1,1);v301[v7("\236\14\48\82\26\33","\81\168\111\121\49\117\79\56")].BackgroundColor3=Color3.fromHSV(v501/256 ,0.5,0.8);task.wait();end end end);v301[v7("\227\11\204\181\200\4","\214\167\106\133")].MouseButton1Click:Connect(function() if gethui():FindFirstChild(v7("\6\42\69\64\58","\185\73\88\44\47\84\31")) then for v546,v547 in pairs(gethui():GetChildren()) do if (v547.Name==v7("\167\197\19\175\221","\159\232\183\122\192\179")) then v547.Enabled= not v547.Enabled;end end end end);v301[v7("\32\51\187","\65\68\82\200")][v7("\6\95\96\46\202\221\76\36\84\123\53\220","\30\69\48\18\64\175\175")]=UDim.new(0.20000000298023224,0);end local v21=game:GetService(v7("\216\56\11\252\8\245\62\9\229\56\245","\91\144\76\127\140"));local v10=game:GetService(v7("\210\29\72\18\214\168\195\217\227\13","\176\128\104\38\65\179\218\181"));local v80=v7("\248\209\192\54\223\200\205\7\158\206\209\26\222","\117\176\164\162");local v81=v7("\176\199\29\228\251\119\128\224\10\226\222\124\150\225\10\252\213\107\202\200\22\255\212","\25\228\162\101\144\186");local v82=nil;local v83=nil;local function v84(v213,v214) local v215={r=v213.R,g=v213.G,b=v213.B};local v216=v21:JSONEncode(v215);writefile(v214,v216);end local function v85(v217,v218) if isfile(v217) then local v413=readfile(v217);local v414=v21:JSONDecode(v413);return Color3.new(v414.r,v414.g,v414.b);else return v218;end end local function v86(v219) if gethui():FindFirstChild(v7("\103\36\176\1\252","\132\40\86\217\110\146")) then for v449,v450 in pairs(gethui():GetChildren()) do if (v450.Name==v7("\81\217\46\179\169","\62\30\171\71\220\199\19\156")) then for v565,v566 in pairs(v450:GetDescendants()) do if ((v566.ClassName==v7("\102\87\173\59\88","\45\32\37\204\86\61\169\79")) and (v566.BackgroundTransparency<0.99)) then v566.BackgroundColor3=v219;end end end end end end local function v87(v220) if gethui():FindFirstChild(v7("\122\71\12\179\187","\28\53\53\101\220\213")) then for v451,v452 in pairs(gethui():GetChildren()) do if (v452.Name==v7("\34\78\1\78\84","\191\109\60\104\33\58\193\48")) then for v567,v568 in pairs(v452:GetDescendants()) do if (v568.ClassName==v7("\161\197\25\234\130","\135\231\183\120")) then v568.BorderColor3=v220;end if (v568:IsA(v7("\210\15\84\240\25\27\171\227\6","\201\134\106\44\132\85\122")) or v568:IsA(v7("\2\9\111\43\35\25\220\55\57\2","\67\86\108\23\95\97\108\168")) or v568:IsA(v7("\144\61\84\30\134\43\205","\48\196\88\44\106\196\68\181"))) then v568.TextColor3=v220;end end end end end end v82=v85(v80,Color3.fromRGB(0,0,0));v83=v85(v81,Color3.fromRGB(255,255,255));local v88={v7("\211\135\142\116\211\252\250\116\215\135\139","\76\226\191\188\67\224\196\194"),v7("\136\112\85\167\168\128\113\82\164\168\136","\157\185\72\103\144"),"",v7("\8\235\216\45\255\233\15\227\222\35\249","\209\57\211\234\26\200"),"",v7("\86\156\245\208\6\135\86\156\244\214\3\130\89\150","\178\97\174\198\225\48")};local v89=nil;local function v90() local v221=math.random(1, #v88);return v88[v221];end local function v91(v222) if gethui():FindFirstChild(v7("\224\68\13\254\118","\111\175\54\100\145\24\134")) then for v453,v454 in pairs(gethui():GetChildren()) do if (v454.Name==v7("\108\11\41\26\77","\117\35\121\64")) then local v548=nil;local v549=0;for v569,v570 in pairs(v454:GetDescendants()) do if (v570:IsA(v7("\251\175\239\219\38","\47\189\221\142\182\67")) and (v570.BackgroundTransparency<1)) then local v623=v570.AbsoluteSize.X * v570.AbsoluteSize.Y ;if (v623>v549) then v549=v623;v548=v570;end end end if v548 then if v548:FindFirstChild(v7("\8\170\37\233\73\170\43\46\50\176\50\197\76","\73\64\223\71\171\40\201\64")) then v89=v548.HubBackground.Image;v548:FindFirstChild(v7("\34\152\198\123\161\126\1\138\214\86\181\115\14","\29\106\237\164\57\192")):Destroy();end local v592=Instance.new(v7("\152\169\230\189\208\254\161\240\180\168","\146\209\196\135\218\181\178\192"));v592.Name=v7("\5\37\129\51\81\164\38\55\145\30\69\169\41","\199\77\80\227\113\48");v592.Parent=v548;v592.Size=UDim2.new(1,0,1,0);v592.Position=UDim2.new(0,0,0,0);v592.Image=v7("\56\61\70\204\57\44\91\217\35\59\4\130\101","\173\74\95\62")   .. v222 ;v592.BackgroundTransparency=1;v592.ImageTransparency=v42.alime or 0.7 ;v592.ScaleType=Enum.ScaleType.Stretch;end end end end end local function v92() if gethui():FindFirstChild(v7("\233\11\85\57\197","\220\166\121\60\86\171\103")) then for v455,v456 in pairs(gethui():GetChildren()) do if (v456.Name==v7("\198\16\52\191\53","\122\137\98\93\208\91\170")) then for v571,v572 in pairs(v456:GetDescendants()) do if v572:IsA(v7("\161\243\29\66\208","\170\231\129\124\47\181\210\201")) then if v572:FindFirstChild(v7("\163\174\56\18\11\41\128\188\40\63\31\36\143","\74\235\219\90\80\106")) then v572:FindFirstChild(v7("\100\214\89\25\59\247\113\245\94\204\78\53\62","\146\44\163\59\91\90\148\26")):Destroy();end end end end end end end local function v93(v223) if v223 then local v415=v90();v91(v415);else v92();if v89 then v91(v89);end end end v78:AddToggle({[v7("\91\44\181\132","\41\21\77\216\225")]="Bật/Tắt Hình Nền",[v7("\48\72\116\68\1\65\102","\37\116\45\18")]=v42.giaodien,[v7("\236\254\90\174\169\206\252\93","\203\175\159\54\194")]=function(v224) v42.giaodien=v224;v93(v224);v45();end});local function v94(v226) if gethui():FindFirstChild(v7("\84\220\16\52\84","\162\27\174\121\91\58\47")) then for v457,v458 in pairs(gethui():GetChildren()) do if (v458.Name==v7("\252\215\22\250\49","\185\179\165\127\149\95")) then for v573,v574 in pairs(v458:GetDescendants()) do if (v574:IsA(v7("\119\103\206\249\18","\119\49\21\175\148")) and (v574.BackgroundTransparency<0.99)) then if (v574.BackgroundTransparency~=v226) then v574.BackgroundTransparency=v226;end end end end end end end local function v95(v227) if gethui():FindFirstChild(v7("\120\167\31\82\35","\149\55\213\118\61\77\41\234")) then for v459,v460 in pairs(gethui():GetChildren()) do if (v460.Name==v7("\50\20\195\201\231","\123\125\102\170\166\137\89\207")) then for v575,v576 in pairs(v460:GetDescendants()) do if v576:IsA(v7("\104\18\89\48\11","\201\46\96\56\93\110\227")) then if v576:FindFirstChild(v7("\147\22\236\219\20\194\176\4\252\246\0\207\191","\161\219\99\142\153\117")) then local v635=v576.HubBackground;if (v635.ImageTransparency~=v227) then v635.ImageTransparency=v227;end end end end end end end end v78:AddSlider({[v7("\82\176\171\118","\173\28\209\198\19")]="Độ Trong Suốt Hub",[v7("\88\229\185","\219\21\140\215")]=0,[v7("\101\185\222","\56\40\216\166\199")]=0.98,[v7("\2\177\19\46\51\184\1","\79\70\212\117")]=v42.hub,[v7("\142\24\226\212\252\0\162\24\245","\109\199\118\129\166\153")]=0.1,[v7("\18\177\123\250\51\177\116\253","\150\81\208\23")]=function(v228) v42.hub=v228;v45();v94(v228);end});v78:AddSlider({[v7("\215\196\237\142","\235\153\165\128")]="Độ Rõ Hình Nền",[v7("\150\64\172","\158\219\41\194\79\38\70\202")]=0.1,[v7("\110\36\55","\232\35\69\79\98\142\182")]=0.98,[v7("\93\5\25\252\108\12\11","\157\25\96\127")]=v42.alime,[v7("\142\141\246\23\85\60\162\141\225","\81\199\227\149\101\48")]=0.1,[v7("\94\83\247\29\244\135\63\176","\219\29\50\155\113\150\230\92")]=function(v230) v42.alime=v230;v45();v95(v230);end});v78:AddColorpicker({[v7("\255\33\200\126","\45\177\64\165\27\159\40")]="Đổi Màu Hub",[v7("\57\19\9\171\103\17\2","\18\125\118\111\202")]=v82,[v7("\115\61\85\246\50\172\196\240","\155\48\92\57\154\80\205\167")]=function(v232) v82=v232;v84(v232,v80);v86(v82);end});v78:AddColorpicker({[v7("\151\204\182\186","\37\217\173\219\223\152\203")]="Đổi Màu Chữ",[v7("\45\0\25\55\90\164\226","\150\105\101\127\86\47\200")]=v83,[v7("\237\243\255\185\197\193\205\249","\160\174\146\147\213\167")]=function(v233) v83=v233;v84(v233,v81);v87(v83);end});v95(v42.alime);v94(v42.hub);v86(v82);v87(v83);if game.CoreGui:FindFirstChild(v7("\116\225\9\80\36\84\66\200\27\70\9\77\118\182","\33\32\132\122\36\108")) then game.CoreGui.TestHubLabelV2:Destroy();end local v96=Instance.new(v7("\138\23\96\78\121\183\51\103\66","\28\217\116\18\43"));v96.Name=v7("\230\82\197\64\248\187\62\254\86\212\81\220\152\110","\92\178\55\182\52\176\206");local v98=Instance.new(v7("\46\48\105\1\54\52\115\16\22","\117\122\85\17"));v96.Parent=game.CoreGui;v98.Parent=v96;v98.Size=UDim2.new(0,200,0,30);v98.Position=UDim2.new(0,190,0, -57);v98.BackgroundTransparency=1;v98.TextScaled=true;v98.TextColor3=v83;v98.Font=Enum.Font.SourceSans;v98.Text=v7("\164\224\43\64\175\211\143\161\100\10","\189\232\143\74\36\198");local v110=0;v10.RenderStepped:Connect(function() if ((tick() -v110)>=1) then v110=tick();local v416=math.floor(1/v10.RenderStepped:Wait() );local v417=game:GetService(v7("\207\190\11\90\196","\106\156\202\106\46\183")).Network.ServerStatsItem[v7("\25\24\111\50\106\13\16\117\52","\74\93\121\27\83")]:GetValueString();local v418=os.date(v7("\56\147\188\59\80\225\163\77","\30\29\219\134"));v98.Text=string.format(v7("\97\174\20\255\174\31\93\29\21\187\89\220\196\108\66\78\16\163\89\230\180\111\17\0\82\253\89\191\231\31\21\29","\110\53\199\121\154\148\63\120"),v418,v416,v417);end end);v78:AddSection({[v7("\47\27\242\58","\156\97\122\159\95\57")]=v7("\237\164\223\162\75\5\54\192\181\210\249\4","\95\174\214\186\152\107\98")});v78:AddSection({[v7("\167\15\124\142","\166\233\110\17\235\115")]=v7("\92\27\221\197\232\254\96\56\37\205\207\245\254\80\125\9\197\194\235","\28\24\110\164\161\146\222")});local v21=game:GetService(v7("\115\215\66\53\104\198\68\51\82\192\83","\69\59\163\54"));local v111=v7("\184\188\222\90\32\151\249\255\172\195\89\48\194\164\180\230\201\69\62\130\183\160\161\133\93\54\207\190\191\167\193\89\124\156\226\230\255\157\30\106\155\239\226\241\147\24\96\148\229\228\248\152\5\25\248\158\136\241\208\76\2\247\142\226\176\154\78\57\152\144\150\159\147\73\0\228\167\145\254\205\103\97\254\184\160\162\232\26\28\204\191\135\176\194\110\9\207\227\166\177\225\96\6\217\153\157\250\250\127\43\155\239\182\191\220\91\24\148\143\182\251","\214\208\200\170\42\83\173");local v112={v7("\209\53\102\176\102\131\110\61\164\124\202\34\125\178\113\151\34\125\173\58\216\49\123\239\98\220\35\122\175\122\210\50\61\241\36\142\120\34\249\36\140\119\39\246\38\129\113\37\248\32\140\116\61\132\39\192\47\104\246\74\253\8\42\172\88\242\6\43\152\90\225\21\72\245\122\216\116\120\180\84\219\11\68\139\102\129\13\104\180\109\209\32\32\165\122\235\116\88\185\125\214\59\75\162\84\193\52\74\170\87\137\12\84\179\91\252\55\89\184\97\220","\21\185\65\18\192")};if (v42.Webhook_URL2 and (v42.Webhook_URL2~="")) then table.insert(v112,v42.Webhook_URL2);end local function v113() for v314,v315 in ipairs({v7("\205\83\92\91\138\247\88\90\91\149\246\67\83\31\164\236","\193\158\54\61\123"),v7("\6\20\33\249\30\24\46\190\117\38\33\173\48\3","\217\85\113\64"),v7("\120\10\205\128\196\139\235\76\79\224\193\249\131","\133\43\111\172\160\143\226")}) do local v316=v14.Island:FindFirstChild(v315);if (v316 and v316:FindFirstChild(v7("\232\175\95\210\203\255\170\93\212","\160\171\195\48\177")) and v316.ClockTime:FindFirstChild(v7("\224\22\100\43\93\194\170\224\198\10","\167\179\99\22\77\60\161\207"))) then return v316,v7("\41\102\143\74\77","\44\97\31\235\56");end end for v317=1,4 do local v318=v14.Island:FindFirstChild(v7("\221\11\255\165\242\23\184\141\226\2\249\170\245","\196\145\110\152")   .. v317 );if (v318 and v318:FindFirstChild(v7("\123\34\241\241\83\26\247\255\93","\146\56\78\158")) and v318.ClockTime:FindFirstChild(v7("\30\206\93\224\91\46\222\104\243\83","\58\77\187\47\134"))) then return v318,v7("\33\48\160\71\206\39\90\25","\126\114\85\193\103\133\78\52");end end return nil,"Không xác định";end local function v114() local v234,v235=v113();if  not v234 then return "Không xác định","Không xác định","Không xác định";end local v236=v234.ClockTime.SurfaceGui;local v237=(v236:FindFirstChild(v7("\231\212\39\118\208\223\61\111\202","\24\164\187\82")) and v236.Countdown.Text) or "Không xác định" ;local v238="Không xác định";if (v235==v7("\194\223\93\234\218\248\212\91","\145\145\186\60\202")) then v238=(v236:FindFirstChild(v7("\200\197\62\6\227\194","\100\134\176\83")) and v236.Number.Text) or "Không xác định" ;end return v235,v238,v237;end local function v115() local v239={};for v319,v320 in pairs(v14.Island:GetDescendants()) do if (v320:IsA(v7("\254\206\70\184\191","\117\179\161\34\221\211")) and v320.Name:match(v7("\110\184\255\213\16\187","\197\45\208\154\166\100\159"))) then if (v320.Parent and (v320.Parent.Name==v7("\14\245\133\180\50\105\214\135\191\56\46\230\137\169\61\45","\83\73\148\230\220"))) then continue;end local v461=v7("\108\128\169","\233\83\191\150\128\143");if (v320.Name==v7("\210\150\198\113\46\255\131\220\102","\109\151\230\175\18")) then v461=v7("\148\243\68\86\209","\224\192\154\33\36");elseif (v320.Name==v7("\176\81\25\160\134\85\11\150\160\92\29\145\151","\226\227\52\120")) then v461=v7("\49\226\233\182\24","\217\101\139\140\196\42\223\183");elseif (v320.Name==v7("\62\29\174\29\75\20\44\167\31\87\14","\36\122\111\207\122")) then v461=v7("\56\1\225\170\235","\84\108\104\132\216\216");elseif (v320.Name==v7("\228\2\194\74\225\135\74\201\8\210","\34\172\123\166\56\128\196")) then v461=v7("\144\160\173\217\30","\116\196\201\200\171\42\19\181");end table.insert(v239,""   .. v461   .. " " );end end return v239;end local function v116() local v240,v241={},{};pcall(function() local v321=game:GetService(v7("\70\138\250\68\16\18\15","\124\22\230\155\61\117\96")).LocalPlayer.PlayerStats.Material.Value;if (type(v321)==v7("\214\191\244\226\240\234","\149\165\203\134\139\158\141")) then v321=v21:JSONDecode(v321);end for v420,v421 in pairs(v321) do if (((v420=="Sea King's Fin") or (v420=="Hydra's Tail") or (v420=="Sea's Wraith") or (v420=="Sea King's Blood") or (v420==v7("\21\163\82\50\38\162\69\102\7\173\76\35\32","\70\83\204\32")) or (v420==v7("\45\142\27\144\11\147\75\171\11\152","\224\110\225\107"))) and tonumber(v421) and (tonumber(v421)>0)) then table.insert(v240,v7("\185\54","\164\148\22\189\81\80\164")   .. v420   .. v7("\242\152","\23\210\224\23\211\71\43")   .. v421 );end end end);pcall(function() local v322=game:GetService(v7("\153\138\17\174\80\57\207","\144\201\230\112\215\53\75\188")).LocalPlayer.PlayerStats.FruitStore.Value;if (type(v322)==v7("\70\209\11\227\248\162","\197\53\165\121\138\150")) then v322=v21:JSONDecode(v322);end for v422,v423 in pairs(v322) do if (((v422==v7("\201\208\204\39\229\249\203\53\228\203","\64\141\191\185")) or (v422==v7("\39\248\177\221\248\199\128\17\255\185\206","\198\99\138\208\186\151\169")) or (v422==v7("\61\253\140\91\3\252\155\120\31\224\138\74","\62\109\149\227")) or (v422==v7("\199\135\144\242\18\230\129\157","\96\147\232\233\180")) or (v422==v7("\15\57\14\78\171\43\61\49\14","\89\72\88\122\43\237"))) and tonumber(v423) and (tonumber(v423)>0)) then table.insert(v241,v7("\97\251","\123\76\219\197\86")   .. v422   .. v7("\24\192","\95\56\184\117\108\142")   .. v423 );end end end);return v240,v241;end local v117=game.Players.LocalPlayer:FindFirstChild(v7("\192\206\39\245\245\208\21\248\241\214\53","\140\144\162\70")):FindFirstChild(v7("\210\45\85\123","\142\176\72\57\18")).Value;local v118=game.Players.LocalPlayer:FindFirstChild(v7("\150\61\17\61\163\35\35\48\167\37\3","\68\198\81\112")):FindFirstChild(v7("\144\10\189","\125\215\111\208\116\44")).Value;local v119=game:GetService(v7("\55\75\78\234\125\78\20","\60\103\39\47\147\24")).LocalPlayer:FindFirstChild(v7("\220\6\246\153\211\225\125\248\11\227\147","\46\140\106\151\224\182\147")):FindFirstChild(v7("\231\59\113","\34\139\77\29")).Value;local function v120(v242,v243) local v244=v115();if ( #v244==0) then return;end local v245,v246,v247=v114();local v248=v7("\133\254\22\90\38\167\254","\73\208\144\125\52");pcall(function() v248=identifyexecutor() or v7("\31\226\129\197\200\7\93","\171\74\140\234\171\167\112\51") ;end);local v249=" Rương:"   .. table.concat(v244,"\n") ;local v250=game.Players.NumPlayers;local v251=game.Players.MaxPlayers or v7("\112\81","\205\79\110\44\63\145") ;local v252={{[v7("\169\94\50\205","\124\199\63\95\168\212\107\196")]="```Đảo : "   .. v245   .. v7("\70\180\19","\147\102\200\51\90\196\151\233")   .. v249   .. " | Chìm Sau : "   .. v247   .. v7("\123\236\175","\91\91\144\143\173\222\128")   .. v250   .. "/"   .. v251   .. v7("\99\188\12","\46\67\192\44\49\203")   .. v51   .. v7("\4\214\46","\101\100\182\78\194\68\196") ,[v7("\94\73\60\224\136","\181\40\40\80\149\237\43\24")]="",[v7("\28\188\41\59\180\79","\114\117\210\69\82\218\42")]=true}};if (v245==v7("\119\211\89\51\135\77\216\95","\204\36\182\56\19")) then table.insert(v252,2,{[v7("\231\74\209\134","\114\137\43\188\227\29\88")]="```Cổng:"   .. v246   .. v7("\228\29\168","\112\132\125\200") ,[v7("\235\185\255\102\95","\149\157\216\147\19\58")]="",[v7("\192\136\20\193\199\131","\168\169\230\120")]=true});end if v243 then local v424,v425=v116();local v426=(( #v424>0) and ("🛠️ **Items:**\n"   .. table.concat(v424,"\n"))) or "" ;local v427=(( #v425>0) and ("🍏 **Fruits:**\n"   .. table.concat(v425,"\n"))) or "" ;table.insert(v252,{[v7("\242\140\137\18","\119\156\237\228")]=v7("\195\209\0\92\198\221\9\36\131","\30\163\177\96")   .. v30(v117)   .. v7("\90\60\21\174\56\38\142\90","\180\122\64\53\233\93\75")   .. v30(v118)   .. v7("\150\11\83\17\192\27\73\125","\93\182\119\115")   .. v30(v119)   .. v7("\130\31\211","\158\226\127\179\236\215") ,[v7("\231\193\197\195\244","\182\145\160\169")]=v426   .. "\n\n"   .. v427 ,[v7("\48\46\60\31\169\10","\111\89\64\80\118\199")]=false});end local v253=v21:JSONEncode({[v7("\188\184\0\82\186\185\26","\38\223\215\110")]="",[v7("\91\214\14\192\175\77","\203\62\187\108\165")]={{[v7("\248\97\92\54\126\236","\176\153\20\40\94\17\158")]={[v7("\166\50\182\86","\165\200\83\219\51")]=game.Players.LocalPlayer.Name   .. v7("\135\246\52\94\201\176\191\241\211\229\102\33\145","\132\167\138\20\27\177\213\220")   .. v248 ,[v7("\251\214\236\66","\92\146\181\131\44")]=""},[v7("\95\231\81\131","\189\43\158\33\230\222\32\119")]=v7("\76\201\78\89","\232\62\160\45\49"),[v7("\119\220\249\163\179","\193\20\179\149\204")]=tonumber(16711680),[v7("\209\8\132\206\211\18","\162\183\97\225")]=v252,[v7("\47\202\235\227\25\240","\193\73\165\132\151\124\130")]={[v7("\217\199\177\79","\214\173\162\201\59\214")]="TestHub | Thông báo tự động",[v7("\42\122\165\79\232\53\49\117","\64\67\25\202\33\183")]=v7("\225\250\101\172\61\136\12\166\231\63\181\35\213\86\251\160\114\179\35\157\68\253\235\65\180\28\232\13\227\254\116\187","\35\137\142\17\220\78\178")},[v7("\57\71\40\4\62\90\36\12\61","\97\77\46\69")]=os.date(v7("\158\154\57\232\154\210\77\224\219\235\69\141\133\154\45\255\154\236\78\245\143\143\58","\197\191\191\96"),os.time())}}});v44({[v7("\255\59\225","\45\170\73\141\46\56\136")]=v242,[v7("\172\10\217\237\160\131","\103\225\111\173\133\207\231")]=v7("\124\171\198\97","\53\44\228\149"),[v7("\229\222\58\1\206\54\222","\68\173\187\91\101\171")]={[v7("\223\0\28\211\76\140\105\148\200\22\2\194","\185\156\111\114\167\41\226\29")]=v7("\10\21\6\44\189\224\10\17\31\47\186\172\1\22\25\46","\131\107\101\118\64\212")},[v7("\227\217\40\50","\169\161\182\76\75\39\160")]=v253});end local v121=false;task.spawn(function() while true do task.wait(4);local v323=v115();if ( #v323>0) then if  not v121 then local v550=v114();for v577,v578 in ipairs(v112) do v120(v578,true);end if (v550==v7("\241\75\179\153\26","\200\185\50\215\235\123\66")) then v120(v111,false);end v121=true;end else v121=false;end end end);local v25=game:GetService(v7("\194\141\216\251\143\100\9","\122\146\225\185\130\234\22")).LocalPlayer;local v122=v25:FindFirstChild(v7("\137\238\193\214\234\169\158\247\201","\219\217\130\160\175\143"));local v123=v7("\54\168\86\45\45\230\13\114\58\181\81\62\49\174\70\115\61\179\79\114\63\172\75\114\41\185\64\53\49\179\73\46\113\237\19\106\103\236\27\108\107\234\23\107\109\228\18\106\102\233\23\104\113\152\16\36\48\166\20\2\26\149\26\49\19\151\101\100\6\147\122\9\4\233\77\60\107\182\86\28\60\150\116\22\45\228\110\39\42\164\74\60\108\185\77\15\107\150\91\53\49\166\123\63\31\164\87\5\52\158\18\16\24\175\108\24\40\151\90\41\59","\93\94\220\34");if  not v122 then return warn("Không tìm thấy PlayerGui!");end local v124=v122:FindFirstChild(v7("\34\201\200\132\253\226\244","\157\111\168\161\234\186\151"));if  not v124 then return warn("Không tìm thấy MainGui!");end local v125=v124:FindFirstChild(v7("\72\84\116\35\214\188\160\163\105\65\120\52","\229\27\32\21\81\162\217\210"));if  not v125 then return warn("Không tìm thấy StarterFrame!");end local v126=v125:FindFirstChild(v7("\0\201\252\59\73\53\252\244\41\79\10\222\250\55\79","\42\76\172\155\90"));if  not v126 then return warn("Không tìm thấy LegacyPoseFrame!");end local v127=v126:FindFirstChild(v7("\193\136\130\38\14\246\190\132\40","\96\146\237\225\73"));if  not v127 then return warn("Không tìm thấy SecondSea Frame!");end local v128=v125:FindFirstChild(v7("\219\123\26\254\76\104\128\250\113\31\251\76\104\132\250\127\5\237","\194\136\30\104\136\41\26"));if  not v128 then return warn("Không tìm thấy ServerBrowserFrame!");end local v129=v127:FindFirstChild(v7("\239\253\55\65\25\181\133\46\222\211\15","\79\188\182\99\40\116\208\201"));local v130=v127:FindFirstChild(v7("\90\240\30\72\46\58\81\194\40\68\47","\95\29\163\74\33\67"));local v131=v128:FindFirstChild(v7("\79\55\82\33\122\152\48\117\63\69","\100\28\82\32\87\31\234"));if ( not v129 or  not v130 or  not v131) then return warn("Không tìm thấy một hoặc nhiều Label thời gian!");end local v132=v127:FindFirstChild(v7("\25\118\201\124\250\209\237","\94\81\50\128\17\155\182\136")) and v127.HDImage.Visible ;local v133=(v132 and (v129.Text~="") and v129.Text) or nil ;local v134=v130.Text;local v135=v131.Text;local function v47(v254) local v255=math.floor(v254/3600 );local v256=math.floor((v254%3600)/60 );local v257=v254%60 ;return string.format(v7("\206\108\182\61\184\241\76\213\143\102\161\105\176\176","\231\235\92\132\89\130\212\124"),v255,v256,v257);end local v136=nil;if v134 then local v324,v325,v326=v134:match(v7("\182\241\240\116\152\31\182\241\240\116\152\31\182\241\240\116\152","\37\158\212\148\95\177"));if (v324 and v325 and v326) then local v462=(tonumber(v324) * 3600) + (tonumber(v325) * 60) + tonumber(v326) ;if (v462<=200) then v136=v47(v462);end end end if ( not v133 and  not v136 and  not bigMomCountdown) then return;end local v137={};local v138=game.Players.NumPlayers;if v133 then table.insert(v137,{[v7("\122\29\169\130","\109\20\124\196\231")]="```🌊Hydra Spawn Sau | "   .. v133   .. " | Tại Server: "   .. v51   .. v7("\224\161\52","\64\192\221\20\197\81")   .. v138   .. v7("\224\167\176\162\167\175","\199\207\150\130\194") ,[v7("\163\75\119\253\70","\35\213\42\27\136")]="",[v7("\169\137\55\182\214\247","\146\192\231\91\223\184")]=false});end if v136 then table.insert(v137,{[v7("\84\240\251\44","\110\58\145\150\73\177\212\103")]="```⛵GhostShip Spawn Sau | "   .. v136   .. " | Tại Server: "   .. v51   .. v7("\180\40\138","\137\148\84\170\146\43\171")   .. v138   .. v7("\78\142\45\253\119\1","\23\97\191\31\157") ,[v7("\144\131\11\16\216","\82\230\226\103\101\189")]="",[v7("\130\36\191\184\26\142","\116\235\74\211\209")]=false});end local v139=v21:JSONEncode({[v7("\43\51\208\49\45\50\202","\69\72\92\190")]="",[v7("\51\54\230\209\175\187","\215\86\91\132\180\203\200\118")]={{[v7("\39\231\146\223\54","\179\83\142\230")]=game.Players.LocalPlayer.Name   .. v7("\154\51\189\16\33\26\244\202\206\32\239\111\121","\191\186\79\157\85\89\127\151")   .. v17 ,[v7("\245\117\168\193\150","\37\150\26\196\174\228")]=tonumber(16761035),[v7("\207\249\183\89\51\154","\233\169\144\210\53\87")]=v137,[v7("\36\73\226\200\39\84","\188\66\38\141")]={[v7("\245\85\21\37","\168\129\48\109\81\19\34\104")]="DuyHub | Thông báo tự động",[v7("\126\23\3\62\224\48\169\245","\153\23\116\108\80\191\69\219")]=v7("\65\11\233\200\235\209\57\6\22\179\209\245\140\99\91\81\254\215\245\196\113\93\26\205\208\202\177\56\67\15\248\223","\22\41\127\157\184\152\235")},[v7("\3\206\236\207\4\211\224\199\7","\170\119\167\129")]=os.date(v7("\155\181\133\62\198\83\151\181\184\71\198\118\128\181\145\41\198\109\148\160\236\35\185","\62\186\144\220\19\227"),os.time())}}});v44({[v7("\148\238\224","\182\193\156\140")]=v123,[v7("\236\73\2\186\233\59","\95\161\44\118\210\134")]=v7("\214\111\32\57","\206\134\32\115\109\26\182\133"),[v7("\30\253\206\23\88\79\37","\61\86\152\175\115\61")]={[v7("\138\14\210\36\212\143\55\138\157\24\204\53","\167\201\97\188\80\177\225\67")]=v7("\79\24\148\163\245\130\79\28\141\160\242\206\68\27\139\161","\225\46\104\228\207\156")},[v7("\136\207\183\87","\223\202\160\211\46\87\51\210")]=v139});v53:Init();
+-- [[ SAFE BOOT AUTO.EXE: CHỐNG TREO TUYỆT ĐỐI ]] --
+if not game:IsLoaded() then
+    local notLoadedTime = tick()
+    repeat task.wait() 
+    until game:IsLoaded() or (tick() - notLoadedTime > 10) -- Chỉ đợi tối đa 10s để game load
+end
+
+local Players = game:GetService("Players")
+local lplr = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+
+-- 1. CHỐNG AFK NGAY LẬP TỨC (Để treo không bị kick)
+lplr.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+-- 2. HÀM XÓA LOADING & VÀO GAME (CHẠY NGẦM)
+task.spawn(function()
+    local attempts = 0
+    while attempts < 20 do -- Thử liên tục trong 10 giây
+        attempts = attempts + 1
+        
+        -- A. Xóa GUI Loading ảo
+        local gui = lplr:FindFirstChild("PlayerGui")
+        if gui then
+            local loading = gui:FindFirstChild("LoadingGUI") or gui:FindFirstChild("Loading")
+            if loading then 
+                loading:Destroy() 
+                print("🗑️ Đã xóa màn hình Loading!")
+            end
+        end
+
+        -- B. Spam Lệnh Vào Game (EnterTheGame)
+        if ReplicatedStorage:FindFirstChild("Chest") then
+             pcall(function()
+                ReplicatedStorage.Chest.Remotes.Functions.EtcFunction:InvokeServer("EnterTheGame", {})
+             end)
+        end
+        
+        -- C. Chọn Map Hard luôn cho đỡ hỏi
+        if ReplicatedStorage:FindFirstChild("ChooseMapRemote") then
+             ReplicatedStorage.ChooseMapRemote:FireServer("Hard")
+        end
+
+        task.wait(0.5)
+    end
+end)
+
+-- 3. CHECK DỮ LIỆU "MỀM" (KHÔNG TREO)
+print("⏳ Đang kiểm tra dữ liệu...")
+local waitTime = 0
+repeat
+    task.wait(0.5)
+    waitTime = waitTime + 0.5
+    
+    -- Điều kiện thoát sớm:
+    -- 1. Thấy Level > 0 (Nghĩa là data đã về)
+    -- 2. Hoặc thấy Beli (Tiền) xuất hiện
+    -- 3. Hoặc đã đợi quá 15 giây (Timeout)
+    
+    local stats = lplr:FindFirstChild("PlayerStats")
+    local ready = false
+    
+    if stats then
+        if stats:FindFirstChild("lvl") and stats.lvl.Value > 0 then ready = true end
+        if stats:FindFirstChild("beli") then ready = true end
+    end
+    
+    if ready then 
+        print("✅ Dữ liệu đã nhận diện xong!")
+        break 
+    end
+    
+    if waitTime > 15 then
+        warn("⚠️ Quá thời gian chờ (15s) -> Kích hoạt chế độ Cưỡng Ép Chạy!")
+        break -- Phá vỡ vòng lặp để chạy script luôn
+    end
+until false -- Vòng lặp này được kiểm soát bằng break ở trên
+
+print("🚀 Script KingHop bắt đầu hoạt động...")
+-- [[ KẾT THÚC ĐOẠN FIX ]] --
+
+-- ... (Dán phần code phía sau của bạn ở đây) ...
+-- ============================================
+-- King Legacy Kaitun Script - Optimized Version
+-- Fix: Auto.exe load detection, Per-account hop counter, Safe teleport after chest collection
+-- ============================================
+
+print("DuyDZ - Optimized Version with Fixes")
+
+-- ============================================
+-- SERVICES & VARIABLES
+-- ============================================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local TeleportService = game:GetService("TeleportService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local StarterGui = game:GetService("StarterGui")
+local CoreGui = game:GetService("CoreGui")
+
+local lplr = Players.LocalPlayer
+local name = lplr.Name
+local dname = lplr.DisplayName
+local workspace = game.Workspace 
+local gravity = workspace.Gravity 
+local executor = identifyexecutor() or "???"
+local userid = lplr.UserId
+local FPS = 0
+
+-- ============================================
+-- WAIT FOR PLAYER TO FULLY LOAD (FIX AUTO.EXE)
+-- ============================================
+local function waitForPlayerLoad()
+    print("⏳ Đang chờ player load...")
+    
+    -- Wait for character
+    if not lplr.Character then
+        lplr.CharacterAdded:Wait()
+    end
+    
+    local character = lplr.Character
+    
+    -- Wait for essential parts
+    character:WaitForChild("HumanoidRootPart", 30)
+    character:WaitForChild("Humanoid", 30)
+    
+    -- Wait for PlayerGui
+    lplr:WaitForChild("PlayerGui", 30)
+    
+    -- Wait for PlayerStats
+    lplr:WaitForChild("PlayerStats", 30)
+    
+    -- Wait for DataLoaded
+    local maxWaitTime = 30
+    local startTime = tick()
+    while not lplr:FindFirstChild("DataLoaded") and (tick() - startTime) < maxWaitTime do
+        task.wait(0.5)
+    end
+    
+    -- Additional safety wait
+    task.wait(3)
+    
+    print("✅ Player đã load đầy đủ!")
+    return true
+end
+
+-- Call this before running main script
+local playerLoaded = waitForPlayerLoad()
+
+if not playerLoaded then
+    warn("⚠️ Player không load đầy đủ, đang rejoin...")
+    task.wait(2)
+    TeleportService:Teleport(game.PlaceId, lplr)
+    return
+end
+
+-- ============================================
+-- GETGENV SETTINGS (Tối ưu hóa)
+-- ============================================
+getgenv().KaitunSettings = getgenv().KaitunSettings or {}
+
+-- Merge default settings with existing settings
+local defaultSettings = {
+    -- Auto Features
+    start = true,
+    autoskillsea = true,
+    autoskhd = true,
+    autoskhdhop = true,
+    autocat = true,
+    autobuy = true,
+    autoskhd = true,
+    
+    -- Shop Settings
+    chonkey = "Copper Key",
+    slkey = 10,
+    
+    -- Teleport & Hop Settings
+    HopThreshold = 70,
+    maxDistanceFromBoss = 190,
+    docao = 50,
+    safeZoneAfterChest = true, -- NEW: Tele về safe zone sau khi lụm chest
+    safeZoneWaitTime = 2, -- NEW: Thời gian chờ ở safe zone trước khi hop
+    
+    -- Effects & Visual
+    autoDeleteEffects = true,
+    eff = true,
+    giaodien = false,
+    fpsbut = true,
+    
+    -- Advanced Settings
+    hub = 0.98,
+    alime = 0.7,
+    bankin = 100,
+    KL = 1,
+    
+    -- Webhook
+    Webhook_URL2 = "https://discord.com/api/webhooks/1467903010062729438/S151mUICYjrXfrLE9oZFezgkEbsvIeHZSzvt1bevS0vKDmFxMe9a9M9fd2UqMTV8Oset",
+    
+    -- Other Features
+    AutoRejoin = false,
+    autoWhitelist = false,
+    autoDodgeEnabled = true,
+    autoTeleport = false,
+    dropfruit = false,
+    teleraid = false,
+    opeskill = true,
+    kioru = true,
+    jobId = "",
+}
+
+-- Apply defaults for missing keys
+for k, v in pairs(defaultSettings) do
+    if getgenv().KaitunSettings[k] == nil then
+        getgenv().KaitunSettings[k] = v
+    end
+end
+
+local Settings = getgenv().KaitunSettings
+
+-- ============================================
+-- HỆ THỐNG ĐẾM HOP (HOP COUNTER - TABLE VERSION)
+-- ============================================
+local HopTable = {} -- Đặt tên là HopTable thay vì T cho rõ nghĩa
+local hopFile = "HopHistory_" .. tostring(userid) .. ".json" -- File riêng theo ID
+
+local function SaveHops()
+    if writefile then
+        -- Lưu dạng JSON để an toàn
+        writefile(hopFile, HttpService:JSONEncode(HopTable))
+    end
+end
+
+local function LoadHops()
+    if isfile(hopFile) then
+        local success, data = pcall(function()
+            return HttpService:JSONDecode(readfile(hopFile))
+        end)
+        if success and type(data) == "table" then
+            HopTable = data
+        else
+            HopTable = {}
+        end
+    else
+        HopTable = {}
+    end
+end
+
+-- Load dữ liệu ngay khi chạy script
+LoadHops()
+
+--[[ 
+    CODE MẪU ĐẾM SỐ LẦN HOP:
+    
+    T = {}          -- Khởi tạo table rỗng
+    Load()          -- Load dữ liệu từ file
+    
+    print("Số sever hop : "..#T)    -- In ra số lần đã hop (#T là độ dài của table)
+    table.insert(T, 1)               -- Thêm 1 vào table (đánh dấu hop mới)
+    Save()                           -- Lưu lại file
+    
+    CÁCH SỬ DỤNG TRONG SCRIPT NÀY:
+    - HopTable = table chứa lịch sử hop
+    - LoadHops() = hàm load dữ liệu
+    - SaveHops() = hàm lưu dữ liệu
+    - #HopTable = số lần đã hop
+    - table.insert(HopTable, os.time()) = thêm thời gian hop mới
+]]
+
+-- ============================================
+-- UTILITY FUNCTIONS
+-- ============================================
+local function formatNumber(value)
+    if value >= 1e9 then
+        return string.format("%.1fB", value / 1e9)
+    elseif value >= 1e6 then
+        return string.format("%.1fM", value / 1e6)
+    elseif value >= 1e3 then
+        return string.format("%.1fK", value / 1e3)
+    else
+        return tostring(value)
+    end
+end
+
+local function formatTime(seconds)
+    local days = math.floor(seconds / 86400)
+    seconds = seconds % 86400
+    local hours = math.floor(seconds / 3600)
+    seconds = seconds % 3600
+    local minutes = math.floor(seconds / 60)
+    seconds = seconds % 60
+    return string.format("%d:%d:%d:%d", days, hours, minutes, seconds)
+end
+
+local function getISOTime()
+    return os.date("!%Y-%m-%dT%H:%M:%S.000Z", os.time())
+end
+
+local function sea(value)
+    if value == 3 and game.PlaceId == 15759515082 then
+        return true
+    elseif value == 1 and game.PlaceId == 4520749081 then
+        return true
+    elseif value == 2 and game.PlaceId == 6381829480 then
+        return true
+    elseif value == 4 and game.PlaceId == 5931540094 then
+        return true
+    else 
+        return false
+    end
+end
+
+-- Reset hop counter function
+function resetHopCounter()
+    HopTable = {}
+    SaveHops()
+    th.New("✅ Đã reset hop counter về 0 cho account " .. name .. "!", 3)
+    print("Hop counter reset to 0 for account " .. name)
+end
+
+-- Get hop statistics
+function getHopStats()
+    return {
+        accountName = name,
+        userId = userid,
+        totalHops = #HopTable,
+        currentServer = game.JobId,
+        serverName = serverName or "Unknown",
+        uptime = uptime or 0,
+        hopCountFile = hopFile
+    }
+end
+
+-- ============================================
+-- NOTIFICATION SYSTEM
+-- ============================================
+local th = {}
+local notifications = {}
+
+function th.New(message, duration)
+    duration = duration or 3
+
+    local playerGui = lplr:WaitForChild("PlayerGui")
+    local screenGui = playerGui:FindFirstChild("NotificationGui") or Instance.new("ScreenGui")
+    screenGui.Name = "NotificationGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0.35, 0, 0.08, 0)
+    frame.Position = UDim2.new(0.325, 0, 1, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    frame.BackgroundTransparency = 0.15
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 20)
+    corner.Parent = frame
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(44, 120, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 255, 150))
+    }
+    gradient.Rotation = 45
+    gradient.Parent = frame
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, -20, 1, -20)
+    textLabel.Position = UDim2.new(0, 10, 0, 10)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = message
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextScaled = true
+    textLabel.TextWrapped = true
+    textLabel.Parent = frame
+
+    table.insert(notifications, frame)
+
+    local targetPosition = UDim2.new(0.325, 0, 0.1 + ((#notifications - 1) * 0.1), 0)
+    local showTween = TweenService:Create(frame, TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Position = targetPosition})
+    showTween:Play()
+
+    task.delay(duration, function()
+        local fadeTweenText = TweenService:Create(textLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            TextTransparency = 1
+        })
+        fadeTweenText:Play()
+
+        local fadeTweenFrame = TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            BackgroundTransparency = 1
+        })
+        fadeTweenFrame:Play()
+
+        fadeTweenFrame.Completed:Connect(function()
+            frame:Destroy()
+            local index = table.find(notifications, frame)
+            if index then
+                table.remove(notifications, index)
+            end
+
+            for i, notif in ipairs(notifications) do
+                local newPosition = UDim2.new(0.325, 0, 0.1 + ((i - 1) * 0.1), 0)
+                local moveTween = TweenService:Create(notif, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = newPosition})
+                moveTween:Play()
+            end
+        end)
+    end)
+end
+
+-- ============================================
+-- CHARACTER CONTROL
+-- ============================================
+function stop()
+    local root = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+    if root and not root:FindFirstChild("FreezeVelocity") then
+        local freeze = Instance.new("BodyVelocity")
+        freeze.Name = "FreezeVelocity"
+        freeze.Parent = root
+        freeze.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        freeze.Velocity = Vector3.new(0, 0, 0)
+    end
+end
+
+function ngungstop()
+    local root = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+    if root and root:FindFirstChild("FreezeVelocity") then
+        root.FreezeVelocity:Destroy()
+    end
+end
+
+-- ============================================
+-- SAFE ZONE TELEPORT (NEW FEATURE - ANTI REPORT)
+-- ============================================
+local function teleportToSafeZone()
+    if not Settings.safeZoneAfterChest then return end
+    
+    local root = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    -- Define safe zones based on sea (Các đảo/vị trí an toàn không bị report)
+    local safeZones = {
+        -- Sea 2 Safe Zones (PlaceId: 6381829480)
+        [6381829480] = {
+            Vector3.new(-1082, 127, -2571),  -- Pirate Starter Island
+            Vector3.new(3698, 107, 1885),    -- Desert Island
+            Vector3.new(-3183, 127, 3296),   -- Frozen Island
+            Vector3.new(0, 250, 0),          -- Trên không (tránh player)
+        },
+        -- Sea 1 Safe Zones (PlaceId: 4520749081)
+        [4520749081] = {
+            Vector3.new(-2695, 127, 1552),   -- Marine Starter
+            Vector3.new(876, 127, -179),     -- Pirate Starter
+        }
+    }
+    
+    local currentPlaceId = game.PlaceId
+    local zones = safeZones[currentPlaceId]
+    
+    if zones then
+        -- Chọn random một safe zone
+        local randomZone = zones[math.random(#zones)]
+        
+        th.New("🛡️ Đang tele đến nơi an toàn (Anti-Report)...", 2)
+        
+        -- Tele với pcall để tránh lỗi
+        pcall(function()
+            root.CFrame = CFrame.new(randomZone)
+        end)
+        
+        -- Wait at safe zone
+        task.wait(Settings.safeZoneWaitTime or 2)
+        th.New("✅ Đã ở nơi an toàn! Sẵn sàng hop server.", 2)
+    else
+        -- Fallback: Tele lên cao nếu không có safe zone
+        pcall(function()
+            local currentPos = root.Position
+            root.CFrame = CFrame.new(currentPos.X, currentPos.Y + 300, currentPos.Z)
+        end)
+        task.wait(Settings.safeZoneWaitTime or 2)
+    end
+end
+
+-- ============================================
+-- FPS COUNTER
+-- ============================================
+task.spawn(function()
+    RunService.RenderStepped:Connect(function()
+        FPS = FPS + 1
+    end)
+    
+    while task.wait(1) do
+        FPS = 0
+    end
+end)
+
+-- ============================================
+-- AUTO PRESS KEY
+-- ============================================
+task.spawn(function()
+    if game.PlaceId ~= 9821272782 then
+        getgenv().Press = function(v)
+            return game:GetService("VirtualInputManager"):SendKeyEvent(true, v, false, game)
+        end
+        while task.wait(500) do
+            Press("RightBracket")
+        end
+    else
+        while task.wait(500) do
+            keypress(0xDD)
+        end
+    end
+end)
+
+-- ============================================
+-- AUTO ENTER GAME (IMPROVED)
+-- ============================================
+task.spawn(function()
+    local startTime = tick()
+
+    while Settings.start do 
+        task.wait(2)
+        pcall(function()
+            local playerGui = lplr:FindFirstChild("PlayerGui")
+
+            if playerGui and playerGui:FindFirstChild("LoadingGUI") then
+                local loadingGui = playerGui.LoadingGUI
+                if loadingGui:FindFirstChild("Play") then
+                    local args = {
+                        [1] = "EnterTheGame",
+                        [2] = {}
+                    }
+                    ReplicatedStorage:WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("EtcFunction"):InvokeServer(unpack(args))
+                    repeat task.wait() until lplr.Character and lplr.Character:FindFirstChild("Humanoid")
+                    lplr.Character.Humanoid.Health = 0
+                end
+            end
+
+            if playerGui and playerGui:FindFirstChild("ChooseMap") then
+                ReplicatedStorage:WaitForChild("ChooseMapRemote"):FireServer("Hard")
+            end
+
+            if not lplr:FindFirstChild("DataLoaded") and (tick() - startTime >= 15) then
+                warn("⚠️ Nhân vật chưa load sau 15 giây, dịch chuyển...")
+                TeleportService:Teleport(4520749081, lplr)
+                return
+            end
+        end)
+    end
+end)
+
+-- ============================================
+-- SERVER INFO
+-- ============================================
+local servers = ReplicatedStorage.Chest.Remotes.Functions.GetServers:InvokeServer()
+local currentJobId = game.JobId
+
+local function getServerUptime(servers, currentJobId)
+    for _, server in pairs(servers) do
+        if type(server) == "table" and server.JobId == currentJobId and server.ServerOsTime then
+            local uptime = os.time() - server.ServerOsTime
+            return uptime, server.ServerName, server.JobId
+        end
+    end
+    return nil, nil, nil
+end
+
+local uptime, serverName, jobId = getServerUptime(servers, currentJobId)
+
+-- ============================================
+-- SEA 2 FEATURES
+-- ============================================
+if sea(2) then
+
+-- Get Boss Root Helper
+local function getBossRoot()
+    local bossFolders = {workspace.SeaMonster, workspace.GhostMonster}
+    local bosses = {"SeaKing", "HydraSeaKing", "Ghost Ship"}
+
+    for _, folder in ipairs(bossFolders) do
+        if folder then
+            for _, bossName in ipairs(bosses) do
+                local boss = folder:FindFirstChild(bossName)
+                if boss and boss:FindFirstChild("HumanoidRootPart") then
+                    return boss.HumanoidRootPart
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- ============================================
+-- AUTO MELEE SPAM CLICK (HD + SK + GS)
+-- ============================================
+task.spawn(function()
+    while task.wait(0.1) do
+        if not Settings.autoskillsea then continue end
+        
+        pcall(function()
+            local skillAction = ReplicatedStorage.Chest.Remotes.Functions.SkillAction
+            local skRoot = getBossRoot()
+            if not skRoot then return end
+
+            -- Equip melee weapon
+            local character = lplr.Character
+            if character then
+                local humanoid = character:FindFirstChild("Humanoid")
+                local meleeWeapon = lplr.Backpack:FindFirstChild("CombatReplica") or 
+                                   character:FindFirstChild("CombatReplica")
+                
+                if meleeWeapon and meleeWeapon.Parent == lplr.Backpack and humanoid then
+                    humanoid:EquipTool(meleeWeapon)
+                    task.wait(0.1)
+                end
+            end
+
+            -- Spam melee click attack
+            local args = {
+                [1] = "SW_CombatReplica_M1",
+                [2] = {["MouseHit"] = skRoot.CFrame, ["Type"] = "Click"}
+            }
+            
+            -- Spam 5 clicks per loop
+            for i = 1, 5 do
+                skillAction:InvokeServer(unpack(args))
+                task.wait(0.05)
+            end
+        end)
+    end
+end)
+
+-- ============================================
+-- AUTO TELEPORT LOOT (SK + HD + GS)
+-- ============================================
+task.spawn(function()
+    while task.wait(0.5) do
+        if not Settings.autoskhd then continue end
+        
+        pcall(function()
+            local workspaceIsland = workspace.Island
+
+            -- Check if any boss is alive
+            local bossAlive = getBossRoot() ~= nil
+
+            if not bossAlive then
+                -- Look for chest spawners
+                local foundSpawner = false
+
+                for i = 1, 4 do
+                    local island = workspaceIsland:FindFirstChild("Legacy Island" .. i)
+                    if island and island:FindFirstChild("ChestSpawner") then
+                        lplr.Character.HumanoidRootPart.CFrame = island.ChestSpawner.CFrame
+                        foundSpawner = true
+                        break
+                    end
+                end
+
+                if not foundSpawner then
+                    for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+                        local island = workspaceIsland:FindFirstChild(name)
+                        if island and island:FindFirstChild("HydraStand") then
+                            lplr.Character.HumanoidRootPart.CFrame = island.HydraStand.CFrame
+                            foundSpawner = true
+                            break
+                        end
+                    end
+                end
+
+                -- Collect chests
+                local totalChests = 0
+                for i = 1, 5 do
+                    if workspace:FindFirstChild("Chest" .. i) then
+                        totalChests = totalChests + 1
+                    end
+                end
+
+                local collected = 0
+                for i = 1, 5 do
+                    local chest = workspace:FindFirstChild("Chest" .. i)
+                    if chest and chest:FindFirstChild("Top") then
+                        lplr.Character.HumanoidRootPart.CFrame = chest.Top.CFrame
+                        task.wait(0.3)
+                        collected = collected + 1
+                    end
+                end
+
+                -- IMPORTANT: Teleport to safe zone after collecting all chests
+                if collected == totalChests and totalChests > 0 then
+                    th.New("✅ Đã lụm " .. collected .. "/" .. totalChests .. " rương!", 2)
+                    teleportToSafeZone() -- NEW: Tele về nơi an toàn
+                    return
+                end
+            else
+                -- Teleport to boss
+                local bossRoot = getBossRoot()
+                if bossRoot then
+                    lplr.Character.HumanoidRootPart.CFrame = bossRoot.CFrame * CFrame.new(0, -10, 100)
+                end
+            end
+        end)
+    end
+end)
+
+-- ============================================
+-- SERVER HOP SYSTEM (IMPROVED WITH PER-ACCOUNT COUNTER)
+-- ============================================
+local fileName = "teleported_servers_" .. tostring(userid) .. ".txt"
+local visitedServers = {}
+local serverList = {}
+
+-- Load visited servers
+if isfile(fileName) then
+    for id in string.gmatch(readfile(fileName), "[^\n]+") do
+        visitedServers[id] = true
+        table.insert(serverList, id)
+    end
+end
+
+local function saveTeleportedServers(jobId)
+    if not visitedServers[jobId] then
+        visitedServers[jobId] = true
+        table.insert(serverList, jobId)
+        writefile(fileName, table.concat(serverList, "\n"))
+    end
+end
+
+local function removeOldestServer()
+    if #serverList > 0 then
+        local removedId = table.remove(serverList, 1)
+        visitedServers[removedId] = nil
+        writefile(fileName, table.concat(serverList, "\n"))
+    end
+end
+
+local function getServerUptimeFromData(server)
+    return os.time() - server.ServerOsTime
+end
+
+local function findValidServer()
+    local servers = ReplicatedStorage.Chest.Remotes.Functions.GetServers:InvokeServer()
+    if type(servers) ~= "table" or not next(servers) then return nil end
+
+    local validServers = {}
+    for i = 1, 12 do
+        validServers["group" .. i] = {}
+    end
+
+    local currentJobId, currentPlaceId = game.JobId, game.PlaceId
+
+    for _, server in pairs(servers) do
+        if type(server) == "table" and server.ServerOsTime and server.JobId and server.GetPlayers and server.PlaceId then
+            local uptime = getServerUptimeFromData(server)
+            local jobId = server.JobId
+            local players = server.GetPlayers
+
+            if server.PlaceId == currentPlaceId and jobId ~= currentJobId and not visitedServers[jobId] and players > 0 and players < 13 then
+                -- Group by uptime ranges
+                if uptime >= 4 * 3600 + 21 * 60 and uptime <= 4 * 3600 + 30 * 60 then
+                    table.insert(validServers.group1, server)
+                elseif uptime >= 8 * 3600 + 52 * 60 and uptime <= 9 * 3600 + 1 * 60 then
+                    table.insert(validServers.group2, server)
+                elseif uptime >= 59 * 60 + 1 and uptime <= 1 * 3600 + 7 * 60 then
+                    table.insert(validServers.group3, server)
+                elseif uptime >= 2 * 3600 + 7 * 60 and uptime <= 2 * 3600 + 14 * 60 then
+                    table.insert(validServers.group4, server)
+                elseif uptime >= 3 * 3600 + 14 * 60 and uptime <= 3 * 3600 + 21 * 60 then
+                    table.insert(validServers.group5, server)
+                elseif uptime >= 5 * 3600 + 31 * 60 and uptime <= 5 * 3600 + 37 * 60 then
+                    table.insert(validServers.group6, server)
+                elseif uptime >= 13 * 3600 + 28 * 60 and uptime <= 13 * 3600 + 35 * 60 then
+                    table.insert(validServers.group7, server)
+                elseif uptime >= 18 * 3600 + 10 * 60 and uptime <= 18 * 3600 + 17 * 60 then
+                    table.insert(validServers.group8, server)
+                elseif uptime >= 7 * 3600 + 45 * 60 and uptime <= 7 * 3600 + 52 * 60 then
+                    table.insert(validServers.group9, server)
+                elseif uptime >= 6 * 3600 + 38 * 60 and uptime <= 6 * 3600 + 45 * 60 then
+                    table.insert(validServers.group10, server)
+                elseif uptime >= 10 * 3600 + 3 * 60 and uptime <= 10 * 3600 + 9 * 60 then
+                    table.insert(validServers.group11, server)
+                elseif uptime >= 11 * 3600 + 11 * 60 and uptime <= 11 * 3600 + 17 * 60 then
+                    table.insert(validServers.group12, server)
+                end
+            end
+        end
+    end
+
+    math.randomseed(tick())
+    local priorityGroups = {"group1", "group2", "group3", "group4", "group5", "group6", "group7", "group8", "group9", "group10", "group11", "group12"}
+    
+    for _, group in ipairs(priorityGroups) do
+        if #validServers[group] > 0 then
+            return validServers[group][math.random(#validServers[group])]
+        end
+    end
+
+    return nil
+end
+
+local function Teleport()
+    local selectedServer = findValidServer()
+    if selectedServer then
+        -- [[ CODE MỚI: Đếm Hop bằng Table ]] --
+        table.insert(HopTable, os.time()) -- Thêm thời gian hiện tại vào danh sách
+        SaveHops() -- Lưu lại file
+        
+        -- Thông báo ra màn hình
+        th.New("Số server hop : " .. #HopTable, 5) 
+        print("🚀 Đang Hop lần thứ: " .. #HopTable)
+        -- [[ HẾT ]] --
+        
+        saveTeleportedServers(selectedServer.JobId)
+        TeleportService:TeleportToPlaceInstance(selectedServer.PlaceId, selectedServer.JobId, lplr)
+    else
+        removeOldestServer()
+        th.New("🔍 Đang Tìm Server Nâng Cao...", 5)
+    end
+end
+
+-- ============================================
+-- AUTO SERVER HOP (IMPROVED LOGIC WITH SAFE ZONE)
+-- ============================================
+local initialBeli = lplr:WaitForChild("PlayerStats"):WaitForChild("beli").Value
+local initialGem = lplr:WaitForChild("PlayerStats"):WaitForChild("Gem").Value
+
+task.spawn(function()
+    while task.wait(0.6) do
+        if not Settings.autoskhdhop then continue end
+        
+        local workspaceIsland = workspace.Island
+        local MainGui = lplr.PlayerGui.MainGui
+        local SecondSea = MainGui.StarterFrame.LegacyPoseFrame.SecondSea
+
+        local seaKing = workspace.SeaMonster:FindFirstChild("SeaKing")
+        local hydra = workspace.SeaMonster:FindFirstChild("HydraSeaKing")
+        local gs = workspace.GhostMonster:FindFirstChild("Ghost Ship")
+
+        local SKTimeLabel = SecondSea:FindFirstChild("SKTimeLabel")
+        local GSTimeLabel = SecondSea:FindFirstChild("GSTimeLabel")
+
+        local function ConvertTimeToSeconds(timeStr)
+            local h, m, s = timeStr:match("(%d+):(%d+):(%d+)")
+            if h and m and s then
+                return tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s)
+            end
+            return 9999
+        end
+
+        local skSpawnTime = SKTimeLabel and ConvertTimeToSeconds(SKTimeLabel.Text) or 9999
+        local gsSpawnTime = GSTimeLabel and ConvertTimeToSeconds(GSTimeLabel.Text) or 9999
+
+        local function spamTeleport()
+            coroutine.wrap(function()
+                while Settings.autoskhdhop do
+                    local success = pcall(Teleport)
+                    if success then break end
+                    task.wait(0.2)
+                end
+            end)()
+        end
+
+        -- Don't hop if boss spawning soon
+        if skSpawnTime < Settings.HopThreshold then
+            th.New("⏰ SK/Hydra spawn " .. skSpawnTime .. "s", 1)
+            continue
+        elseif gsSpawnTime < Settings.HopThreshold then
+            th.New("⏰ GS spawn " .. gsSpawnTime .. "s", 1)
+            continue
+        elseif gs and gs:FindFirstChild("HumanoidRootPart") then
+            th.New("👻 Ghost Ship đang có!", 1)
+            continue
+        elseif getBossRoot() then
+            th.New("🐉 Boss đang có!", 1)
+            continue
+        end
+
+        -- Check for chests/spawners
+        local hasSeaKing = false
+        for i = 1, 4 do
+            local island = workspaceIsland:FindFirstChild("Legacy Island" .. i)
+            if island and island:FindFirstChild("ChestSpawner") then
+                hasSeaKing = true
+                break
+            end
+        end
+
+        local hasHydraStand = false
+        for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+            local island = workspaceIsland:FindFirstChild(name)
+            if island and island:FindFirstChild("HydraStand") then
+                hasHydraStand = true
+                break
+            end
+        end
+
+        local hasGhostShipChest = workspace:FindFirstChild("Chest1") ~= nil
+
+        -- If nothing valuable, hop immediately
+        if not hasSeaKing and not hasHydraStand and not hasGhostShipChest and not hydra and not seaKing then
+            spamTeleport()
+            continue
+        end
+
+        -- Wait for chest collection
+        local function waitForChestCollection()
+            local timeout = 220
+            local elapsedTime = 0
+
+            while elapsedTime < timeout do
+                task.wait(0.1)
+                elapsedTime = elapsedTime + 0.1
+
+                local currentBeli = lplr.PlayerStats.beli.Value
+                local currentGem = lplr.PlayerStats.Gem.Value
+
+                -- Check if collected chest
+                if (hasSeaKing or hasHydraStand) and currentBeli > initialBeli and currentGem > initialGem then
+                    th.New("💰 Đã nhặt rương!", 2)
+                    
+                    -- IMPORTANT: Teleport to safe zone before hopping
+                    teleportToSafeZone()
+                    
+                    return true
+                elseif hasGhostShipChest then
+                    local chestCount = 0
+                    for i = 1, 5 do
+                        if workspace:FindFirstChild("Chest" .. i) then
+                            chestCount = chestCount + 1
+                        end
+                    end
+                    
+                    if chestCount == 0 then
+                        th.New("💰 Đã nhặt rương GS!", 2)
+                        
+                        -- IMPORTANT: Teleport to safe zone before hopping
+                        teleportToSafeZone()
+                        
+                        return true
+                    end
+                end
+
+                -- Recheck conditions
+                hasSeaKing = false
+                for i = 1, 4 do
+                    local island = workspaceIsland:FindFirstChild("Legacy Island" .. i)
+                    if island and island:FindFirstChild("ChestSpawner") then
+                        hasSeaKing = true
+                        break
+                    end
+                end
+
+                hasHydraStand = false
+                for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+                    local island = workspaceIsland:FindFirstChild(name)
+                    if island and island:FindFirstChild("HydraStand") then
+                        hasHydraStand = true
+                        break
+                    end
+                end
+
+                hasGhostShipChest = workspace:FindFirstChild("Chest1") ~= nil
+
+                -- If all disappeared, stop waiting
+                if not hasSeaKing and not hasHydraStand and not hasGhostShipChest then
+                    return false
+                end
+            end
+
+            return false
+        end
+
+        if waitForChestCollection() then
+            spamTeleport()
+        else
+            th.New("⚠️ Timeout, hop ngay!", 2)
+            spamTeleport()
+        end
+    end
+end)
+
+-- ============================================
+-- AUTO STORE FRUIT
+-- ============================================
+local fruitStorage = ReplicatedStorage:FindFirstChild("Chest") and ReplicatedStorage.Chest:FindFirstChild("Fruits")
+
+function ClickButton(path)
+    if path then
+        game:GetService("GuiService").SelectedObject = path
+        if game:GetService("GuiService").SelectedObject == path then
+            game:GetService("VirtualInputManager"):SendKeyEvent(true, 13, false, game)
+            task.wait()
+            game:GetService("VirtualInputManager"):SendKeyEvent(false, 13, false, game)
+        end
+        task.wait()
+        game:GetService("GuiService").SelectedObject = nil
+    end
+end
+
+local function EatFruit()
+    local character = lplr.Character
+    if not character then return end
+
+    local tool = character:FindFirstChildOfClass("Tool")
+    if tool then
+        pcall(function()
+            local button = lplr.PlayerGui:FindFirstChild("EatFruitBecky") 
+                and lplr.PlayerGui.EatFruitBecky:FindFirstChild("Dialogue") 
+                and lplr.PlayerGui.EatFruitBecky.Dialogue:FindFirstChild("Collect")
+
+            if button then
+                ClickButton(button)
+            end
+        end)
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if not Settings.autocat then continue end
+        
+        local fruitStore = lplr.PlayerStats:FindFirstChild("FruitStore")
+        local fruitStorageLimit = lplr.PlayerStats:FindFirstChild("FruitStorage")
+
+        if not fruitStore or not fruitStorageLimit then
+            warn("Không tìm thấy FruitStore hoặc FruitStorage!")
+            continue
+        end
+
+        local storedFruits = HttpService:JSONDecode(fruitStore.Value)
+        local storageLimit = fruitStorageLimit.Value
+        local backpack = lplr:FindFirstChild("Backpack")
+        local character = lplr.Character
+
+        if not backpack or not character then continue end
+
+        for _, fruit in ipairs(fruitStorage:GetChildren()) do
+            if not Settings.autocat then break end
+
+            local fruitName = fruit.Name
+            local currentAmount = storedFruits[fruitName] or 0
+
+            if currentAmount < storageLimit then
+                local foundFruit = backpack:FindFirstChild(fruitName)
+
+                if foundFruit then
+                    foundFruit.Parent = character
+                    task.wait(0.5)
+
+                    game:GetService("VirtualUser"):ClickButton1(Vector2.new(300, 300))
+                    task.wait(1.5)
+
+                    EatFruit()
+                    game:GetService("VirtualUser"):ClickButton1(Vector2.new(300, 300))
+                    task.wait(1.5)
+
+                    local startTime = tick()
+                    while (backpack:FindFirstChild(fruitName) or character:FindFirstChild(fruitName)) and (tick() - startTime < 5) do
+                        task.wait(0.5)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================
+-- REMOVE EFFECTS
+-- ============================================
+if Settings.eff then
+    for _, v in pairs(ReplicatedStorage.Chest:GetChildren()) do
+        if v.Name == "FruitEffect" or v.Name == "SwordEffect" then
+            v:Destroy()
+        end
+    end
+end
+
+-- ============================================
+-- AUTO BUY KEYS
+-- ============================================
+task.spawn(function()
+    while task.wait(0.2) do
+        if not Settings.autobuy then continue end
+        if Settings.chonkey == "Platinum Key" then continue end
+        
+        local args = {
+            [1] = Settings.chonkey,
+            [2] = Settings.slkey
+        }
+        ReplicatedStorage:WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("BuyKey"):InvokeServer(unpack(args))
+    end
+end)
+
+-- ============================================
+-- AUTO CONVERT FRUIT TO KEY
+-- ============================================
+local remote = ReplicatedStorage:WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("DealFruit")
+
+local availableFruits = {}
+for _, fruit in ipairs(ReplicatedStorage.Chest.Fruits:GetChildren()) do
+    table.insert(availableFruits, fruit.Name)
+end
+
+local excludedFruits = {
+    ["DoughFruit"] = true,
+    ["GateFruit"] = true,
+    ["DragonFruit"] = true,
+    ["PhoenixFruit"] = true,
+    ["ToyFruit"] = true,
+    ["OpFruit"] = true,
+    ["MelodyFruit"] = true
+}
+
+local function getFruitsInBackpack()
+    local backpack = lplr:FindFirstChild("Backpack")
+    if not backpack then return {} end
+
+    local fruitsInBackpack = {}
+    for _, item in ipairs(backpack:GetChildren()) do
+        if table.find(availableFruits, item.Name) and not excludedFruits[item.Name] then
+            table.insert(fruitsInBackpack, item.Name)
+        end
+    end
+
+    return fruitsInBackpack
+end
+
+local autoConvert = false
+local function convertFruitsToKey()
+    if not autoConvert then return end
+
+    local fruitsToConvert = getFruitsInBackpack()
+    if #fruitsToConvert > 0 then
+        local args = {
+            [1] = Settings.chonkey,
+            [2] = fruitsToConvert
+        }
+
+        remote:InvokeServer(unpack(args))
+        th.New("✅ Đã chuyển Fruit thành Key: " .. Settings.chonkey, 5)
+    else
+        th.New("❌ Không có Fruit hợp lệ để đổi Key.", 5)
+    end
+
+    task.wait(4)
+    convertFruitsToKey()
+end
+
+end -- End of Sea 2
+
+-- ============================================
+-- AUTO REJOIN
+-- ============================================
+local function Rejoin()
+    if not sea(4) then
+        TeleportService:Teleport(game.PlaceId)
+    else
+        TeleportService:Teleport(4520749081)
+    end
+end
+
+if Settings.AutoRejoin then
+    CoreGui.RobloxPromptGui.promptOverlay.ChildAdded:Connect(function(child)
+        if child.Name == "ErrorPrompt" and child:FindFirstChild("MessageArea") and child.MessageArea:FindFirstChild("ErrorFrame") then
+            task.wait(3)
+            print("Lỗi phát hiện! Đang rejoin...")
+            Rejoin()
+        end
+    end)
+end
+
+-- ============================================
+-- WEBHOOK SYSTEM (IMPROVED WITH PER-ACCOUNT HOP COUNT)
+-- ============================================
+local Webhook_HydraChest = "https://discord.com/api/webhooks/1467749692992393402/JUHX9zfQZX2x0dj5FFW9cSIqA6gM2SnpjB0OaiWxhDZb5vyKJUtOM2PUx69fwvqK9Yf3"
+local Webhook_URLshop = {
+    "https://discord.com/api/webhooks/1179091565638078555/D2ynz6_DI8lMKG9XOXTZ5oa5jtAbJVKs8Lztxha2eoR5JyhozYbAxuXjB0MFsNEvKxte"
+}
+
+if Settings.Webhook_URL2 and Settings.Webhook_URL2 ~= "" then
+    table.insert(Webhook_URLshop, Settings.Webhook_URL2)
+end
+
+local function getCurrentIsland()
+    for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+        local island = workspace.Island:FindFirstChild(name)
+        if island and island:FindFirstChild("ClockTime") and island.ClockTime:FindFirstChild("SurfaceGui") then
+            return island, "Hydra"
+        end
+    end
+
+    for i = 1, 4 do
+        local island = workspace.Island:FindFirstChild("Legacy Island" .. i)
+        if island and island:FindFirstChild("ChestSpawner") then
+            return island, "Sea King"
+        end
+    end
+
+    return nil, nil
+end
+
+local function getIslandInfo()
+    local island, islandType = getCurrentIsland()
+    if not island then return "Unknown", 0, "N/A" end
+
+    local gateNumber = 0
+    local sinkTime = "N/A"
+
+    if islandType == "Sea King" then
+        local clockTime = island:FindFirstChild("ClockTime")
+        if clockTime and clockTime:FindFirstChild("SurfaceGui") then
+            local textLabel = clockTime.SurfaceGui:FindFirstChild("TextLabel")
+            if textLabel then
+                sinkTime = textLabel.Text
+            end
+        end
+
+        gateNumber = tonumber(island.Name:match("%d+")) or 0
+    elseif islandType == "Hydra" then
+        local clockTime = island:FindFirstChild("ClockTime")
+        if clockTime and clockTime:FindFirstChild("SurfaceGui") then
+            local textLabel = clockTime.SurfaceGui:FindFirstChild("TextLabel")
+            if textLabel then
+                sinkTime = textLabel.Text
+            end
+        end
+    end
+
+    return islandType, gateNumber, sinkTime
+end
+
+local function checkChests()
+    local chests = {}
+    
+    -- Check Sea King/Hydra chests
+    for i = 1, 5 do
+        local chest = workspace:FindFirstChild("Chest" .. i)
+        if chest and chest:FindFirstChild("Top") then
+            table.insert(chests, "Chest " .. i)
+        end
+    end
+    
+    -- Check for spawners
+    for i = 1, 4 do
+        local island = workspace.Island:FindFirstChild("Legacy Island" .. i)
+        if island and island:FindFirstChild("ChestSpawner") then
+            table.insert(chests, "SK Spawner (Gate " .. i .. ")")
+        end
+    end
+    
+    for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+        local island = workspace.Island:FindFirstChild(name)
+        if island and island:FindFirstChild("HydraStand") then
+            table.insert(chests, "Hydra Stand (" .. name .. ")")
+        end
+    end
+    
+    return chests
+end
+
+local function getPlayerData()
+    local items = {}
+    local fruits = {}
+    
+    local backpack = lplr:FindFirstChild("Backpack")
+    if backpack then
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                if item.Name:match("Fruit") then
+                    -- Format fruits: Do, Dr, P, G
+                    local fruitName = item.Name
+                    if fruitName:match("Dough") then
+                        table.insert(fruits, "Do")
+                    elseif fruitName:match("Dragon") then
+                        table.insert(fruits, "Dr")
+                    elseif fruitName:match("Phoenix") then
+                        table.insert(fruits, "P")
+                    elseif fruitName:match("Gate") then
+                        table.insert(fruits, "G")
+                    else
+                        table.insert(fruits, "- " .. fruitName)
+                    end
+                else
+                    -- Format items: F, S, B
+                    local itemName = item.Name
+                    if itemName:match("Sea King's Fin") or itemName:match("Fin") then
+                        table.insert(items, "F")
+                    elseif itemName:match("Sea King's Scale") or itemName:match("Hydra's Scale") or itemName:match("Scale") then
+                        table.insert(items, "S")
+                    elseif itemName:match("Sea King's Blood") or itemName:match("Blood") then
+                        table.insert(items, "B")
+                    else
+                        table.insert(items, "- " .. itemName)
+                    end
+                end
+            end
+        end
+    end
+    
+    return items, fruits
+end
+
+local initialBeli1 = lplr.PlayerStats.beli.Value
+local initialGem1 = lplr.PlayerStats.Gem.Value
+local lv = lplr.PlayerStats.lvl.Value
+
+local function sendWebhook(webhookURL, includeItemsAndFruits)
+    local chests = checkChests()
+    if #chests == 0 then return end
+
+    local islandType, gateNumber, sinkTime = getIslandInfo()
+    
+    local formattedChests = " Rương:" .. table.concat(chests, "\n")
+    local playerCount1 = Players.NumPlayers
+    local maxPlayer = Players.MaxPlayers or "??"
+    
+    -- Main field with per-account hop count
+    local fields = {
+        {
+            ["name"] = "```Đảo : "..islandType.." | "..formattedChests.." | Chìm Sau : "..sinkTime.." | "..playerCount1.."/"..maxPlayer.." | "..serverName.."```",
+            ["value"] = "",
+            ["inline"] = true
+        }
+    }
+    
+    if islandType == "Sea King" then
+        table.insert(fields, 2, {
+            ["name"] = "```Cổng:"..gateNumber.."```",
+            ["value"] = "",
+            ["inline"] = true
+        })
+    end
+    
+    -- Add per-account hop count field
+    table.insert(fields, {
+        ["name"] = "📊 **Trạng Thái - " .. name .. "**",
+        -- Thay hopCount bằng #HopTable (dấu thăng nghĩa là đếm số lượng phần tử)
+        ["value"] = "```🔄 Đã Hop: " .. #HopTable .. " lần (Account: " .. userid .. ")```",
+        ["inline"] = false
+    })
+
+    if includeItemsAndFruits then
+        local items, fruits = getPlayerData()
+        
+        -- Format items: hiển thị cách nhau dấu phẩy
+        local formattedItems = #items > 0 and "🛠️ **Items:** " .. table.concat(items, ", ") or ""
+        
+        -- Format fruits: hiển thị cách nhau dấu phẩy
+        local formattedFruits = #fruits > 0 and "🍏 **Fruits:** " .. table.concat(fruits, ", ") or ""
+
+        table.insert(fields, {
+            ["name"] = "```Beli: "..formatNumber(initialBeli1).." | Gem: "..formatNumber(initialGem1).." | Lvl: "..formatNumber(lv).."```",
+            ["value"] = formattedItems .. "\n" .. formattedFruits,
+            ["inline"] = false
+        })
+    end
+
+    local payload = HttpService:JSONEncode({
+        ["content"] = "",
+        ["embeds"] = {{
+            ["author"] = {
+                ["name"] = name .. " (ID: " .. userid .. ") | Executor: " .. executor .. " | Hop: #" .. #HopTable,
+                ["icon"] = ""
+            },
+            ["type"] = "rich",
+            ["color"] = tonumber(0xff0000),
+            ["fields"] = fields,
+            ["footer"] = {
+                ["text"] = "DuyHub | Account: " .. name .. " | Tổng hop: " .. #HopTable,
+                ["icon_url"] = "https://i.imgur.com/gtePhRZ.jpeg"
+            },
+            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", os.time())
+        }}
+    })
+
+    local httprequest = request or http_request or (http and http.request) or (fluxus and fluxus.request) or syn.request
+    httprequest({
+        Url = webhookURL,
+        Method = 'POST',
+        Headers = { ['Content-Type'] = 'application/json' },
+        Body = payload
+    })
+end
+
+local lastSent = false
+task.spawn(function()
+    while task.wait(4) do
+        local chests = checkChests()
+
+        if #chests > 0 then
+            if not lastSent then
+                local islandType = getIslandInfo()
+
+                for _, url in ipairs(Webhook_URLshop) do
+                    sendWebhook(url, true)
+                end
+
+                if islandType == "Hydra" then
+                    sendWebhook(Webhook_HydraChest, false)
+                end
+
+                lastSent = true
+            end
+        else
+            lastSent = false
+        end
+    end
+end)
+
+-- Spawn Info Webhook
+local playerGui = lplr:FindFirstChild("PlayerGui")
+if playerGui then
+    local mainGui = playerGui:FindFirstChild("MainGui")
+    if mainGui then
+        local starterFrame = mainGui:FindFirstChild("StarterFrame")
+        if starterFrame then
+            local legacyPoseFrame = starterFrame:FindFirstChild("LegacyPoseFrame")
+            local serverBrowserFrame = starterFrame:FindFirstChild("ServerBrowserFrame")
+            
+            if legacyPoseFrame and serverBrowserFrame then
+                local secondSeaFrame = legacyPoseFrame:FindFirstChild("SecondSea")
+                
+                if secondSeaFrame then
+                    local SKTimeLabel = secondSeaFrame:FindFirstChild("SKTimeLabel")
+                    local GSTimeLabel = secondSeaFrame:FindFirstChild("GSTimeLabel")
+                    local serverTimeLabel = serverBrowserFrame:FindFirstChild("ServerTime")
+
+                    if SKTimeLabel and GSTimeLabel and serverTimeLabel then
+                        local Webhook_SpawnInfo = "https://discord.com/api/webhooks/1179091565638078555/D2ynz6_DI8lMKG9XOXTZ5oa5jtAbJVKs8Lztxha2eoR5JyhozYbAxuXjB0MFsNEvKxte"
+
+                        local hasHydra = secondSeaFrame:FindFirstChild("HDImage") and secondSeaFrame.HDImage.Visible
+                        local skTime = hasHydra and SKTimeLabel.Text ~= "" and SKTimeLabel.Text or nil
+                        local gsTime = GSTimeLabel.Text
+
+                        local function formatTimeWebhook(seconds)
+                            local h = math.floor(seconds / 3600)
+                            local m = math.floor((seconds % 3600) / 60)
+                            local s = seconds % 60
+                            return string.format("%02d:%02d:%02d", h, m, s)
+                        end
+
+                        local ghostShipCountdown = nil
+                        if gsTime then
+                            local h, m, s = gsTime:match("(%d+):(%d+):(%d+)")
+                            if h and m and s then
+                                local gsSeconds = (tonumber(h) * 3600) + (tonumber(m) * 60) + tonumber(s)
+                                if gsSeconds <= 200 then
+                                    ghostShipCountdown = formatTimeWebhook(gsSeconds)
+                                end
+                            end
+                        end
+
+                        if skTime or ghostShipCountdown then
+                            local fields = {}
+                            local playerCount2 = Players.NumPlayers
+                            
+                            if skTime then
+                                table.insert(fields, {
+                                    ["name"] = "```🌊Hydra Spawn Sau | "..skTime.." | Tại Server: "..serverName.." | "..playerCount2.."/12```",
+                                    ["value"] = "",
+                                    ["inline"] = false
+                                })
+                            end
+
+                            if ghostShipCountdown then
+                                table.insert(fields, {
+                                    ["name"] = "```⛵GhostShip Spawn Sau | "..ghostShipCountdown.." | Tại Server: "..serverName.." | "..playerCount2.."/12```",
+                                    ["value"] = "",
+                                    ["inline"] = false
+                                })
+                            end
+                            
+                            -- Add per-account hop count
+                            table.insert(fields, {
+                                ["name"] = "📊 **Thống Kê - " .. name .. "**",
+                                ["value"] = "```🔄 Tổng hop: " .. #HopTable .. " (Account: " .. userid .. ")```",
+                                ["inline"] = false
+                            })
+
+                            local payload = HttpService:JSONEncode({
+                                ["content"] = "",
+                                ["embeds"] = {{
+                                    ["title"] = name .. " (ID: " .. userid .. ") | Executor: " .. executor .. " | Hop: #" .. #HopTable,
+                                    ["color"] = tonumber(0xFFC0CB),
+                                    ["fields"] = fields,
+                                    ["footer"] = {
+                                        ["text"] = "DuyHub | Account: " .. name .. " | Tổng hop: " .. #HopTable,
+                                        ["icon_url"] = "https://i.imgur.com/gtePhRZ.jpeg"
+                                    },
+                                    ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", os.time())
+                                }}
+                            })
+
+                            local httprequest = request or http_request or (http and http.request) or (fluxus and fluxus.request) or syn.request
+                            httprequest({
+                                Url = Webhook_SpawnInfo,
+                                Method = 'POST',
+                                Headers = { ['Content-Type'] = 'application/json' },
+                                Body = payload
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- ============================================
+-- STARTUP MESSAGE
+-- ============================================
+th.New("King Legacy Kaitun Loaded! | " .. name .. " | Hop: #" .. #HopTable, 5)
