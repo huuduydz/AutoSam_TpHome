@@ -82,6 +82,35 @@ repeat
 until false -- Vòng lặp này được kiểm soát bằng break ở trên
 
 print("🚀 Script KingHop bắt đầu hoạt động...")
+
+-- Script tự động ẩn bảng báo lỗi (Server Full, Disconnect...) mà không Rejoin
+local CoreGui = game:GetService("CoreGui")
+
+task.spawn(function()
+    while true do
+        task.wait(0.5) -- Kiểm tra mỗi 0.5 giây
+        pcall(function()
+            local promptOverlay = CoreGui:FindFirstChild("RobloxPromptGui")
+            if promptOverlay then
+                local overlay = promptOverlay:FindFirstChild("promptOverlay")
+                if overlay then
+                    local errorPrompt = overlay:FindFirstChild("ErrorPrompt")
+                    
+                    -- Nếu thấy bảng lỗi hiện lên -> Tắt nó đi
+                    if errorPrompt and errorPrompt.Visible then
+                        errorPrompt.Visible = false
+                        
+                        -- Tắt luôn hiệu ứng làm mờ màn hình (Blur) nếu có
+                        local blur = game:GetService("Lighting"):FindFirstChild("RobloxGuiBlur")
+                        if blur then blur.Enabled = false end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+
 -- [[ KẾT THÚC ĐOẠN FIX ]] --
 
 local players = game:GetService("Players")
