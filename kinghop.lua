@@ -1,31 +1,4 @@
 
--- [[ Script tự động ẩn bảng báo lỗi (Server Full, Disconnect...) mà không Rejoin]]
-local CoreGui = game:GetService("CoreGui")
-
-task.spawn(function()
-    while true do
-        task.wait(0.2) -- Kiểm tra mỗi 0.5 giây
-        pcall(function()
-            local promptOverlay = CoreGui:FindFirstChild("RobloxPromptGui")
-            if promptOverlay then
-                local overlay = promptOverlay:FindFirstChild("promptOverlay")
-                if overlay then
-                    local errorPrompt = overlay:FindFirstChild("ErrorPrompt")
-                    
-                    -- Nếu thấy bảng lỗi hiện lên -> Tắt nó đi
-                    if errorPrompt and errorPrompt.Visible then
-                        errorPrompt.Visible = false
-                        
-                        -- Tắt luôn hiệu ứng làm mờ màn hình (Blur) nếu có
-                        local blur = game:GetService("Lighting"):FindFirstChild("RobloxGuiBlur")
-                        if blur then blur.Enabled = false end
-                    end
-                end
-            end
-        end)
-    end
-end)
-
 -- [[ SAFE BOOT AUTO.EXE: CHỐNG TREO TUYỆT ĐỐI ]] --
 if not game:IsLoaded() then
     local notLoadedTime = tick()
@@ -110,14 +83,6 @@ until false -- Vòng lặp này được kiểm soát bằng break ở trên
 
 print("🚀 Script KingHop bắt đầu hoạt động...")
 -- [[ KẾT THÚC ĐOẠN FIX ]] --
-
--- ... (Dán phần code phía sau của bạn ở đây) ...
--- ============================================
--- King Legacy Kaitun Script - Optimized Version
--- Fix: Auto.exe load detection, Per-account hop counter, Safe teleport after chest collection
--- ============================================
-
-print("DuyDZ - Optimized Version with Fixes")
 
 local players = game:GetService("Players")
 local Players = game:GetService("Players")
@@ -263,7 +228,7 @@ task.spawn(function()
                         [1] = "EnterTheGame",
                         [2] = {}
                     }
-                    game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("EtcFunction"):InvokeServer(unpack(args))
+                    game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("EtcFunction"):InvokeServer(table.unpack(args))
                     -- Chờ nhân vật xuất hiện rồi tự sát
                     repeat task.wait() until player.Character and player.Character:FindFirstChild("Humanoid")
                     player.Character.Humanoid.Health = 0
@@ -529,11 +494,11 @@ sTab:AddToggle({
                             [1] = prefix.."_"..toolName.."_"..skill,
                             [2] = {["MouseHit"] = skRoot.CFrame, ["Type"] = skill == "M1" and "Click" or "Down"}
                         }
-                        skillAction:InvokeServer(unpack(args))
+                        skillAction:InvokeServer(table.unpack(args))
                         if skill ~= "M1" then
                             task.wait(0.05)
                             args[2].Type = "Up"
-                            skillAction:InvokeServer(unpack(args))
+                            skillAction:InvokeServer(table.unpack(args))
                         end
                     end
 
@@ -1012,116 +977,131 @@ sTab:AddSlider({
 })
 
 
+-- ============================================
+-- AUTO STORE FRUIT (NEW FIXED VERSION)
+-- ============================================
 local player = game:GetService("Players").LocalPlayer
 local replicatedStorage = game:GetService("ReplicatedStorage")
-local fruitStorage = replicatedStorage:FindFirstChild("Chest") and replicatedStorage.Chest:FindFirstChild("Fruits")
+local virtualUser = game:GetService("VirtualUser")
+local httpService = game:GetService("HttpService")
+local guiService = game:GetService("GuiService")
+local virtualInputManager = game:GetService("VirtualInputManager")
 
-getgenv().AutoStoreFruit = true -- Biến toggle chính
+-- Biến điều khiển
+getgenv().AutoStoreFruit = Settings.autocat or false
 
-
-function ClickButton(path)
+-- Hàm click nút GUI an toàn
+local function ClickStoreButton(path)
     if path then
-        game:GetService("GuiService").SelectedObject = path
-        if game:GetService("GuiService").SelectedObject == path then
-            game:GetService("VirtualInputManager"):SendKeyEvent(true, 13, false, game)
+        guiService.SelectedObject = path
+        if guiService.SelectedObject == path then
+            virtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
             task.wait()
-            game:GetService("VirtualInputManager"):SendKeyEvent(false, 13, false, game)
+            virtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
         end
         task.wait()
-        game:GetService("GuiService").SelectedObject = nil
+        guiService.SelectedObject = nil
     end
 end
 
-
-
--- Hàm ăn trái cây (nếu đang cầm)
-local function EatFruit()
+-- Hàm tìm và bấm nút Cất/Store
+local function AttemptStoreFruit()
     local character = player.Character
     if not character then return end
 
-    local tool = character:FindFirstChildOfClass("Tool")
-    if tool then
-        pcall(function()
-            local button = game.Players.LocalPlayer.PlayerGui:FindFirstChild("EatFruitBecky") 
-                and game.Players.LocalPlayer.PlayerGui.EatFruitBecky:FindFirstChild("Dialogue") 
-                and player.PlayerGui.EatFruitBecky.Dialogue:FindFirstChild("Collect")
-
-            if button then
-                ClickButton(button)
-          
-            end
-        end)
-    end
-end
-
--- Hàm kiểm tra và cất trái cây vào kho
-local function StoreFruit()
-    spawn(function()
-        while getgenv().AutoStoreFruit do
-            task.wait(.5)
-
-            local fruitStore = player.PlayerStats:FindFirstChild("FruitStore")
-            local fruitStorageLimit = player.PlayerStats:FindFirstChild("FruitStorage")
-
-            if not fruitStore or not fruitStorageLimit then
-                warn("Không tìm thấy FruitStore hoặc FruitStorage!")
-                return
-            end
-
-            local storedFruits = game:GetService("HttpService"):JSONDecode(fruitStore.Value)
-            local storageLimit = fruitStorageLimit.Value
-            local backpack = player:FindFirstChild("Backpack")
-            local character = player.Character
-
-            if not backpack or not character then return end
-
-            -- Kiểm tra các trái cây trong storage
-            for _, fruit in ipairs(fruitStorage:GetChildren()) do
-                if not getgenv().AutoStoreFruit then return end
-
-                local fruitName = fruit.Name
-                local currentAmount = storedFruits[fruitName] or 0
-
-                if currentAmount < storageLimit then
-                    local foundFruit = backpack:FindFirstChild(fruitName)
-
-                    if foundFruit then
-                    
-
-                        -- Chỉ cầm 1 trái duy nhất
-                        foundFruit.Parent = character
-                        task.wait(0.5) -- Đợi cập nhật
-
-                        -- Mở giao diện cất fruit
-                        game:GetService("VirtualUser"):ClickButton1(Vector2.new(300, 300))
-                        task.wait(1.5) -- Đợi giao diện mở ra
-
-                        -- Cất Fruit (hàm EatFruit thực hiện việc cất)
-                        EatFruit()
-game:GetService("VirtualUser"):ClickButton1(Vector2.new(300, 300))
-                        task.wait(1.5) -- Đợi giao diện mở ra
-                        -- Đợi đến khi trái được cất hoàn toàn mới tiếp tục
-                        local startTime = tick()
-                        while (backpack:FindFirstChild(fruitName) or character:FindFirstChild(fruitName)) and (tick() - startTime < 5) do
-                            task.wait(0.5)
-                        end
-                    end
-                end
-            end
+    pcall(function()
+        -- Tìm GUI tương tác (EatFruitBecky)
+        local gui = player.PlayerGui:FindFirstChild("EatFruitBecky")
+        local dialogue = gui and gui:FindFirstChild("Dialogue")
+        
+        -- Tìm nút Collect hoặc Store
+        local btn = dialogue and (dialogue:FindFirstChild("Collect") or dialogue:FindFirstChild("Store"))
+        
+        if btn then
+            ClickStoreButton(btn)
+        else
+            -- Nếu chưa hiện bảng, click chuột vào màn hình để kích hoạt trái
+            virtualUser:ClickButton1(Vector2.new(300, 300))
         end
     end)
 end
 
+-- Logic chính chạy ngầm (Chỉ chạy 1 luồng duy nhất)
+task.spawn(function()
+    local fruitStorageFolder = replicatedStorage:FindFirstChild("Chest") and replicatedStorage.Chest:FindFirstChild("Fruits")
+    
+    while task.wait(1) do
+        -- Nếu tắt toggle thì bỏ qua vòng lặp này
+        if not getgenv().AutoStoreFruit then continue end
+        
+        if not fruitStorageFolder then continue end
+
+        local stats = player:FindFirstChild("PlayerStats")
+        local storeVal = stats and stats:FindFirstChild("FruitStore")
+        local limitVal = stats and stats:FindFirstChild("FruitStorage")
+        
+        if not storeVal or not limitVal then continue end
+
+        -- Giải mã dữ liệu kho
+        local success, storedFruits = pcall(function() 
+            return httpService:JSONDecode(storeVal.Value) 
+        end)
+        if not success then storedFruits = {} end
+        
+        local storageLimit = limitVal.Value
+        local backpack = player:FindFirstChild("Backpack")
+        local character = player.Character
+        
+        if not backpack or not character then continue end
+
+        -- Quét toàn bộ danh sách trái cây trong game để đối chiếu
+        for _, fruitObj in ipairs(fruitStorageFolder:GetChildren()) do
+            if not getgenv().AutoStoreFruit then break end
+            
+            local fruitName = fruitObj.Name
+            local foundInBag = backpack:FindFirstChild(fruitName)
+            
+            if foundInBag then
+                local currentQty = storedFruits[fruitName] or 0
+                
+                -- Nếu kho chưa đầy thì cất
+                if currentQty < storageLimit then
+                    -- 1. Trang bị trái
+                    foundInBag.Parent = character
+                    task.wait(0.5)
+                    
+                    -- 2. Click màn hình để hiện menu
+                    virtualUser:ClickButton1(Vector2.new(300, 300))
+                    task.wait(0.5)
+                    
+                    -- 3. Bấm nút cất
+                    AttemptStoreFruit()
+                    task.wait(1)
+                    
+                    -- 4. Click lại lần nữa để xác nhận/đóng
+                    virtualUser:ClickButton1(Vector2.new(300, 300))
+                    
+                    -- 5. Kiểm tra xem trái đã mất chưa
+                    local waitTime = 0
+                    while (backpack:FindFirstChild(fruitName) or character:FindFirstChild(fruitName)) and waitTime < 3 do
+                        task.wait(0.5)
+                        waitTime = waitTime + 0.5
+                        AttemptStoreFruit() -- Thử bấm lại nếu bị kẹt
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Toggle trong Menu
 sTab:AddToggle({
-    Name = "Auto Cất Fruit",
+    Name = "Auto Cất Fruit (Fix)",
     Default = Settings.autocat,
     Callback = function(Value)
         Settings.autocat = Value
+        getgenv().AutoStoreFruit = Value -- Chỉ cần đổi biến này, vòng lặp trên sẽ tự chạy/dừng
         SaveSettings()
-        getgenv().AutoStoreFruit = Value
-        if Value then
-            StoreFruit()
-        end
     end
 })
 
@@ -1132,14 +1112,6 @@ sTab:AddToggle({
     Callback = function(state)
         Settings.eff = state
         SaveSettings() 
-if state then
-                   
-            for _, v in pairs(game.ReplicatedStorage.Chest:GetChildren()) do
-                if v.Name == "FruitEffect" or v.Name == "SwordEffect" then
-                    v:Destroy()
-                end
-            end
-        end
     end
 })
 
@@ -1356,7 +1328,7 @@ keyTab:AddButton({
             [1] = selectedKey,
             [2] = quantityToBuy
         }
-        game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("BuyKey"):InvokeServer(unpack(args))
+        game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("BuyKey"):InvokeServer(table.unpack(args))
 end
     end
 })
@@ -1380,7 +1352,7 @@ keyTab:AddToggle({
                     [1] = selectedKey,
                     [2] = quantityToBuy
                 }
-                game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("BuyKey"):InvokeServer(unpack(args))
+                game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("BuyKey"):InvokeServer(table.unpack(args))
                 
             end
         end
@@ -1400,7 +1372,7 @@ local args = {
     [1] = selectedKey,
     [2] = "Open10"
                 }
-game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("UseKey"):InvokeServer(unpack(args))
+game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("UseKey"):InvokeServer(table.unpack(args))
 
             end
         end
@@ -1457,7 +1429,7 @@ local function convertFruitsToKey()
             [2] = fruitsToConvert -- Danh sách Fruit hợp lệ
         }
 
-        remote:InvokeServer(unpack(args))
+        remote:InvokeServer(table.unpack(args))
         print("✅ Đã chuyển Fruit thành Key:", selectedKey, "với các Fruit:", table.concat(fruitsToConvert, ", "))
         StarterGui:SetCore("SendNotification", {
                 Title = "TestHubV2",
@@ -2328,7 +2300,7 @@ local function checkChests()
     for _, chest in pairs(workspace.Island:GetDescendants()) do
         if chest:IsA("Model") and chest.Name:match("Chest$") then
             if chest.Parent and chest.Parent.Name == "Gacha Background" then
-                continue
+                return
             end
 
             local tier = "???"
