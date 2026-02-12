@@ -95,8 +95,8 @@ repeat
     end
 until false -- Vòng lặp này được kiểm soát bằng break ở trên
 
-print("🚀 Script KingHop bắt đầu hoạt động...")
--- [[ KẾT THÚC ĐOẠN FIX ]] --
+print("🚀 Script KingHop bắt đầu hoạt 
+
 -- ╔══════════════════════════════════════════════════════════╗
 -- ║          KING HOP — KAITUN EDITION  (No GUI)             ║
 -- ║   Sửa true/false ở phần CONFIG bên dưới rồi chạy lại    ║
@@ -118,7 +118,7 @@ local CONFIG = {
     AutoCatFruit     = true,  -- Auto Cất Fruit vào kho
     AutoDropFruit    = false,  -- Auto Vứt Fruit
     AutoDeleteEffect = true,   -- Xóa FruitEffect / SwordEffect (giảm lag)
-    AutoRejoin       = false,  -- Auto Rejoin khi bị lỗi kết nối
+    AutoRejoin       = true,  -- Auto Rejoin khi bị lỗi kết nối
     FreePose         = false,  -- Free Pose — hiện UI SecondSea / ThirdSea
 
     -- ── KEY BUYING ───────────────────────────────
@@ -468,13 +468,20 @@ task.spawn(function()
 
             -- Kiểm tra đảo / rương còn không
             local hasSK, hasHD, hasGSChest = false, false, false
-            for _, n in ipairs({"Legacy Island1","Legacy Island2","Legacy Island3","Legacy Island4"}) do
-                if wIsland:FindFirstChild(n) and wIsland[n]:FindFirstChild("ChestSpawner") then
-                    hasSK = true end
-            end
-            for _, n in ipairs({"Sea King Thunder","Sea King Water","Sea King Lava"}) do
-                if wIsland:FindFirstChild(n) and wIsland[n]:FindFirstChild("HydraStand") then
-                    hasHD = true end
+
+            -- Check rương vật lý đang tồn tại trong đảo (EpicChest, DragonChest, HydraChest...)
+            local islandFolder = workspace:FindFirstChild("Island")
+            if islandFolder then
+                for _, obj in ipairs(islandFolder:GetDescendants()) do
+                    if obj:IsA("Model") then
+                        local n = obj.Name
+                        if n == "EpicChest" or n == "SeaBeastChest" or n == "DragonChest" then
+                            hasSK = true
+                        elseif n == "HydraChest" then
+                            hasHD = true
+                        end
+                    end
+                end
             end
             if workspace:FindFirstChild("Chest1") then hasGSChest = true end
 
@@ -486,31 +493,43 @@ task.spawn(function()
                 return
             end
 
-            -- Chờ nhặt rương (beli/gem tăng) rồi hop
+            -- Chờ nhặt rương (beli/gem tăng) rồi hop — timeout 90s
             local initBeli = stats.beli.Value
             local initGem  = stats.Gem.Value
             local elapsed  = 0
             local hopped   = false
 
-            while elapsed < 220 do
+            while elapsed < 90 do
                 task.wait(0.15)
                 elapsed += 0.15
                 if not cfg("AutoHop") then break end
 
-                if stats.beli.Value > initBeli and stats.Gem.Value > initGem then
+                -- [FIX] dùng OR: chỉ cần beli HOẶC gem tăng là đã nhận rương xong
+                if stats.beli.Value > initBeli or stats.Gem.Value > initGem then
                     task.wait(0.8)
                     doHop(); hopped = true; break
                 end
 
-                -- Thoát sớm nếu đảo chìm
-                local stillHas = false
-                for _, n in ipairs({
-                    "Legacy Island1","Legacy Island2","Legacy Island3","Legacy Island4",
-                    "Sea King Thunder","Sea King Water","Sea King Lava"}) do
-                    if wIsland:FindFirstChild(n) then stillHas=true; break end
+                -- Thoát sớm nếu rương đã biến mất (despawn hoặc đã nhặt hết)
+                local stillHasChest = false
+                if islandFolder then
+                    for _, obj in ipairs(islandFolder:GetDescendants()) do
+                        if obj:IsA("Model") then
+                            local on = obj.Name
+                            if on=="EpicChest" or on=="SeaBeastChest"
+                                or on=="DragonChest" or on=="HydraChest" then
+                                stillHasChest = true; break
+                            end
+                        end
+                    end
                 end
-                if not stillHas then
-                    Notify("🔴 Đảo chìm → hop ngay!", 1)
+                for i = 1, 5 do
+                    if workspace:FindFirstChild("Chest"..i) then
+                        stillHasChest = true; break
+                    end
+                end
+                if not stillHasChest then
+                    Notify("🔴 Rương đã hết → hop ngay!", 1)
                     doHop(); hopped=true; break
                 end
             end
