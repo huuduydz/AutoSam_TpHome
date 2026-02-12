@@ -95,7 +95,7 @@ repeat
     end
 until false -- Vòng lặp này được kiểm soát bằng break ở trên
 
-print("🚀 Script KingHop bắt đầu hoạt 
+print("Script KingHop bắt đầu hoạt động...")
 
 -- ╔══════════════════════════════════════════════════════════╗
 -- ║          KING HOP — KAITUN EDITION  (No GUI)             ║
