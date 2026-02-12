@@ -433,7 +433,7 @@ end
 -- ════════════════════════════════════════════════
 task.spawn(function()
     while true do
-        task.wait(0.6)
+        task.wait(0.3)
         if not cfg("AutoHop") then continue end
         pcall(function()
             local wIsland = workspace.Island
