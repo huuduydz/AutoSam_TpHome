@@ -415,13 +415,44 @@ local function findValidServer()
     return nil
 end
 
+-- Bắt sự kiện teleport thất bại để rollback counter
+-- TeleportInitFailed fired khi Roblox từ chối teleport (server full, lỗi mạng...)
+TeleportService.TeleportInitFailed:Connect(function(player, reason)
+    if player == lplr and hopSession > 0 then
+        -- Rollback: bỏ lần hop vừa đếm
+        hopSession -= 1
+        if #hopHistory > 0 then
+            table.remove(hopHistory, #hopHistory)
+            saveHopHistory()
+        end
+        getgenv().hopCount        = hopSession
+        getgenv().hopCountAllTime = #hopHistory
+        warn(string.format("⚠️ Teleport thất bại (%s) → rollback về #%d session", tostring(reason), hopSession))
+        Notify("🔴 Teleport thất bại — thử lại...", 3)
+    end
+end)
+
 local function doHop()
     local srv = findValidServer()
     if srv then
         saveVisited(srv.JobId)
-        recordHop()   -- ← đếm hop thành công, lưu file, sync getgenv
+        -- Đếm trước khi teleport, TeleportInitFailed sẽ rollback nếu thất bại
+        recordHop()
         Notify(string.format("🔵 Hop #%d — sang server mới...", hopSession), 3)
-        TeleportService:TeleportToPlaceInstance(srv.PlaceId, srv.JobId, lplr)
+        local ok, err = pcall(function()
+            TeleportService:TeleportToPlaceInstance(srv.PlaceId, srv.JobId, lplr)
+        end)
+        -- pcall bắt lỗi đồng bộ (VD: PlaceId sai) → rollback ngay
+        if not ok then
+            hopSession -= 1
+            if #hopHistory > 0 then
+                table.remove(hopHistory, #hopHistory)
+                saveHopHistory()
+            end
+            getgenv().hopCount        = hopSession
+            getgenv().hopCountAllTime = #hopHistory
+            warn("⚠️ Teleport lỗi đồng bộ: "..tostring(err))
+        end
     else
         removeOldest()
         Notify("🟡 Không tìm được server hợp lệ, thử lại...", 3)
@@ -433,7 +464,7 @@ end
 -- ════════════════════════════════════════════════
 task.spawn(function()
     while true do
-        task.wait(0.3)
+        task.wait(0.6)
         if not cfg("AutoHop") then continue end
         pcall(function()
             local wIsland = workspace.Island
