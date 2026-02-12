@@ -97,6 +97,7 @@ until false -- Vòng lặp này được kiểm soát bằng break ở trên
 
 print("Script KingHop bắt đầu hoạt động...")
 
+
 -- ╔══════════════════════════════════════════════════════════╗
 -- ║          KING HOP — KAITUN EDITION  (No GUI)             ║
 -- ║   Sửa true/false ở phần CONFIG bên dưới rồi chạy lại    ║
@@ -118,7 +119,7 @@ local CONFIG = {
     AutoCatFruit     = true,  -- Auto Cất Fruit vào kho
     AutoDropFruit    = false,  -- Auto Vứt Fruit
     AutoDeleteEffect = true,   -- Xóa FruitEffect / SwordEffect (giảm lag)
-    AutoRejoin       = false,  -- Auto Rejoin khi bị lỗi kết nối
+    AutoRejoin       = true,  -- Auto Rejoin khi bị lỗi kết nối
     FreePose         = false,  -- Free Pose — hiện UI SecondSea / ThirdSea
 
     -- ── KEY BUYING ───────────────────────────────
@@ -364,30 +365,16 @@ local function removeOldest()
     end
 end
 
--- Các nhóm uptime hợp lệ (seconds)
-local uptimeGroups = {
-    {4*3600+21*60,  4*3600+30*60},
-    {8*3600+52*60,  9*3600+1*60 },
-    {59*60+1,       1*3600+7*60 },
-    {2*3600+7*60,   2*3600+14*60},
-    {3*3600+14*60,  3*3600+21*60},
-    {5*3600+31*60,  5*3600+37*60},
-    {13*3600+28*60, 13*3600+35*60},
-    {18*3600+10*60, 18*3600+17*60},
-    {7*3600+45*60,  7*3600+52*60},
-    {6*3600+38*60,  6*3600+45*60},
-    {10*3600+3*60,  10*3600+9*60},
-    {11*3600+11*60, 11*3600+17*60},
-}
-
 local function findValidServer()
     local ok, srvs = pcall(function()
         return ReplicatedStorage.Chest.Remotes.Functions.GetServers:InvokeServer()
     end)
-    if not ok or type(srvs) ~= "table" then return nil end
+    if not ok or type(srvs) ~= "table" or not next(srvs) then return nil end
 
-    local groups = {}
-    for i = 1, #uptimeGroups do groups[i] = {} end
+    local validServers = {
+        group1={},group2={},group3={},group4={},group5={},group6={},
+        group7={},group8={},group9={},group10={},group11={},group12={}
+    }
 
     for _, srv in pairs(srvs) do
         if type(srv)=="table" and srv.ServerOsTime and srv.JobId
@@ -398,18 +385,32 @@ local function findValidServer()
             and srv.GetPlayers > 0 and srv.GetPlayers < 13 then
 
             local up = os.time() - srv.ServerOsTime
-            for i, g in ipairs(uptimeGroups) do
-                if up >= g[1] and up <= g[2] then
-                    table.insert(groups[i], srv)
-                    break
-                end
+
+            if     up >= 4*3600+21*60  and up <= 4*3600+30*60  then table.insert(validServers.group1,  srv)
+            elseif up >= 8*3600+52*60  and up <= 9*3600+1*60   then table.insert(validServers.group2,  srv)
+            elseif up >= 59*60+1       and up <= 1*3600+7*60   then table.insert(validServers.group3,  srv)
+            elseif up >= 2*3600+7*60   and up <= 2*3600+14*60  then table.insert(validServers.group4,  srv)
+            elseif up >= 3*3600+14*60  and up <= 3*3600+21*60  then table.insert(validServers.group5,  srv)
+            elseif up >= 5*3600+31*60  and up <= 5*3600+37*60  then table.insert(validServers.group6,  srv)
+            elseif up >= 13*3600+28*60 and up <= 13*3600+35*60 then table.insert(validServers.group7,  srv)
+            elseif up >= 18*3600+10*60 and up <= 18*3600+17*60 then table.insert(validServers.group8,  srv)
+            elseif up >= 7*3600+45*60  and up <= 7*3600+52*60  then table.insert(validServers.group9,  srv)
+            elseif up >= 6*3600+38*60  and up <= 6*3600+45*60  then table.insert(validServers.group10, srv)
+            elseif up >= 10*3600+3*60  and up <= 10*3600+9*60  then table.insert(validServers.group11, srv)
+            elseif up >= 11*3600+11*60 and up <= 11*3600+17*60 then table.insert(validServers.group12, srv)
             end
         end
     end
 
     math.randomseed(tick())
-    for _, grp in ipairs(groups) do
-        if #grp > 0 then return grp[math.random(#grp)] end
+    local priority = {
+        "group1","group2","group3","group4","group5","group6",
+        "group7","group8","group9","group10","group11","group12"
+    }
+    for _, g in ipairs(priority) do
+        if #validServers[g] > 0 then
+            return validServers[g][math.random(#validServers[g])]
+        end
     end
     return nil
 end
@@ -432,7 +433,7 @@ end
 -- ════════════════════════════════════════════════
 task.spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(0.6)
         if not cfg("AutoHop") then continue end
         pcall(function()
             local wIsland = workspace.Island
