@@ -119,7 +119,7 @@ local CONFIG = {
     AutoCatFruit     = true,  -- Auto Cất Fruit vào kho
     AutoDropFruit    = false,  -- Auto Vứt Fruit
     AutoDeleteEffect = true,   -- Xóa FruitEffect / SwordEffect (giảm lag)
-    AutoRejoin       = true,  -- Auto Rejoin khi bị lỗi kết nối
+    AutoRejoin       = false,  -- Auto Rejoin khi bị lỗi kết nối
     FreePose         = false,  -- Free Pose — hiện UI SecondSea / ThirdSea
 
     -- ── KEY BUYING ───────────────────────────────
