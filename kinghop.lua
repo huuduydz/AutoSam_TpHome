@@ -464,7 +464,7 @@ end
 -- ════════════════════════════════════════════════
 task.spawn(function()
     while true do
-        task.wait(0.6)
+        task.wait(0.3)
         if not cfg("AutoHop") then continue end
         pcall(function()
             local wIsland = workspace.Island
@@ -531,7 +531,7 @@ task.spawn(function()
             local elapsed  = 0
             local hopped   = false
 
-            while elapsed < 90 do
+            while elapsed < 25 do
                 task.wait(0.15)
                 elapsed += 0.15
                 if not cfg("AutoHop") then break end
