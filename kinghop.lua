@@ -1,3 +1,5 @@
+-- Script tự động spam skill
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/autospamskill.lua"))()
 -- Script tự động ẩn bảng báo lỗi (Server Full, Disconnect...) mà không Rejoin
 local CoreGui = game:GetService("CoreGui")
 
