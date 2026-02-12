@@ -48,17 +48,6 @@ task.spawn(function()
     local attempts = 0
     while attempts < 20 do -- Thử liên tục trong 10 giây
         attempts = attempts + 1
-        
-        -- A. Xóa GUI Loading ảo
-        local gui = lplr:FindFirstChild("PlayerGui")
-        if gui then
-            local loading = gui:FindFirstChild("LoadingGUI") or gui:FindFirstChild("Loading")
-            if loading then 
-                loading:Destroy() 
-                print("🗑️ Đã xóa màn hình Loading!")
-            end
-        end
-
         -- B. Spam Lệnh Vào Game (EnterTheGame)
         if ReplicatedStorage:FindFirstChild("Chest") then
              pcall(function()
