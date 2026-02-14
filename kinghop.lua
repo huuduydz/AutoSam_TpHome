@@ -118,9 +118,9 @@ local CONFIG = {
     AutoStart        = true,   -- Auto Start, Skip loading, Kenbun, Armament Haki
     AutoCatFruit     = true,  -- Auto Cất Fruit vào kho
     AutoDropFruit    = false,  -- Auto Vứt Fruit
-    AutoDeleteEffect = true,   -- Xóa FruitEffect / SwordEffect (giảm lag)
+    AutoDeleteEffect = false,   -- Xóa FruitEffect / SwordEffect (giảm lag)
     AutoRejoin       = false,  -- Auto Rejoin khi bị lỗi kết nối
-    FreePose         = false,  -- Free Pose — hiện UI SecondSea / ThirdSea
+    FreePose         = true,  -- Free Pose — hiện UI SecondSea / ThirdSea
 
     -- ── KEY BUYING ───────────────────────────────
     AutoBuyKey       = true,  -- Tự động mua key
@@ -131,7 +131,7 @@ local CONFIG = {
     SelectedKey      = "Copper Key",  -- "Copper Key" | "Iron Key" | "Gold Key" | "Platinum Key"
     KeyQuantity      = 10,            -- Số lượng key mua mỗi lần
     HopThreshold     = 70,            -- Không hop nếu SK/HD/GS còn < X giây
-    Webhook_URL2     = "https://discord.com/api/webhooks/1165568014557659267/mESStu3LegdQzA3g0hpZyQvIfBLEn0XR_ORtXa-ImhQP4jw_-oUcktQEDJHd_Yqa-56-",            -- Webhook phụ (để trống nếu không dùng)
+    Webhook_URL2     = "https://discord.com/api/webhooks/1467875798831730913/zsa2TrwzhGh_wvRfZTF_Zhm85kJago6fZU0IEFZNxS2U1pHW203sAHVVFDPcRE_RSHH3",            -- Webhook phụ (để trống nếu không dùng)
 }
 
 -- ════════════════════════════════════════════════
@@ -419,7 +419,7 @@ end
 -- HOP CORE: multi-coroutine spam — N luồng song song, không CD, không guard
 -- ════════════════════════════════════════════════
 
-local SPAM_THREADS = 20  -- Số luồng spam song song (tăng nếu muốn mạnh hơn)
+local SPAM_THREADS = 15  -- Số luồng spam song song (tăng nếu muốn mạnh hơn)
 
 -- TeleportInitFailed global: chỉ rollback counter, không block gì cả
 TeleportService.TeleportInitFailed:Connect(function(p, reason)
@@ -1535,5 +1535,4 @@ task.delay(1, function()
 end)
 
 local function B(v) return v and "ON " or "OFF" end
-
-print("══════════════════════════════════════════")
+print("=== KAITUN KING HOP - CONFIG ===")
