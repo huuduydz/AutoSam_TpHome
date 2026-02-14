@@ -131,7 +131,7 @@ local CONFIG = {
     SelectedKey      = "Copper Key",  -- "Copper Key" | "Iron Key" | "Gold Key" | "Platinum Key"
     KeyQuantity      = 10,            -- Số lượng key mua mỗi lần
     HopThreshold     = 70,            -- Không hop nếu SK/HD/GS còn < X giây
-    Webhook_URL2     = "https://discord.com/api/webhooks/1467875798831730913/zsa2TrwzhGh_wvRfZTF_Zhm85kJago6fZU0IEFZNxS2U1pHW203sAHVVFDPcRE_RSHH3",            -- Webhook phụ (để trống nếu không dùng)
+    Webhook_URL2     = "https://discord.com/api/webhooks/1165568014557659267/mESStu3LegdQzA3g0hpZyQvIfBLEn0XR_ORtXa-ImhQP4jw_-oUcktQEDJHd_Yqa-56-",            -- Webhook phụ (để trống nếu không dùng)
 }
 
 -- ════════════════════════════════════════════════
