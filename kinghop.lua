@@ -419,7 +419,7 @@ end
 -- HOP CORE: multi-coroutine spam — N luồng song song, không CD, không guard
 -- ════════════════════════════════════════════════
 
-local SPAM_THREADS = 10  -- Số luồng spam song song (tăng nếu muốn mạnh hơn)
+local SPAM_THREADS = 5  -- Số luồng spam song song (tăng nếu muốn mạnh hơn)
 
 -- TeleportInitFailed global: chỉ rollback counter, không block gì cả
 TeleportService.TeleportInitFailed:Connect(function(p, reason)
@@ -1506,3 +1506,4 @@ task.delay(1, function()
 end)
 
 local function B(v) return v and "ON " or "OFF" end
+print("=== KAITUN KING HOP CONFIG ===")
