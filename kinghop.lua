@@ -120,7 +120,7 @@ local CONFIG = {
     AutoDropFruit    = false,  -- Auto Vứt Fruit
     AutoDeleteEffect = true,   -- Xóa FruitEffect / SwordEffect (giảm lag)
     AutoRejoin       = false,  -- Auto Rejoin khi bị lỗi kết nối
-    FreePose         = true,  -- Free Pose — hiện UI SecondSea / ThirdSea
+    FreePose         = false,  -- Free Pose — hiện UI SecondSea / ThirdSea
 
     -- ── KEY BUYING ───────────────────────────────
     AutoBuyKey       = true,  -- Tự động mua key
@@ -419,7 +419,7 @@ end
 -- HOP CORE: multi-coroutine spam — N luồng song song, không CD, không guard
 -- ════════════════════════════════════════════════
 
-local SPAM_THREADS = 5  -- Số luồng spam song song (tăng nếu muốn mạnh hơn)
+local SPAM_THREADS = 20  -- Số luồng spam song song (tăng nếu muốn mạnh hơn)
 
 -- TeleportInitFailed global: chỉ rollback counter, không block gì cả
 TeleportService.TeleportInitFailed:Connect(function(p, reason)
@@ -903,98 +903,127 @@ end)
 -- [5] AUTO CẤT FRUIT  (FIXED — autostore_fixed.lua)
 -- ✅ Fix vòng lặp chết: dùng continue thay vì return
 -- ✅ Fix chờ GUI EatFruitBecky mở đúng cách (retry + WaitForChild)
--- ════════════════════════════════════════════════
--- [5] AUTO CẤT FRUIT — SPAM KHÔNG CD
--- Bypass VirtualUser: fire Activated thẳng vào nút Collect/Store
--- Multi-coroutine song song cho từng trái trong balo
+-- ✅ Fix reload storedFruits sau mỗi lần cất (không bị cache cũ)
+-- ✅ Fix equip → chờ → click đúng thứ tự
 -- ════════════════════════════════════════════════
 local fruitStorage = ReplicatedStorage:FindFirstChild("Chest")
     and ReplicatedStorage.Chest:FindFirstChild("Fruits")
 
--- Fire thẳng event Activated của nút, không cần mouse click
-local function fireBtn(btn)
-    if not btn or not btn.Visible then return false end
-    -- Thử Activated trước (nhanh nhất)
-    local ok = pcall(function() btn.Activated:Fire() end)
-    if not ok then
-        -- Fallback: ClickButton (GuiService key)
-        pcall(ClickButton, btn)
-    end
-    return true
-end
-
--- Equip trái + spam fire Collect/Store đến khi biến mất khỏi character
-local function storeFruitFast(fruitName)
-    local bp = lplr:FindFirstChild("Backpack")
-    local c  = getChar()
-    if not bp or not c then return false end
-
-    local tool = bp:FindFirstChild(fruitName)
-    if not tool then return false end
-
-    -- Equip ngay, không chờ animation
-    tool.Parent = c
-    task.wait()  -- 1 frame để engine nhận equip
-
-    if not c:FindFirstChild(fruitName) then return false end
-
-    -- Spam fire nút Collect/Store liên tục đến khi trái biến mất
-    local deadline = tick() + 3  -- timeout 3s tránh treo
-    while tick() < deadline do
-        -- Click màn hình để mở GUI (không dùng VirtualUser, dùng trực tiếp)
+-- [FIX] Chờ nút Collect/Store xuất hiện (tối đa timeout giây)
+local function waitForCollectBtn(timeout)
+    timeout = timeout or 3
+    local t0 = tick()
+    while tick() - t0 < timeout do
         local gui      = lplr.PlayerGui:FindFirstChild("EatFruitBecky")
         local dialogue = gui and gui:FindFirstChild("Dialogue")
         if dialogue then
             local btn = dialogue:FindFirstChild("Collect") or dialogue:FindFirstChild("Store")
-            if btn then fireBtn(btn) end
+            if btn and btn.Visible then return btn end
         end
+        task.wait(0.1)
+    end
+    return nil
+end
 
-        -- Kiểm tra đã cất xong chưa
-        if not c:FindFirstChild(fruitName) and not bp:FindFirstChild(fruitName) then
-            return true
+-- [FIX] Cất 1 trái: equip → chờ GUI → click Collect → xác nhận biến mất
+local function storeFruit(fruitName)
+    local backpack = lplr:FindFirstChild("Backpack")
+    local c        = getChar()
+    if not backpack or not c then return false end
+
+    local fruitInBag = backpack:FindFirstChild(fruitName)
+    if not fruitInBag then return false end
+
+    -- 1. Equip trái vào tay
+    fruitInBag.Parent = c
+    task.wait(0.6)
+
+    -- 2. Đảm bảo đang cầm (retry nếu equip chậm)
+    if not c:FindFirstChild(fruitName) then
+        local retry = backpack:FindFirstChild(fruitName)
+        if retry then
+            retry.Parent = c
+            task.wait(0.6)
         end
-
-        -- Nếu trái bị unequip về balo (GUI đóng) → equip lại ngay
-        local inBag = bp:FindFirstChild(fruitName)
-        if inBag then
-            inBag.Parent = c
-        end
-
-        task.wait()  -- 1 frame, không CD
+    end
+    if not c:FindFirstChild(fruitName) then
+        warn("⚠️ Không equip được " .. fruitName)
+        return false
     end
 
-    -- Timeout → trả về balo
+    -- 3. Click màn hình kích hoạt menu trái
+    game:GetService("VirtualUser"):ClickButton1(Vector2.new(300,300))
+    task.wait(0.3)
+
+    -- 4. Chờ nút Collect (tối đa 3s), thử lại nếu chưa thấy
+    local collectBtn = waitForCollectBtn(3)
+    if not collectBtn then
+        game:GetService("VirtualUser"):ClickButton1(Vector2.new(300,300))
+        task.wait(0.8)
+        collectBtn = waitForCollectBtn(2)
+    end
+    if collectBtn then
+        ClickButton(collectBtn)
+        task.wait(0.5)
+    end
+
+    -- 5. Xác nhận trái đã biến mất (tối đa 4s), bấm lại nếu GUI vẫn còn
+    local elapsed = 0
+    while elapsed < 4 do
+        task.wait(0.4)
+        elapsed += 0.4
+        if not backpack:FindFirstChild(fruitName) and not c:FindFirstChild(fruitName) then
+            return true
+        end
+        local btn2 = waitForCollectBtn(0.5)
+        if btn2 then ClickButton(btn2) end
+    end
+
+    -- Thất bại → trả về balo
+    warn("⚠️ Cất thất bại: " .. fruitName .. " → trả về Backpack")
     local stuck = c:FindFirstChild(fruitName)
-    if stuck then stuck.Parent = bp end
+    if stuck then stuck.Parent = backpack end
     return false
 end
 
 task.spawn(function()
-    while task.wait() do  -- không CD, mỗi frame
-        if not cfg("AutoCatFruit") then task.wait(0.5) continue end
+    while task.wait(1) do
+        -- [FIX] continue (không return) → vòng lặp không chết khi tắt
+        if not cfg("AutoCatFruit") then continue end
         pcall(function()
             if not fruitStorage then return end
-            local stats  = lplr:FindFirstChild("PlayerStats")
-            local fStore = stats and stats:FindFirstChild("FruitStore")
-            local fLimit = stats and stats:FindFirstChild("FruitStorage")
-            if not fStore or not fLimit then return end
+            local stats    = lplr:FindFirstChild("PlayerStats")
+            local fStore   = stats and stats:FindFirstChild("FruitStore")
+            local fLimit   = stats and stats:FindFirstChild("FruitStorage")
+            -- [FIX] Stats chưa load → continue (không crash)
+            if not fStore or not fLimit then
+                warn("⚠️ Chờ PlayerStats...") return
+            end
 
-            local ok, stored = pcall(HttpService.JSONDecode, HttpService, fStore.Value)
-            if not ok or type(stored) ~= "table" then stored = {} end
+            -- [FIX] Reload storedFruits MỖI VÒNG (không dùng cache cũ)
+            local ok, storedFruits = pcall(function()
+                return HttpService:JSONDecode(fStore.Value)
+            end)
+            if not ok or type(storedFruits) ~= "table" then storedFruits = {} end
 
-            local limit = tonumber(fLimit.Value) or 1
-            local bp    = lplr:FindFirstChild("Backpack")
-            if not bp then return end
+            local limit  = tonumber(fLimit.Value) or 1
+            local bp     = lplr:FindFirstChild("Backpack")
+            local c      = getChar()
+            if not bp or not c then return end
 
-            -- Spawn 1 coroutine riêng cho mỗi trái cần cất (song song)
             for _, fruitObj in ipairs(fruitStorage:GetChildren()) do
                 if not cfg("AutoCatFruit") then break end
                 local fn  = fruitObj.Name
-                local qty = tonumber(stored[fn]) or 0
+                local qty = tonumber(storedFruits[fn]) or 0
                 if qty < limit and bp:FindFirstChild(fn) then
-                    coroutine.wrap(function()
-                        storeFruitFast(fn)
-                    end)()
+                    storeFruit(fn)
+                    -- [FIX] Reload sau mỗi lần cất để qty cập nhật đúng
+                    local ok2, fresh = pcall(function()
+                        return HttpService:JSONDecode(fStore.Value)
+                    end)
+                    if ok2 and type(fresh) == "table" then
+                        storedFruits = fresh
+                    end
                 end
             end
         end)
@@ -1506,4 +1535,5 @@ task.delay(1, function()
 end)
 
 local function B(v) return v and "ON " or "OFF" end
-print("=== KAITUN KING HOP CONFIG ===")
+
+print("══════════════════════════════════════════")
