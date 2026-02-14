@@ -120,7 +120,7 @@ local CONFIG = {
     AutoDropFruit    = false,  -- Auto Vứt Fruit
     AutoDeleteEffect = true,   -- Xóa FruitEffect / SwordEffect (giảm lag)
     AutoRejoin       = false,  -- Auto Rejoin khi bị lỗi kết nối
-    FreePose         = false,  -- Free Pose — hiện UI SecondSea / ThirdSea
+    FreePose         = true,  -- Free Pose — hiện UI SecondSea / ThirdSea
 
     -- ── KEY BUYING ───────────────────────────────
     AutoBuyKey       = true,  -- Tự động mua key
@@ -415,11 +415,16 @@ local function findValidServer()
     return nil
 end
 
--- Bắt sự kiện teleport thất bại để rollback counter
--- TeleportInitFailed fired khi Roblox từ chối teleport (server full, lỗi mạng...)
-TeleportService.TeleportInitFailed:Connect(function(player, reason)
-    if player == lplr and hopSession > 0 then
-        -- Rollback: bỏ lần hop vừa đếm
+-- ════════════════════════════════════════════════
+-- HOP CORE: multi-coroutine spam — N luồng song song, không CD, không guard
+-- ════════════════════════════════════════════════
+
+local SPAM_THREADS = 5  -- Số luồng spam song song (tăng nếu muốn mạnh hơn)
+
+-- TeleportInitFailed global: chỉ rollback counter, không block gì cả
+TeleportService.TeleportInitFailed:Connect(function(p, reason)
+    if p ~= lplr then return end
+    if hopSession > 0 then
         hopSession -= 1
         if #hopHistory > 0 then
             table.remove(hopHistory, #hopHistory)
@@ -427,48 +432,50 @@ TeleportService.TeleportInitFailed:Connect(function(player, reason)
         end
         getgenv().hopCount        = hopSession
         getgenv().hopCountAllTime = #hopHistory
-        warn(string.format("⚠️ Teleport thất bại (%s) → rollback về #%d session", tostring(reason), hopSession))
-        Notify("🔴 Teleport thất bại — thử lại...", 3)
+        warn(string.format("⚠️ GameFull (%s) → rollback #%d", tostring(reason), hopSession))
     end
 end)
 
+local _teleporting = false  -- chỉ dùng để block vòng [1] bên ngoài
+
 local function doHop()
-    local srv = findValidServer()
-    if srv then
-        saveVisited(srv.JobId)
-        -- Đếm trước khi teleport, TeleportInitFailed sẽ rollback nếu thất bại
-        recordHop()
-        Notify(string.format("🔵 Hop #%d — sang server mới...", hopSession), 3)
-        local ok, err = pcall(function()
-            TeleportService:TeleportToPlaceInstance(srv.PlaceId, srv.JobId, lplr)
-        end)
-        -- pcall bắt lỗi đồng bộ (VD: PlaceId sai) → rollback ngay
-        if not ok then
-            hopSession -= 1
-            if #hopHistory > 0 then
-                table.remove(hopHistory, #hopHistory)
-                saveHopHistory()
+    if _teleporting then return end
+    _teleporting = true
+
+    recordHop()
+    Notify(string.format("🔵 Hop #%d — %d luồng spam...", hopSession, SPAM_THREADS), 3)
+
+    -- Spawn N coroutine cùng lúc, mỗi luồng tự tìm server và spam độc lập
+    for i = 1, SPAM_THREADS do
+        coroutine.wrap(function()
+            while true do
+                local srv = findValidServer()
+                if srv then
+                    saveVisited(srv.JobId)
+                    pcall(TeleportService.TeleportToPlaceInstance,
+                        TeleportService, srv.PlaceId, srv.JobId, lplr)
+                else
+                    removeOldest()
+                end
+                task.wait()  -- 1 frame, không CD
             end
-            getgenv().hopCount        = hopSession
-            getgenv().hopCountAllTime = #hopHistory
-            warn("⚠️ Teleport lỗi đồng bộ: "..tostring(err))
-        end
-    else
-        removeOldest()
-        Notify("🟡 Không tìm được server hợp lệ, thử lại...", 3)
+        end)()
     end
 end
 
 -- ════════════════════════════════════════════════
 -- [1] AUTO HOP THÔNG MINH
 -- ════════════════════════════════════════════════
+-- _teleporting đã được khai báo ở HOP CORE bên trên
+-- Vòng này bỏ qua nếu đang trong spamTeleport retry
+
 task.spawn(function()
     while true do
         task.wait(0.3)
         if not cfg("AutoHop") then continue end
+        if _teleporting then continue end  -- Đang retry teleport → không trigger thêm
         pcall(function()
-            local wIsland = workspace.Island
-            local stats   = lplr:FindFirstChild("PlayerStats")
+            local stats = lplr:FindFirstChild("PlayerStats")
             if not stats then return end
 
             local sk = workspace.SeaMonster:FindFirstChild("SeaKing")
@@ -501,7 +508,6 @@ task.spawn(function()
             -- Kiểm tra đảo / rương còn không
             local hasSK, hasHD, hasGSChest = false, false, false
 
-            -- Check rương vật lý đang tồn tại trong đảo (EpicChest, DragonChest, HydraChest...)
             local islandFolder = workspace:FindFirstChild("Island")
             if islandFolder then
                 for _, obj in ipairs(islandFolder:GetDescendants()) do
@@ -525,7 +531,7 @@ task.spawn(function()
                 return
             end
 
-            -- Chờ nhặt rương (beli/gem tăng) rồi hop — timeout 90s
+            -- Có rương → chờ nhặt rồi mới hop (vòng ngoài sẽ bị block bởi _teleporting sau khi hop)
             local initBeli = stats.beli.Value
             local initGem  = stats.Gem.Value
             local elapsed  = 0
@@ -535,8 +541,9 @@ task.spawn(function()
                 task.wait(0.15)
                 elapsed += 0.15
                 if not cfg("AutoHop") then break end
+                if _teleporting then hopped = true; break end  -- doHop đã được gọi từ ngoài → thoát
 
-                -- [FIX] dùng OR: chỉ cần beli HOẶC gem tăng là đã nhận rương xong
+                -- Chỉ cần beli HOẶC gem tăng là đã nhận rương xong
                 if stats.beli.Value > initBeli or stats.Gem.Value > initGem then
                     task.wait(0.8)
                     doHop(); hopped = true; break
@@ -562,7 +569,7 @@ task.spawn(function()
                 end
                 if not stillHasChest then
                     Notify("🔴 Rương đã hết → hop ngay!", 1)
-                    doHop(); hopped=true; break
+                    doHop(); hopped = true; break
                 end
             end
 
@@ -576,6 +583,8 @@ end)
 
 -- ════════════════════════════════════════════════
 -- [2] AUTO TELEPORT LÊN BOSS / RƯƠNG
+-- Ưu tiên: rương tồn tại → nhặt trước
+--          không có rương → đứng cạnh boss đang sống
 -- ════════════════════════════════════════════════
 task.spawn(function()
     while true do
@@ -587,39 +596,83 @@ task.spawn(function()
             local root    = getRoot()
             if not root then return end
 
-            local sk  = workspace.SeaMonster:FindFirstChild("SeaKing")
-            local hd  = workspace.SeaMonster:FindFirstChild("HydraSeaKing")
-            local gs  = workspace.GhostMonster:FindFirstChild("Ghost Ship")
+            -- ── Kiểm tra rương vật lý đang tồn tại ──────────────
+            local hasHydraChest, hasSKChest, hasGSChest = false, false, false
 
-            local skHP = sk and sk:FindFirstChildOfClass("Humanoid") and sk.Humanoid.Health or 0
-            local hdHP = hd and hd:FindFirstChildOfClass("Humanoid") and hd.Humanoid.Health or 0
-            local gsHP = gs and gs:FindFirstChildOfClass("Humanoid") and gs.Humanoid.Health or 0
-
-            if (skHP<=0 or not sk) and (hdHP<=0 or not hd) and (gsHP<=0 or not gs) then
-                -- Boss chết → tới rương
-                for _, n in ipairs({"Sea King Thunder","Sea King Water","Sea King Lava"}) do
-                    local isl = wIsland:FindFirstChild(n)
-                    if isl and isl:FindFirstChild("HydraStand") then
-                        root.CFrame = isl.HydraStand.CFrame end
-                end
-                for _, n in ipairs({"Legacy Island1","Legacy Island2","Legacy Island3","Legacy Island4"}) do
-                    local isl = wIsland:FindFirstChild(n)
-                    if isl and isl:FindFirstChild("ChestSpawner") then
-                        root.CFrame = isl.ChestSpawner.CFrame end
-                end
-                for i = 1, 5 do
-                    local chest = workspace:FindFirstChild("Chest"..i)
-                    if chest and chest:FindFirstChild("Top") then
-                        root.CFrame = chest.Top.CFrame
-                        task.wait(0.3)
+            for _, n in ipairs({"Sea King Thunder","Sea King Water","Sea King Lava"}) do
+                local isl = wIsland:FindFirstChild(n)
+                if isl then
+                    for _, obj in ipairs(isl:GetChildren()) do
+                        if obj:IsA("Model") and obj.Name:match("Chest$") then
+                            hasHydraChest = true; break
+                        end
                     end
                 end
-            else
-                -- Boss sống → đứng cạnh boss
-                local bRoot = getBossRoot()
-                if bRoot then
-                    root.CFrame = bRoot.CFrame * CFrame.new(0,-10,100)
+                if hasHydraChest then break end
+            end
+
+            for _, n in ipairs({"Legacy Island1","Legacy Island2","Legacy Island3","Legacy Island4"}) do
+                local isl = wIsland:FindFirstChild(n)
+                if isl and isl:FindFirstChild("ChestSpawner") then
+                    for _, obj in ipairs(isl.ChestSpawner:GetChildren()) do
+                        if obj:IsA("Model") and obj.Name:match("Chest$") then
+                            hasSKChest = true; break
+                        end
+                    end
                 end
+                if hasSKChest then break end
+            end
+
+            for i = 1, 5 do
+                if workspace:FindFirstChild("Chest"..i) then
+                    hasGSChest = true; break
+                end
+            end
+
+            local hasAnyChest = hasHydraChest or hasSKChest or hasGSChest
+
+            -- ── Nếu có rương → nhặt ngay, không quan tâm boss khác còn sống ──
+            if hasAnyChest then
+                -- Hydra chest
+                if hasHydraChest then
+                    for _, n in ipairs({"Sea King Thunder","Sea King Water","Sea King Lava"}) do
+                        local isl = wIsland:FindFirstChild(n)
+                        if isl and isl:FindFirstChild("HydraStand") then
+                            root.CFrame = isl.HydraStand.CFrame
+                        end
+                    end
+                end
+                -- SK chest
+                if hasSKChest then
+                    for _, n in ipairs({"Legacy Island1","Legacy Island2","Legacy Island3","Legacy Island4"}) do
+                        local isl = wIsland:FindFirstChild(n)
+                        if isl and isl:FindFirstChild("ChestSpawner") then
+                            root.CFrame = isl.ChestSpawner.CFrame
+                        end
+                    end
+                end
+                -- GS chest
+                if hasGSChest then
+                    local totalChests, collected = 0, 0
+                    for i = 1, 5 do
+                        if workspace:FindFirstChild("Chest"..i) then totalChests += 1 end
+                    end
+                    for i = 1, 5 do
+                        local chest = workspace:FindFirstChild("Chest"..i)
+                        if chest and chest:FindFirstChild("Top") then
+                            root.CFrame = chest.Top.CFrame
+                            task.wait(0.3)
+                            collected += 1
+                        end
+                    end
+                end
+                return  -- Đã xử lý rương → thoát, không teleport sang boss
+            end
+
+            -- ── Không có rương → đứng cạnh boss đang sống ──────
+            local bRoot = getBossRoot()
+            if bRoot then
+                root.CFrame = bRoot.CFrame * CFrame.new(0,-10,100)
             end
         end)
     end
@@ -850,127 +903,98 @@ end)
 -- [5] AUTO CẤT FRUIT  (FIXED — autostore_fixed.lua)
 -- ✅ Fix vòng lặp chết: dùng continue thay vì return
 -- ✅ Fix chờ GUI EatFruitBecky mở đúng cách (retry + WaitForChild)
--- ✅ Fix reload storedFruits sau mỗi lần cất (không bị cache cũ)
--- ✅ Fix equip → chờ → click đúng thứ tự
+-- ════════════════════════════════════════════════
+-- [5] AUTO CẤT FRUIT — SPAM KHÔNG CD
+-- Bypass VirtualUser: fire Activated thẳng vào nút Collect/Store
+-- Multi-coroutine song song cho từng trái trong balo
 -- ════════════════════════════════════════════════
 local fruitStorage = ReplicatedStorage:FindFirstChild("Chest")
     and ReplicatedStorage.Chest:FindFirstChild("Fruits")
 
--- [FIX] Chờ nút Collect/Store xuất hiện (tối đa timeout giây)
-local function waitForCollectBtn(timeout)
-    timeout = timeout or 3
-    local t0 = tick()
-    while tick() - t0 < timeout do
+-- Fire thẳng event Activated của nút, không cần mouse click
+local function fireBtn(btn)
+    if not btn or not btn.Visible then return false end
+    -- Thử Activated trước (nhanh nhất)
+    local ok = pcall(function() btn.Activated:Fire() end)
+    if not ok then
+        -- Fallback: ClickButton (GuiService key)
+        pcall(ClickButton, btn)
+    end
+    return true
+end
+
+-- Equip trái + spam fire Collect/Store đến khi biến mất khỏi character
+local function storeFruitFast(fruitName)
+    local bp = lplr:FindFirstChild("Backpack")
+    local c  = getChar()
+    if not bp or not c then return false end
+
+    local tool = bp:FindFirstChild(fruitName)
+    if not tool then return false end
+
+    -- Equip ngay, không chờ animation
+    tool.Parent = c
+    task.wait()  -- 1 frame để engine nhận equip
+
+    if not c:FindFirstChild(fruitName) then return false end
+
+    -- Spam fire nút Collect/Store liên tục đến khi trái biến mất
+    local deadline = tick() + 3  -- timeout 3s tránh treo
+    while tick() < deadline do
+        -- Click màn hình để mở GUI (không dùng VirtualUser, dùng trực tiếp)
         local gui      = lplr.PlayerGui:FindFirstChild("EatFruitBecky")
         local dialogue = gui and gui:FindFirstChild("Dialogue")
         if dialogue then
             local btn = dialogue:FindFirstChild("Collect") or dialogue:FindFirstChild("Store")
-            if btn and btn.Visible then return btn end
+            if btn then fireBtn(btn) end
         end
-        task.wait(0.1)
-    end
-    return nil
-end
 
--- [FIX] Cất 1 trái: equip → chờ GUI → click Collect → xác nhận biến mất
-local function storeFruit(fruitName)
-    local backpack = lplr:FindFirstChild("Backpack")
-    local c        = getChar()
-    if not backpack or not c then return false end
-
-    local fruitInBag = backpack:FindFirstChild(fruitName)
-    if not fruitInBag then return false end
-
-    -- 1. Equip trái vào tay
-    fruitInBag.Parent = c
-    task.wait(0.6)
-
-    -- 2. Đảm bảo đang cầm (retry nếu equip chậm)
-    if not c:FindFirstChild(fruitName) then
-        local retry = backpack:FindFirstChild(fruitName)
-        if retry then
-            retry.Parent = c
-            task.wait(0.6)
-        end
-    end
-    if not c:FindFirstChild(fruitName) then
-        warn("⚠️ Không equip được " .. fruitName)
-        return false
-    end
-
-    -- 3. Click màn hình kích hoạt menu trái
-    game:GetService("VirtualUser"):ClickButton1(Vector2.new(300,300))
-    task.wait(0.3)
-
-    -- 4. Chờ nút Collect (tối đa 3s), thử lại nếu chưa thấy
-    local collectBtn = waitForCollectBtn(3)
-    if not collectBtn then
-        game:GetService("VirtualUser"):ClickButton1(Vector2.new(300,300))
-        task.wait(0.8)
-        collectBtn = waitForCollectBtn(2)
-    end
-    if collectBtn then
-        ClickButton(collectBtn)
-        task.wait(0.5)
-    end
-
-    -- 5. Xác nhận trái đã biến mất (tối đa 4s), bấm lại nếu GUI vẫn còn
-    local elapsed = 0
-    while elapsed < 4 do
-        task.wait(0.4)
-        elapsed += 0.4
-        if not backpack:FindFirstChild(fruitName) and not c:FindFirstChild(fruitName) then
+        -- Kiểm tra đã cất xong chưa
+        if not c:FindFirstChild(fruitName) and not bp:FindFirstChild(fruitName) then
             return true
         end
-        local btn2 = waitForCollectBtn(0.5)
-        if btn2 then ClickButton(btn2) end
+
+        -- Nếu trái bị unequip về balo (GUI đóng) → equip lại ngay
+        local inBag = bp:FindFirstChild(fruitName)
+        if inBag then
+            inBag.Parent = c
+        end
+
+        task.wait()  -- 1 frame, không CD
     end
 
-    -- Thất bại → trả về balo
-    warn("⚠️ Cất thất bại: " .. fruitName .. " → trả về Backpack")
+    -- Timeout → trả về balo
     local stuck = c:FindFirstChild(fruitName)
-    if stuck then stuck.Parent = backpack end
+    if stuck then stuck.Parent = bp end
     return false
 end
 
 task.spawn(function()
-    while task.wait(1) do
-        -- [FIX] continue (không return) → vòng lặp không chết khi tắt
-        if not cfg("AutoCatFruit") then continue end
+    while task.wait() do  -- không CD, mỗi frame
+        if not cfg("AutoCatFruit") then task.wait(0.5) continue end
         pcall(function()
             if not fruitStorage then return end
-            local stats    = lplr:FindFirstChild("PlayerStats")
-            local fStore   = stats and stats:FindFirstChild("FruitStore")
-            local fLimit   = stats and stats:FindFirstChild("FruitStorage")
-            -- [FIX] Stats chưa load → continue (không crash)
-            if not fStore or not fLimit then
-                warn("⚠️ Chờ PlayerStats...") return
-            end
+            local stats  = lplr:FindFirstChild("PlayerStats")
+            local fStore = stats and stats:FindFirstChild("FruitStore")
+            local fLimit = stats and stats:FindFirstChild("FruitStorage")
+            if not fStore or not fLimit then return end
 
-            -- [FIX] Reload storedFruits MỖI VÒNG (không dùng cache cũ)
-            local ok, storedFruits = pcall(function()
-                return HttpService:JSONDecode(fStore.Value)
-            end)
-            if not ok or type(storedFruits) ~= "table" then storedFruits = {} end
+            local ok, stored = pcall(HttpService.JSONDecode, HttpService, fStore.Value)
+            if not ok or type(stored) ~= "table" then stored = {} end
 
-            local limit  = tonumber(fLimit.Value) or 1
-            local bp     = lplr:FindFirstChild("Backpack")
-            local c      = getChar()
-            if not bp or not c then return end
+            local limit = tonumber(fLimit.Value) or 1
+            local bp    = lplr:FindFirstChild("Backpack")
+            if not bp then return end
 
+            -- Spawn 1 coroutine riêng cho mỗi trái cần cất (song song)
             for _, fruitObj in ipairs(fruitStorage:GetChildren()) do
                 if not cfg("AutoCatFruit") then break end
                 local fn  = fruitObj.Name
-                local qty = tonumber(storedFruits[fn]) or 0
+                local qty = tonumber(stored[fn]) or 0
                 if qty < limit and bp:FindFirstChild(fn) then
-                    storeFruit(fn)
-                    -- [FIX] Reload sau mỗi lần cất để qty cập nhật đúng
-                    local ok2, fresh = pcall(function()
-                        return HttpService:JSONDecode(fStore.Value)
-                    end)
-                    if ok2 and type(fresh) == "table" then
-                        storedFruits = fresh
-                    end
+                    coroutine.wrap(function()
+                        storeFruitFast(fn)
+                    end)()
                 end
             end
         end)
@@ -1482,26 +1506,3 @@ task.delay(1, function()
 end)
 
 local function B(v) return v and "ON " or "OFF" end
-print("══════════════════════════════════════════")
-print("  KAITUN KING HOP — No GUI Edition")
-print("══════════════════════════════════════════")
-print(string.format("  [%s] AutoHop           Auto Hop thông minh", B(cfg("AutoHop"))))
-print(string.format("  [%s] AutoTeleport      Auto Teleport lên boss/rương", B(cfg("AutoTeleport"))))
-print(string.format("  [%s] AutoSkill         Auto Aim Skill SK/HD/GS", B(cfg("AutoSkill"))))
-print(string.format("  [%s] AutoStart         Auto Start/Skip/Haki", B(cfg("AutoStart"))))
-print(string.format("  [%s] AutoCatFruit      Auto Cất Fruit", B(cfg("AutoCatFruit"))))
-print(string.format("  [%s] AutoDropFruit     Auto Vứt Fruit", B(cfg("AutoDropFruit"))))
-print(string.format("  [%s] AutoDeleteEffect  Xóa Effect (giảm lag)", B(cfg("AutoDeleteEffect"))))
-print(string.format("  [%s] AutoRejoin        Auto Rejoin khi lỗi", B(cfg("AutoRejoin"))))
-print(string.format("  [%s] FreePose          Free Pose UI", B(cfg("FreePose"))))
-print(string.format("  [%s] AutoBuyKey        Auto Mua Key", B(cfg("AutoBuyKey"))))
-print(string.format("  [%s] AutoOpenKey       Auto Mở Key x10", B(cfg("AutoOpenKey"))))
-print(string.format("  [%s] AutoConvertFruit  Auto Đổi Fruit→Key", B(cfg("AutoConvertFruit"))))
-print("──────────────────────────────────────────")
-print("  Key: "..cfg("SelectedKey").." | Qty: "..cfg("KeyQuantity").." | Threshold: "..cfg("HopThreshold").."s")
-print("══════════════════════════════════════════")
-print("  Đổi runtime (không cần chạy lại):")
-print("  getgenv().KT_AutoHop = false")
-print("  getgenv().KT_AutoSkill = true")
-print("  getgenv().KT_HopThreshold = 100")
-print("══════════════════════════════════════════")
