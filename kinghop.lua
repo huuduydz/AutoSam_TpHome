@@ -1,3 +1,77 @@
+-- [[ SAFE BOOT AUTO.EXE: CHỐNG TREO TUYỆT ĐỐI ]] --
+if not game:IsLoaded() then
+    local notLoadedTime = tick()
+    repeat task.wait() 
+    until game:IsLoaded() or (tick() - notLoadedTime > 10) -- Chỉ đợi tối đa 10s để game load
+end
+
+local Players = game:GetService("Players")
+local lplr = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+
+-- 1. CHỐNG AFK NGAY LẬP TỨC (Để treo không bị kick)
+lplr.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+-- 2. HÀM XÓA LOADING & VÀO GAME (CHẠY NGẦM)
+task.spawn(function()
+    local attempts = 0
+    while attempts < 20 do -- Thử liên tục trong 10 giây
+        attempts = attempts + 1
+        -- B. Spam Lệnh Vào Game (EnterTheGame)
+        if ReplicatedStorage:FindFirstChild("Chest") then
+             pcall(function()
+                ReplicatedStorage.Chest.Remotes.Functions.EtcFunction:InvokeServer("EnterTheGame", {})
+             end)
+        end
+        
+        -- C. Chọn Map Hard luôn cho đỡ hỏi
+        if ReplicatedStorage:FindFirstChild("ChooseMapRemote") then
+             ReplicatedStorage.ChooseMapRemote:FireServer("Hard")
+        end
+
+        task.wait(0.5)
+    end
+end)
+
+-- 3. CHECK DỮ LIỆU "MỀM" (KHÔNG TREO)
+print("⏳ Đang kiểm tra dữ liệu...")
+local waitTime = 0
+repeat
+    task.wait(0.5)
+    waitTime = waitTime + 0.5
+    
+    -- Điều kiện thoát sớm:
+    -- 1. Thấy Level > 0 (Nghĩa là data đã về)
+    -- 2. Hoặc thấy Beli (Tiền) xuất hiện
+    -- 3. Hoặc đã đợi quá 15 giây (Timeout)
+    
+    local stats = lplr:FindFirstChild("PlayerStats")
+    local ready = false
+    
+    if stats then
+        if stats:FindFirstChild("lvl") and stats.lvl.Value > 0 then ready = true end
+        if stats:FindFirstChild("beli") then ready = true end
+    end
+    
+    if ready then 
+        print("✅ Dữ liệu đã nhận diện xong!")
+        break 
+    end
+    
+    if waitTime > 15 then
+        warn("⚠️ Quá thời gian chờ (15s) -> Kích hoạt chế độ Cưỡng Ép Chạy!")
+        break -- Phá vỡ vòng lặp để chạy script luôn
+    end
+until false -- Vòng lặp này được kiểm soát bằng break ở trên
+
+print("Script KingHop bắt đầu hoạt động...")
+-- [[ KẾT THÚC ĐOẠN FIX ]] --
+
 local players = game:GetService("Players")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -684,9 +758,51 @@ sTab:AddToggle({
         SaveSettings()
         if not value then return end
 
+        -- Hàm Hop "Một đi không trở lại" (Fixed & Optimized)
+        local function FinalHop(waitTime)
+        -- 1. Ngắt ngay vòng lặp chính để dừng việc farm/quét rương
+            getgenv().SeaKinghop = false 
+    
+        -- 2. Xử lý chờ (Chỉ chạy khi có rương)
+            if waitTime > 0 then
+        -- Thông báo đếm ngược cho đẹp
+                for i = waitTime, 1, -1 do
+                th.New("✅ Đã nhặt! Hop sau " .. i .. "s...", 1)
+                task.wait(1)
+            end
+        else
+            th.New("🚫 Không có rương, Hop ngay lập tức!", 2)
+        end
+
+        -- 3. Spam Hop vĩnh viễn (Chế độ "Không lối thoát")
+        th.New("🚀 Đang tìm server mới...", 99)
+    
+        -- Vòng lặp vô tận, script sẽ kẹt ở đây cho đến khi sang server mới
+        while true do
+        -- Dùng task.spawn để lệnh Teleport chạy song song, không làm đơ script
+            task.spawn(function()
+                pcall(function()
+                    Teleport() -- Gọi hàm Teleport có sẵn của bạn
+                end)
+            end)
+        
+        -- Thử lại mỗi 0.2s (Đủ nhanh mà không gây crash game)
+            task.wait(0.2) 
+        end
+    end    
+
         spawn(function()
+            local IsHopping = false
+
             while getgenv().SeaKinghop do
                 task.wait(0.1) -- Giảm xuống 0.1 giây để kiểm tra nhanh hơn
+
+                if IsHopping then 
+                    -- Nếu đang đợi hop, thì cứ đợi thôi, không làm gì cả
+                    task.wait(1)
+                    continue 
+                end
+
 
                 local Workspace = game:GetService("Workspace")
                 local workspaceIsland = Workspace.Island -- Định nghĩa workspaceIsland
@@ -864,17 +980,13 @@ end
 
                         -- Thực hiện hop dựa trên kết quả nhặt rương
                         if hasCollectedChest() then
-                            
-                            -- Đã nhặt được rương -> Chạy vào đây
-                            th.New("✅ Đã nhặt rương! Đợi 5s để Storage Fruit", 5) -- Thông báo cho đẹp
-                            task.wait(5) -- <--- CHỈ ĐỢI 1 LẦN DUY NHẤT TẠI ĐÂY (Sau khi đã nhặt xong)
-                            spamTeleport() -- Bỏ  để hop ngay
-                            break
+                            FinalHop(5) -- Bỏ  để hop ngay
+
                         else
-                            th.New("Không nhặt được rương, dịch chuyển ngay!", 2)
-                            spamTeleport()
-                            break
+                            FinalHop(0)
+                            
                         end
+                        return
                     end
                 end
             end
