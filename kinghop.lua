@@ -1,261 +1,380 @@
--- Script tự động ẩn bảng báo lỗi (Server Full, Disconnect...) mà không Rejoin
-local CoreGui = game:GetService("CoreGui")
+local players = game:GetService("Players")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local lplr = game.Players.LocalPlayer
+
+local name = lplr.Name
+local dname = lplr.DisplayName
+local workspace = game.Workspace 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local gravity = workspace.Gravity 
+local executor = identifyexecutor() or "???"
+local userid = lplr.UserId
+local RunService = game:GetService("RunService")
+local FPS = 0
+local HTTP = game:GetService("HttpService")
+
+local HttpService = game:GetService("HttpService")
+
+local function getISOTime()
+    return os.date("!%Y-%m-%dT%H:%M:%S.000Z", os.time()) -- Lấy UTC gốc
+end
+
+
+
+local StarterGui = game:GetService("StarterGui")
+local TeleportService = game:GetService("TeleportService")
+
+local player = players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+local th = {}
+local notifications = {} -- Lưu trữ danh sách thông báo hiện tại
+
+function th.New(message, duration)
+    duration = duration or 3 -- Thời gian hiển thị mặc định là 3 giây
+
+    -- Tạo ScreenGui nếu chưa tồn tại
+    local player = game.Players.LocalPlayer
+    local playerGui = player:WaitForChild("PlayerGui")
+    local screenGui = playerGui:FindFirstChild("NotificationGui") or Instance.new("ScreenGui")
+    screenGui.Name = "NotificationGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+
+    -- Tạo khung thông báo
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0.35, 0, 0.08, 0) -- Kích thước khung thông báo
+    frame.Position = UDim2.new(0.325, 0, 1, 0) -- Xuất hiện từ bên dưới màn hình
+    frame.BackgroundColor3 = Color3.fromRGB(50, 50, 50) -- Màu nền
+    frame.BackgroundTransparency = 0.15 -- Độ trong suốt
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    -- Bo góc mềm mại
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 20)
+    corner.Parent = frame
+
+    -- Hiệu ứng gradient
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(44, 120, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 255, 150))
+    }
+    gradient.Rotation = 45
+    gradient.Parent = frame
+
+    -- Tạo văn bản thông báo
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, -20, 1, -20)
+    textLabel.Position = UDim2.new(0, 10, 0, 10)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = message
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextScaled = true
+    textLabel.TextWrapped = true
+    textLabel.Parent = frame
+
+    -- Thêm thông báo vào danh sách
+    table.insert(notifications, frame)
+
+    -- Tween để thông báo xuất hiện ở vị trí phù hợp
+    local targetPosition = UDim2.new(0.325, 0, 0.1 + ((#notifications - 1) * 0.1), 0)
+    local showTween = TweenService:Create(frame, TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Position = targetPosition})
+    showTween:Play()
+
+    -- Xóa thông báo sau thời gian hiển thị với hiệu ứng mờ dần
+    task.delay(duration, function()
+        -- Fade out `TextLabel`
+        local fadeTweenText = TweenService:Create(textLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            TextTransparency = 1
+        })
+        fadeTweenText:Play()
+
+        -- Fade out `Frame`
+        local fadeTweenFrame = TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            BackgroundTransparency = 1
+        })
+        fadeTweenFrame:Play()
+
+        -- Sau khi fade hoàn tất, xóa thông báo
+        fadeTweenFrame.Completed:Connect(function()
+            frame:Destroy()
+            table.remove(notifications, table.find(notifications, frame))
+
+            -- Dịch chuyển các thông báo còn lại lên trên
+            for i, notif in ipairs(notifications) do
+                local newPosition = UDim2.new(0.325, 0, 0.1 + ((i - 1) * 0.1), 0)
+                local moveTween = TweenService:Create(notif, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = newPosition})
+                moveTween:Play()
+            end
+        end)
+    end)
+end
+local function formatNumber(value)
+    if value >= 1e9 then
+        return string.format("%.1fB", value / 1e9)
+    elseif value >= 1e6 then
+        return string.format("%.1fM", value / 1e6)
+    elseif value >= 1e3 then
+        return string.format("%.1fK", value / 1e3)
+    else
+        return tostring(value)
+    end
+    end
+getgenv().start = true
 
 task.spawn(function()
-    while true do
-        task.wait(0.5) -- Kiểm tra mỗi 0.5 giây
+    local player = game.Players.LocalPlayer
+    local startTime = tick() -- Lấy thời gian bắt đầu
+
+    while getgenv().start do 
+        task.wait(2)
         pcall(function()
-            local promptOverlay = CoreGui:FindFirstChild("RobloxPromptGui")
-            if promptOverlay then
-                local overlay = promptOverlay:FindFirstChild("promptOverlay")
-                if overlay then
-                    local errorPrompt = overlay:FindFirstChild("ErrorPrompt")
-                    
-                    -- Nếu thấy bảng lỗi hiện lên -> Tắt nó đi
-                    if errorPrompt and errorPrompt.Visible then
-                        errorPrompt.Visible = false
-                        
-                        -- Tắt luôn hiệu ứng làm mờ màn hình (Blur) nếu có
-                        local blur = game:GetService("Lighting"):FindFirstChild("RobloxGuiBlur")
-                        if blur then blur.Enabled = false end
-                    end
+            local playerGui = player:FindFirstChild("PlayerGui")
+
+            -- Kiểm tra và xử lý màn hình tải
+            if playerGui and playerGui:FindFirstChild("LoadingGUI") then
+                local loadingGui = playerGui.LoadingGUI
+                if loadingGui:FindFirstChild("Play") then
+                    local args = {
+                        [1] = "EnterTheGame",
+                        [2] = {}
+                    }
+                    game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("EtcFunction"):InvokeServer(unpack(args))
+                    -- Chờ nhân vật xuất hiện rồi tự sát
+                    repeat task.wait() until player.Character and player.Character:FindFirstChild("Humanoid")
+                    player.Character.Humanoid.Health = 0
                 end
+            end
+
+            -- Kiểm tra và chọn chế độ "Hard"
+            if playerGui and playerGui:FindFirstChild("ChooseMap") then
+                game:GetService("ReplicatedStorage"):WaitForChild("ChooseMapRemote"):FireServer("Hard")
+            end
+
+            if not player:FindFirstChild("DataLoaded") and (tick() - startTime >= 10) then
+                warn("Nhân vật chưa load sau 10 giây, dịch chuyển")
+                game:GetService("TeleportService"):Teleport(4520749081, player)
+                return -- Thoát vòng lặp sau khi dịch chuyển
             end
         end)
     end
 end)
--- [[ SAFE BOOT AUTO.EXE: CHỐNG TREO TUYỆT ĐỐI ]] --
-if not game:IsLoaded() then
-    local notLoadedTime = tick()
-    repeat task.wait() 
-    until game:IsLoaded() or (tick() - notLoadedTime > 10) -- Chỉ đợi tối đa 10s để game load
+
+local function sea(value)
+    if value == 3 and game.PlaceId == 15759515082 then
+        return true
+    elseif value == 1 and game.PlaceId == 4520749081 then
+        return true
+    elseif value == 2 and game.PlaceId == 6381829480 then
+        return true
+    elseif value == 4 and game.PlaceId == 5931540094 then
+        return true
+    else 
+        return false
+    end
+end
+local function updateFPS() 
+        FPS += 1 
+end 
+local player = game.Players.LocalPlayer
+local workspace = game.Workspace
+local RunService = game:GetService("RunService")
+local teleportService = game:GetService("TeleportService")
+
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local effectsFolder = game.Workspace:FindFirstChild("Effects")
+local mobFolder = game.Workspace:WaitForChild("MOB")
+local HttpService = game:GetService("HttpService")
+task.spawn(function()
+    if game.PlaceId ~= 9821272782 then
+        getgenv().Press = function(v)
+            return game:GetService("VirtualInputManager"):SendKeyEvent(true, v, false, game);
+        end
+        while true do wait(500)
+            Press("RightBracket");
+        end
+    else
+        while true do wait(500)
+            keypress(0xDD);
+        end
+    end
+end)
+local FilePath = "TestHubSaveKingLegacy"
+local SettingsFile = FilePath .. "/CombinedSettings.json"  -- Đảm bảo sử dụng đúng ký tự phân cách thư mục
+
+local combinedData = {}
+
+-- Kiểm tra và tạo thư mục nếu chưa tồn tại
+if not isfolder(FilePath) then
+    makefolder(FilePath)
 end
 
-local Players = game:GetService("Players")
-local lplr = Players.LocalPlayer or Players.PlayerAdded:Wait()
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local VirtualUser = game:GetService("VirtualUser")
-
--- 1. CHỐNG AFK NGAY LẬP TỨC (Để treo không bị kick)
-lplr.Idled:Connect(function()
-    VirtualUser:CaptureController()
-    VirtualUser:ClickButton2(Vector2.new())
-end)
-
--- 2. HÀM XÓA LOADING & VÀO GAME (CHẠY NGẦM)
-task.spawn(function()
-    local attempts = 0
-    while attempts < 20 do -- Thử liên tục trong 10 giây
-        attempts = attempts + 1
-        -- B. Spam Lệnh Vào Game (EnterTheGame)
-        if ReplicatedStorage:FindFirstChild("Chest") then
-             pcall(function()
-                ReplicatedStorage.Chest.Remotes.Functions.EtcFunction:InvokeServer("EnterTheGame", {})
-             end)
-        end
+-- Khởi tạo combinedData với giá trị mặc định
+combinedData = {
+    Settings = {
+        autoDeleteEffects = false,
+        teleraid = false,
+        start = true,
+        opeskill = true,
+        kioru = true,
+        eff = true,
+        bankin = 100,
+        autoDodgeEnabled = true,
+        autoTeleport = false,
+        maxDistanceFromBoss = 190,
+        docao = 50,
+        autoWhitelist = false,
+        fpsbut = true,
+        jobId = "",
+        Webhook_URL2 = "",
+        AutoRejoin = false,
+        hub = 0.98,
+        alime = 0.7,
+        giaodien = true,
+        autobuy = true,
+        chonkey = "Copper Key",
+        KL = 1,
+        slkey = 10,
+        autoskhd = true,
+        autoskillsea = true,
+        autoskhdhop = true,
+        autocat = true,
+        HopThreshold = 70,
+        dropfruit = false
         
-        -- C. Chọn Map Hard luôn cho đỡ hỏi
-        if ReplicatedStorage:FindFirstChild("ChooseMapRemote") then
-             ReplicatedStorage.ChooseMapRemote:FireServer("Hard")
-        end
-
-        task.wait(0.5)
-    end
-end)
-
--- 3. CHECK DỮ LIỆU "MỀM" (KHÔNG TREO)
-print("⏳ Đang kiểm tra dữ liệu...")
-local waitTime = 0
-repeat
-    task.wait(0.5)
-    waitTime = waitTime + 0.5
-    
-    -- Điều kiện thoát sớm:
-    -- 1. Thấy Level > 0 (Nghĩa là data đã về)
-    -- 2. Hoặc thấy Beli (Tiền) xuất hiện
-    -- 3. Hoặc đã đợi quá 15 giây (Timeout)
-    
-    local stats = lplr:FindFirstChild("PlayerStats")
-    local ready = false
-    
-    if stats then
-        if stats:FindFirstChild("lvl") and stats.lvl.Value > 0 then ready = true end
-        if stats:FindFirstChild("beli") then ready = true end
-    end
-    
-    if ready then 
-        print("✅ Dữ liệu đã nhận diện xong!")
-        break 
-    end
-    
-    if waitTime > 15 then
-        warn("⚠️ Quá thời gian chờ (15s) -> Kích hoạt chế độ Cưỡng Ép Chạy!")
-        break -- Phá vỡ vòng lặp để chạy script luôn
-    end
-until false -- Vòng lặp này được kiểm soát bằng break ở trên
-
-print("Script KingHop bắt đầu hoạt động...")
-
-
--- ╔══════════════════════════════════════════════════════════╗
--- ║          KING HOP — KAITUN EDITION  (No GUI)             ║
--- ║   Sửa true/false ở phần CONFIG bên dưới rồi chạy lại    ║
--- ║              Cre: duydz  | Kaitun: Claude                ║
--- ╚══════════════════════════════════════════════════════════╝
-
--- ════════════════════════════════════════════════
---              ★  CẤU HÌNH TÍNH NĂNG  ★
---    Sửa true = BẬT  |  false = TẮT  rồi chạy lại
--- ════════════════════════════════════════════════
-
-local CONFIG = {
-
-    -- ── TÍNH NĂNG CHÍNH ─────────────────────────
-    AutoHop          = true,   -- Auto Hop thông minh (SK + HD + GS)
-    AutoTeleport     = true,   -- Auto Teleport lên boss / rương
-    AutoSkill        = true,   -- Auto Aim Skill (SK / HD / GS)
-    AutoStart        = true,   -- Auto Start, Skip loading, Kenbun, Armament Haki
-    AutoCatFruit     = true,  -- Auto Cất Fruit vào kho
-    AutoDropFruit    = false,  -- Auto Vứt Fruit
-    AutoDeleteEffect = false,   -- Xóa FruitEffect / SwordEffect (giảm lag)
-    AutoRejoin       = false,  -- Auto Rejoin khi bị lỗi kết nối
-    FreePose         = true,  -- Free Pose — hiện UI SecondSea / ThirdSea
-
-    -- ── KEY BUYING ───────────────────────────────
-    AutoBuyKey       = true,  -- Tự động mua key
-    AutoOpenKey      = false,  -- Tự động mở key x10
-    AutoConvertFruit = true,  -- Tự động đổi Fruit → Key
-
-    -- ── THÔNG SỐ ────────────────────────────────
-    SelectedKey      = "Copper Key",  -- "Copper Key" | "Iron Key" | "Gold Key" | "Platinum Key"
-    KeyQuantity      = 10,            -- Số lượng key mua mỗi lần
-    HopThreshold     = 70,            -- Không hop nếu SK/HD/GS còn < X giây
-    Webhook_URL2     = "https://discord.com/api/webhooks/1165568014557659267/mESStu3LegdQzA3g0hpZyQvIfBLEn0XR_ORtXa-ImhQP4jw_-oUcktQEDJHd_Yqa-56-",            -- Webhook phụ (để trống nếu không dùng)
+        
+    }
 }
 
--- ════════════════════════════════════════════════
---   Không cần chỉnh gì bên dưới — tự động chạy
--- ════════════════════════════════════════════════
+local Settings = combinedData.Settings
 
-local Players           = game:GetService("Players")
-local TweenService      = game:GetService("TweenService")
-local HttpService       = game:GetService("HttpService")
-local TeleportService   = game:GetService("TeleportService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VIM               = game:GetService("VirtualInputManager")
-local CoreGui           = game:GetService("CoreGui")
-
-local lplr  = Players.LocalPlayer
-local pName = lplr.Name
-
-local httprequest = (request or http_request
-    or (http and http.request)
-    or (fluxus and fluxus.request)
-    or (syn and syn.request))
-
--- Đẩy CONFIG vào getgenv để có thể thay đổi runtime
-for k, v in pairs(CONFIG) do
-    getgenv()["KT_"..k] = v
-end
-
--- Shorthand: luôn đọc từ getgenv nên hỗ trợ đổi runtime
-local function cfg(key) return getgenv()["KT_"..key] end
-
--- ════════════════════════════════════════════════
--- NOTIFICATION (nhẹ, không dùng OrionLib)
--- ════════════════════════════════════════════════
-local _notifs = {}
-local function Notify(msg, dur)
-    dur = dur or 3
-    task.spawn(function()
-        local pgui = lplr:FindFirstChild("PlayerGui")
-        if not pgui then return end
-
-        local sg = pgui:FindFirstChild("_KT_Notif") or Instance.new("ScreenGui")
-        sg.Name = "_KT_Notif"
-        sg.ResetOnSpawn = false
-        sg.Parent = pgui
-
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(0.30, 0, 0.06, 0)
-        f.Position = UDim2.new(0.35, 0, 1.05, 0)
-        f.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
-        f.BackgroundTransparency = 0.05
-        f.BorderSizePixel = 0
-        f.ZIndex = 99
-        f.Parent = sg
-        Instance.new("UICorner",f).CornerRadius = UDim.new(0,10)
-        local stroke = Instance.new("UIStroke",f)
-        stroke.Color = Color3.fromRGB(60,160,255)
-        stroke.Thickness = 1.5
-
-        local lbl = Instance.new("TextLabel",f)
-        lbl.Size = UDim2.new(1,-12,1,-6)
-        lbl.Position = UDim2.new(0,6,0,3)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = msg
-        lbl.TextColor3 = Color3.fromRGB(220,225,255)
-        lbl.Font = Enum.Font.GothamBold
-        lbl.TextScaled = true
-        lbl.TextWrapped = true
-        lbl.ZIndex = 99
-
-        table.insert(_notifs, f)
-        local targetY = 0.90 - ((#_notifs - 1) * 0.07)
-
-        TweenService:Create(f, TweenInfo.new(0.3,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),
-            {Position=UDim2.new(0.35,0,targetY,0)}):Play()
-
-        task.wait(dur)
-
-        TweenService:Create(lbl, TweenInfo.new(0.35),{TextTransparency=1}):Play()
-        TweenService:Create(f,   TweenInfo.new(0.35,Enum.EasingStyle.Quint,Enum.EasingDirection.In),
-            {Position=UDim2.new(0.35,0,1.1,0), BackgroundTransparency=1}):Play()
-        task.wait(0.4)
-        local idx = table.find(_notifs,f)
-        if idx then table.remove(_notifs,idx) end
-        pcall(function() f:Destroy() end)
-    end)
-end
-
--- ════════════════════════════════════════════════
--- HELPER FUNCTIONS
--- ════════════════════════════════════════════════
-local function sea(v)
-    local ids = {[1]=4520749081,[2]=6381829480,[3]=15759515082,[4]=5931540094}
-    return game.PlaceId == ids[v]
-end
-
-local function getChar()  return lplr.Character end
-local function getRoot()
-    local c = getChar()
-    return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function stop()
-    local r = getRoot()
-    if r and not r:FindFirstChild("_KTFreeze") then
-        local bv = Instance.new("BodyVelocity")
-        bv.Name = "_KTFreeze"
-        bv.MaxForce = Vector3.new(1e9,1e9,1e9)
-        bv.Velocity = Vector3.zero
-        bv.Parent = r
+-- Hàm tải dữ liệu đã lưu
+local function loadSavedData()
+    if isfile(SettingsFile) then
+        local success, json = pcall(readfile, SettingsFile)
+        if success then
+            local decodeSuccess, decodedData = pcall(function()
+                return HttpService:JSONDecode(json)
+            end)
+            if decodeSuccess and type(decodedData) == "table" then
+                combinedData = decodedData
+                Settings = combinedData.Settings  -- Cập nhật lại Settings sau khi tải dữ liệu
+            else
+                warn("Failed to decode settings: " .. tostring(decodedData))
+            end
+        else
+            warn("Failed to read settings file: " .. tostring(json))
+        end
     end
 end
-local function unstop()
-    local r = getRoot()
-    if r and r:FindFirstChild("_KTFreeze") then r._KTFreeze:Destroy() end
+local httprequest = request or http_request or (http and http.request) or (fluxus and fluxus.request) or syn.request
+-- Hàm lưu dữ liệu vào tệp
+local function SaveSettings()
+    local success, json = pcall(function()
+        return HttpService:JSONEncode(combinedData)
+    end)
+    
+    if not success then
+        warn("Failed to encode settings: " .. tostring(json))
+        return
+    end
+    
+    -- Ghi tệp với dữ liệu đã mã hóa
+    local successWrite = pcall(function()
+        writefile(SettingsFile, json)
+    end)
+    
 end
 
+-- Đảm bảo rằng loadSavedData được gọi để tải dữ liệu
+loadSavedData()
+
+
+local function getServerUptime(servers, currentJobId)
+    for _, server in pairs(servers) do
+        if type(server) == "table" and server.JobId == currentJobId and server.ServerOsTime then
+            local uptime = os.time() - server.ServerOsTime -- Tính thời gian server đã hoạt động
+            return uptime, server.ServerName, server.JobId
+        end
+    end
+    return nil, nil, nil -- Không tìm thấy server hiện tại
+end
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Hàm chuyển đổi giây thành dạng ngày, giờ, phút, giây
+local function formatTime(seconds)
+    local days = math.floor(seconds / 86400) -- 1 ngày = 86400 giây
+    seconds = seconds % 86400
+    local hours = math.floor(seconds / 3600) -- 1 giờ = 3600 giây
+    seconds = seconds % 3600
+    local minutes = math.floor(seconds / 60) -- 1 phút = 60 giây
+    seconds = seconds % 60
+    return string.format("%d:%d:%d:%d", days, hours, minutes, seconds)
+end
+
+-- Lấy danh sách server
+local servers = ReplicatedStorage.Chest.Remotes.Functions.GetServers:InvokeServer()
+local currentJobId = game.JobId
+
+-- Gọi hàm để lấy thời gian hoạt động của server hiện tại
+local uptime, serverName, jobId = getServerUptime(servers, currentJobId)
+
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/NamG2657/Scripting/refs/heads/main/OrionLib.lua?t=" .. os.time(), true))()
+
+local pe = game:GetService("Players").LocalPlayer.Name
+local Window = OrionLib:MakeWindow({
+    Name = "DuyHubDz",
+    IntroEnabled = false,
+    IntroText = "Welcome to DuyHubDz, "..pe.."!",
+    IntroIcon = "rbxassetid://6031094686",
+    HidePremium = true, 
+    SaveConfig = false, 
+    ConfigFolder = "DuyHubDz"
+})
+
+function stop()
+    local root = game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if root and not root:FindFirstChild("FreezeVelocity") then
+        local freeze = Instance.new("BodyVelocity")
+        freeze.Name = "FreezeVelocity"
+        freeze.Parent = root
+        freeze.MaxForce = Vector3.new(math.huge, math.huge, math.huge) -- Lực cực lớn
+        freeze.Velocity = Vector3.new(0, 0, 0) -- Vận tốc bằng 0
+    end
+end
+
+function ngungstop()
+    local root = game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if root and root:FindFirstChild("FreezeVelocity") then
+        root.FreezeVelocity:Destroy()
+    end
+end
+
+if sea(2) then
+local sTab = Window:MakeTab({
+    Name = "Sea Hop Beta ",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+if servers then
+local Section = sTab:AddSection({Name = serverName})
+         end
 local function getBossRoot()
-    local folders = {workspace:FindFirstChild("SeaMonster"), workspace:FindFirstChild("GhostMonster")}
-    for _, folder in ipairs(folders) do
+    local workspace = game:GetService("Workspace")
+    local bossFolders = {workspace.SeaMonster, workspace.GhostMonster}
+    local bosses = {"SeaKing", "HydraSeaKing", "Ghost Ship"}
+
+    for _, folder in ipairs(bossFolders) do
         if folder then
-            for _, bname in ipairs({"SeaKing","HydraSeaKing","Ghost Ship"}) do
-                local b = folder:FindFirstChild(bname)
-                if b and b:FindFirstChild("HumanoidRootPart") then
-                    return b.HumanoidRootPart
+            for _, bossName in ipairs(bosses) do
+                local boss = folder:FindFirstChild(bossName)
+                if boss and boss:FindFirstChild("HumanoidRootPart") then
+                    
+                    return boss.HumanoidRootPart
                 end
             end
         end
@@ -263,658 +382,547 @@ local function getBossRoot()
     return nil
 end
 
-local function ClickButton(path)
-    if not path then return end
-    local gs = game:GetService("GuiService")
-    gs.SelectedObject = path
-    if gs.SelectedObject == path then
-        VIM:SendKeyEvent(true,13,false,game)
-        task.wait()
-        VIM:SendKeyEvent(false,13,false,game)
+sTab:AddToggle({
+    Name = "Auto Aim Skill HD+SK+GS",
+    Default = Settings.autoskillsea,
+    Callback = function(value)
+        getgenv().AutoS = value
+        Settings.autoskillsea = value
+        SaveSettings()
+        if not value then return end
+
+        task.spawn(function()
+            while Settings.autoskillsea do
+                task.wait(0.3)
+                pcall(function()
+                    local workspace = game:GetService("Workspace")
+                    local player = game.Players.LocalPlayer
+                    local skillAction = game:GetService("ReplicatedStorage").Chest.Remotes.Functions.SkillAction
+                    
+                    -- Lấy root của boss
+                    local skRoot = getBossRoot()
+                    if not skRoot then return end
+
+                    local function sendSkill(toolName, prefix, skill)
+                        local args = {
+                            [1] = prefix.."_"..toolName.."_"..skill,
+                            [2] = {["MouseHit"] = skRoot.CFrame, ["Type"] = skill == "M1" and "Click" or "Down"}
+                        }
+                        skillAction:InvokeServer(unpack(args))
+                        if skill ~= "M1" then
+                            task.wait(0.05)
+                            args[2].Type = "Up"
+                            skillAction:InvokeServer(unpack(args))
+                        end
+                    end
+
+                    -- Kiểm tra Ope V2
+                    local hasOpOp = player.Backpack:FindFirstChild("Kioru V2") ~= nil
+
+                    -- Quản lý Ope Room
+                    local opeRoom = workspace:FindFirstChild("OpeRoom" .. player.Name)
+                    if opeRoom then
+                        local roomCFrame, roomSize = opeRoom.CFrame, opeRoom.Size
+                        local bossOutsideCount, totalBosses = 0, 0
+
+                        for _, boss in pairs(workspace.SeaMonster:GetChildren()) do
+                            if boss:FindFirstChild("HumanoidRootPart") and boss.Name ~= "Hydra's Minion" then
+                                totalBosses += 1
+                                local bossPos = boss.HumanoidRootPart.Position
+                                local isInside = 
+                                    math.abs(bossPos.X - roomCFrame.Position.X) <= roomSize.X / 2 and
+                                    math.abs(bossPos.Y - roomCFrame.Position.Y) <= roomSize.Y / 2 and
+                                    math.abs(bossPos.Z - roomCFrame.Position.Z) <= roomSize.Z / 2
+                                
+                                if not isInside then
+                                    bossOutsideCount += 1
+                                end
+                            end
+                        end
+
+                        if totalBosses > 0 and (bossOutsideCount / totalBosses) > 0.5 then
+                            task.spawn(function()
+                                skillAction:InvokeServer("DF_OpOp_Z", {["MouseHit"] = CFrame.new(), ["Type"] = "Down"})
+                                task.wait(0.05)
+                                skillAction:InvokeServer("DF_OpOp_Z", {["MouseHit"] = CFrame.new(), ["Type"] = "Up"})
+                            end)
+                        end
+                    else
+                        task.spawn(function()
+                            skillAction:InvokeServer("DF_OpOp_Z", {["MouseHit"] = CFrame.new(), ["Type"] = "Down"})
+                            task.wait(0.05)
+                            skillAction:InvokeServer("DF_OpOp_Z", {["MouseHit"] = CFrame.new(), ["Type"] = "Up"})
+                        end)
+                    end
+
+                    -- Sử dụng skill
+                    if not hasOpOp then
+                        local skills = {"M1", "Z", "X", "C", "V", "E"}
+                        for _, tool in ipairs(player.Backpack:GetChildren()) do
+                            if tool:IsA("Tool") and not tool:FindFirstChild("DevilFruit") and tool.Name ~= "Cyborg" then
+                                player.Character.Humanoid:EquipTool(tool)
+                                task.wait(0.2)
+                                for _, skill in ipairs(skills) do
+                                    task.spawn(function()
+                                        sendSkill(tool.Name, "SW", skill)
+                                        sendSkill(tool.Name, "DF", skill)
+                                    end)
+                                end
+                            end
+                        end
+                    else
+                        -- Skill cho Ope V2 và Kioru V2
+                        local opeSkills = {"X", "C", "V"}
+                        local kioruSkills = {"M1", "Z", "X"}
+                        
+                        for _, skill in ipairs(opeSkills) do
+                            task.spawn(function() sendSkill("OpOp", "DF", skill) end)
+                        end
+                        for _, skill in ipairs(kioruSkills) do
+                            task.spawn(function() sendSkill("Kioru V2", "SW", skill) end)
+                        end
+                    end
+                end)
+            end
+        end)
     end
-    task.wait()
-    gs.SelectedObject = nil
+})
+getgenv().AutoSeaKing = false
+
+sTab:AddToggle({
+    Name = "Auto Teleport SK+HD+GS",
+    Default = Settings.autoskhd,
+    Callback = function(value)
+        getgenv().AutoSeaKing = value
+        Settings.autoskhd = value
+        SaveSettings()
+        if not value then ngungstop() return end
+        
+        spawn(function()
+            while getgenv().AutoSeaKing do
+                pcall(function()
+                    stop()
+                    local player = game.Players.LocalPlayer
+                    local workspaceIsland = game:GetService("Workspace").Island
+                    local workspace = game:GetService("Workspace")
+                    local seaKing = workspace.SeaMonster:FindFirstChild("SeaKing")
+                    local hydra = workspace.SeaMonster:FindFirstChild("HydraSeaKing")
+                    local gs = workspace.GhostMonster:FindFirstChild("Ghost Ship")
+
+                    local skHealth = seaKing and seaKing:FindFirstChild("Humanoid") and seaKing.Humanoid.Health or 0
+                    local hydraHealth = hydra and hydra:FindFirstChild("Humanoid") and hydra.Humanoid.Health or 0
+                    local gsHealth = gs and gs:FindFirstChild("Humanoid") and gs.Humanoid.Health or 0
+
+                    -- 🔹 Nếu tất cả đều chết hoặc không tồn tại, dịch chuyển đến các vị trí loot
+                    if (not seaKing or skHealth <= 0) and (not hydra or hydraHealth <= 0) and (not gs or gsHealth <= 0) then
+                        
+                        -- 🔹 Dịch chuyển vào Hydra Stand
+                        for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+                            local island = workspaceIsland:FindFirstChild(name)
+                            if island and island:FindFirstChild("HydraStand") then
+                                
+                                player.Character.HumanoidRootPart.CFrame = island.HydraStand.CFrame*CFrame.new(0,0,0)
+                                
+                            end
+                        end                     
+
+                        -- 🔹 Dịch chuyển vào Sea King ChestSpawner
+                        local legacyIslands = {"Legacy Island1", "Legacy Island2", "Legacy Island3", "Legacy Island4"}
+                        for _, islandName in ipairs(legacyIslands) do
+                            local island = workspaceIsland:FindFirstChild(islandName)
+                            if island and island:FindFirstChild("ChestSpawner") then
+                                player.Character.HumanoidRootPart.CFrame = island.ChestSpawner.CFrame*CFrame.new(0,0,0)
+                                
+                            end
+                        end
+
+local totalChests = 0
+for i = 1, 5 do
+    if workspace:FindFirstChild("Chest" .. i) then
+        totalChests = totalChests + 1
+    end
 end
 
--- ════════════════════════════════════════════════
--- SERVER HOP CORE
--- ════════════════════════════════════════════════
-local visitedServers = {}
-local serverList     = {}
-local hopFile        = "KaitunKingHop_visited.txt"
+local collected = 0
+for i = 1, 5 do
+    local chest = workspace:FindFirstChild("Chest" .. i)
+    if chest and chest:FindFirstChild("Top") then
+        player.Character.HumanoidRootPart.CFrame = chest.Top.CFrame
+        task.wait(0.3)
+        collected = collected + 1
+    end
+end
 
-if isfile(hopFile) then
-    for id in string.gmatch(readfile(hopFile),"[^\n]+") do
+if collected == totalChests then
+    return -- Chỉ thoát khi đã nhặt tất cả rương có trong game
+end
+                    else
+                        -- 🔹 Nếu có Boss, dịch chuyển lên trên đầu Sea King
+                        if getBossRoot() then
+                            player.Character.HumanoidRootPart.CFrame = getBossRoot().CFrame * CFrame.new(0, -10, 100)
+                        end
+                    end
+                end)
+                task.wait(1) -- Để tránh treo vòng lặp
+            
+            end
+        end)
+    end
+})
+local TeleportService = game:GetService("TeleportService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local fileName = "teleported_servers.txt"
+local visitedServers = {}
+local serverList = {}
+
+if isfile(fileName) then
+    for id in string.gmatch(readfile(fileName), "[^\n]+") do
         visitedServers[id] = true
         table.insert(serverList, id)
     end
 end
 
--- ════════════════════════════════════════════════
--- HOP COUNTER SYSTEM  (counthop.lua)
--- Đếm số lần hop: session (lần này) + alltime (lưu file)
--- ════════════════════════════════════════════════
-local hopCountFile = "KaitunHopCount_"..tostring(lplr.UserId)..".json"
-local hopHistory   = {}   -- bảng lưu timestamp mỗi lần hop (all-time)
-local hopSession   = 0    -- đếm hop trong phiên hiện tại (reset khi chạy lại)
-
--- Load lịch sử hop từ file
-local function loadHopHistory()
-    if isfile and isfile(hopCountFile) then
-        local ok, data = pcall(function()
-            return HttpService:JSONDecode(readfile(hopCountFile))
-        end)
-        if ok and type(data) == "table" then
-            hopHistory = data
-            print("📊 HopCounter: Load "..#hopHistory.." lan hop tu file")
-        else
-            hopHistory = {}
-            warn("⚠️ HopCounter: File loi, tao moi")
-        end
-    else
-        hopHistory = {}
-        print("📝 HopCounter: Chua co file, tao moi")
-    end
-end
-
--- Lưu lịch sử hop ra file
-local function saveHopHistory()
-    if writefile then
-        pcall(writefile, hopCountFile, HttpService:JSONEncode(hopHistory))
-    end
-end
-
--- Gọi khi hop thành công: tăng counter + lưu file + sync getgenv
-local function recordHop()
-    hopSession += 1
-    table.insert(hopHistory, os.time())
-    saveHopHistory()
-    getgenv().hopCount        = hopSession
-    getgenv().hopCountAllTime = #hopHistory
-    print(string.format("🔵 Hop #%d session | #%d alltime", hopSession, #hopHistory))
-end
-
--- Trả về (session, alltime, hop24h) để dùng trong webhook embed
-local function getHopStats()
-    local now   = os.time()
-    local hop24 = 0
-    for _, t in ipairs(hopHistory) do
-        if (now - t) <= 86400 then hop24 += 1 end
-    end
-    return hopSession, #hopHistory, hop24
-end
-
--- Khởi tạo ngay khi load script
-loadHopHistory()
-getgenv().hopCount        = hopSession
-getgenv().hopCountAllTime = #hopHistory
-
-local function saveVisited(jobId)
+local function saveTeleportedServers(jobId)
     if not visitedServers[jobId] then
         visitedServers[jobId] = true
         table.insert(serverList, jobId)
-        pcall(writefile, hopFile, table.concat(serverList,"\n"))
+        writefile(fileName, table.concat(serverList, "\n"))
     end
 end
 
-local function removeOldest()
+local function removeOldestServer()
     if #serverList > 0 then
-        local id = table.remove(serverList,1)
-        visitedServers[id] = nil
-        pcall(writefile, hopFile, table.concat(serverList,"\n"))
+        local removedId = table.remove(serverList, 1)
+        visitedServers[removedId] = nil
+        writefile(fileName, table.concat(serverList, "\n"))
     end
+end
+
+local function getServerUptime(server)
+    return os.time() - server.ServerOsTime
 end
 
 local function findValidServer()
-    local ok, srvs = pcall(function()
-        return ReplicatedStorage.Chest.Remotes.Functions.GetServers:InvokeServer()
-    end)
-    if not ok or type(srvs) ~= "table" or not next(srvs) then return nil end
+    local servers = ReplicatedStorage.Chest.Remotes.Functions.GetServers:InvokeServer()
+    if type(servers) ~= "table" or not next(servers) then return nil end
 
-    local validServers = {
-        group1={},group2={},group3={},group4={},group5={},group6={},
-        group7={},group8={},group9={},group10={},group11={},group12={}
-    }
+    local validServers = { group1 = {}, group2 = {}, group3 = {}, group4 = {}, group5 = {} ,group6 = {}, group7 = {}, group8 = {},group9 = {}, group10 = {} , group11 = {}, group12 = {}}
+    local currentJobId, currentPlaceId = game.JobId, game.PlaceId
 
-    for _, srv in pairs(srvs) do
-        if type(srv)=="table" and srv.ServerOsTime and srv.JobId
-            and srv.GetPlayers and srv.PlaceId
-            and srv.PlaceId == game.PlaceId
-            and srv.JobId ~= game.JobId
-            and not visitedServers[srv.JobId]
-            and srv.GetPlayers > 0 and srv.GetPlayers < 13 then
+    for _, server in pairs(servers) do
+    if type(server) == "table" and server.ServerOsTime and server.JobId and server.GetPlayers and server.PlaceId then
+        local uptime, jobId, players = getServerUptime(server), server.JobId, server.GetPlayers
 
-            local up = os.time() - srv.ServerOsTime
-
-            if     up >= 4*3600+21*60  and up <= 4*3600+30*60  then table.insert(validServers.group1,  srv)
-            elseif up >= 8*3600+52*60  and up <= 9*3600+1*60   then table.insert(validServers.group2,  srv)
-            elseif up >= 59*60+1       and up <= 1*3600+7*60   then table.insert(validServers.group3,  srv)
-            elseif up >= 2*3600+7*60   and up <= 2*3600+14*60  then table.insert(validServers.group4,  srv)
-            elseif up >= 3*3600+14*60  and up <= 3*3600+21*60  then table.insert(validServers.group5,  srv)
-            elseif up >= 5*3600+31*60  and up <= 5*3600+37*60  then table.insert(validServers.group6,  srv)
-            elseif up >= 13*3600+28*60 and up <= 13*3600+35*60 then table.insert(validServers.group7,  srv)
-            elseif up >= 18*3600+10*60 and up <= 18*3600+17*60 then table.insert(validServers.group8,  srv)
-            elseif up >= 7*3600+45*60  and up <= 7*3600+52*60  then table.insert(validServers.group9,  srv)
-            elseif up >= 6*3600+38*60  and up <= 6*3600+45*60  then table.insert(validServers.group10, srv)
-            elseif up >= 10*3600+3*60  and up <= 10*3600+9*60  then table.insert(validServers.group11, srv)
-            elseif up >= 11*3600+11*60 and up <= 11*3600+17*60 then table.insert(validServers.group12, srv)
+        if server.PlaceId == currentPlaceId and jobId ~= currentJobId and not visitedServers[jobId] and players > 0 and players < 13 then
+             if uptime >= 4 * 60 * 60 + 21 * 60 and uptime <= 4 * 60 * 60 + 30 * 60 then
+                table.insert(validServers.group1, server) 
+                elseif uptime >= 8 * 60 * 60 + 52 * 60 and uptime <= 9 * 60 * 60 + 1 * 60 then
+            
+                table.insert(validServers.group2, server)
+             elseif uptime >= 59 * 60 + 1 and uptime <= 1 * 60 * 60 + 7 * 60 then
+                table.insert(validServers.group3, server)
+              elseif uptime >= 2 * 60 * 60 + 7 * 60 and uptime <= 2 * 60 * 60 + 14 * 60 then
+                table.insert(validServers.group4, server)
+            elseif uptime >= 3 * 60 * 60 + 14 * 60 and uptime <= 3 * 60 * 60 + 21 * 60 then
+                table.insert(validServers.group5, server)
+            elseif uptime >= 5 * 60 * 60 + 31 * 60 and uptime <= 5 * 60 * 60 + 37 * 60 then
+                table.insert(validServers.group6, server)
+                elseif uptime >= 13 * 60 * 60 + 28 * 60 and uptime <= 13 * 60 * 60 + 35 * 60 then
+                table.insert(validServers.group7, server)
+                elseif uptime >= 18 * 60 * 60 + 10 * 60 and uptime <= 18 * 60 * 60 + 17 * 60 then
+                table.insert(validServers.group8, server)
+                elseif uptime >= 7 * 60 * 60 + 45 * 60 and uptime <= 7 * 60 * 60 + 52 * 60 then
+                table.insert(validServers.group9, server)
+                elseif uptime >= 6 * 60 * 60 + 38 * 60 and uptime <= 6 * 60 * 60 + 45 * 60 then
+                table.insert(validServers.group10, server)
+                elseif uptime >= 10 * 60 * 60 + 3 * 60 and uptime <= 10 * 60 * 60 + 9 * 60 then
+                table.insert(validServers.group11, server)
+            elseif uptime >= 11 * 60 * 60 + 11 * 60 and uptime <= 11 * 60 * 60 + 17 * 60 then
+                table.insert(validServers.group12, server)
             end
         end
     end
-
+end
     math.randomseed(tick())
-    local priority = {
-        "group1","group2","group3","group4","group5","group6",
-        "group7","group8","group9","group10","group11","group12"
-    }
-    for _, g in ipairs(priority) do
-        if #validServers[g] > 0 then
-            return validServers[g][math.random(#validServers[g])]
+    local priorityGroups = { "group1", "group2", "group3", "group4" ,"group5","group6","group7","group8","group9","group10","group11","group12"}
+    for _, group in ipairs(priorityGroups) do
+        if #validServers[group] > 0 then
+            return validServers[group][math.random(#validServers[group])]
         end
     end
+
     return nil
 end
 
--- ════════════════════════════════════════════════
--- HOP CORE: multi-coroutine spam — N luồng song song, không CD, không guard
--- ════════════════════════════════════════════════
-
-local SPAM_THREADS = 5  -- Số luồng spam song song (tăng nếu muốn mạnh hơn)
-
--- TeleportInitFailed global: chỉ rollback counter, không block gì cả
-TeleportService.TeleportInitFailed:Connect(function(p, reason)
-    if p ~= lplr then return end
-    if hopSession > 0 then
-        hopSession -= 1
-        if #hopHistory > 0 then
-            table.remove(hopHistory, #hopHistory)
-            saveHopHistory()
-        end
-        getgenv().hopCount        = hopSession
-        getgenv().hopCountAllTime = #hopHistory
-        warn(string.format("⚠️ GameFull (%s) → rollback #%d", tostring(reason), hopSession))
+-- 🏆 Hàm Teleport() mới
+local function Teleport()
+    
+        local selectedServer = findValidServer()
+        if selectedServer then
+            saveTeleportedServers(selectedServer.JobId)
+            th.New("Đang Tìm Server")
+            TeleportService:TeleportToPlaceInstance(selectedServer.PlaceId, selectedServer.JobId, game.Players.LocalPlayer)
+            
+        else
+            removeOldestServer()
+            
+            th.New("Đang Tìm Server Nâng Cao",5)
+         
+        
     end
-end)
+end
 
-local _teleporting = false  -- chỉ dùng để block vòng [1] bên ngoài
+local waitedOnce = false -- Đánh dấu đã chờ 10s chưa
+local initialBeli = game.Players.LocalPlayer:WaitForChild("PlayerStats"):WaitForChild("beli").Value
+ local initialGem = game.Players.LocalPlayer:WaitForChild("PlayerStats"):WaitForChild("Gem").Value
+sTab:AddToggle({
+    Name = "Auto Hop Thông Minh | Beta (Sea King, Hydra)",
+    Default = Settings.autoskhdhop,
+    Callback = function(value)
+        getgenv().SeaKinghop = value
+        Settings.autoskhdhop = value
+        SaveSettings()
+        if not value then return end
 
-local function doHop()
-    if _teleporting then return end
-    _teleporting = true
+        spawn(function()
+            while getgenv().SeaKinghop do
+                task.wait(0.1) -- Giảm xuống 0.1 giây để kiểm tra nhanh hơn
 
-    recordHop()
-    Notify(string.format("🔵 Hop #%d — %d luồng spam...", hopSession, SPAM_THREADS), 3)
+                local Workspace = game:GetService("Workspace")
+                local workspaceIsland = Workspace.Island -- Định nghĩa workspaceIsland
+                local Players = game:GetService("Players")
+                local LocalPlayer = Players.LocalPlayer
+                local PlayerStats = LocalPlayer.PlayerStats
+                local MainGui = LocalPlayer.PlayerGui.MainGui
+                local SecondSea = MainGui.StarterFrame.LegacyPoseFrame.SecondSea
+                -- Lấy đối tượng trong game
+                local seaKing = Workspace.SeaMonster:FindFirstChild("SeaKing")
+                local hydra = Workspace.SeaMonster:FindFirstChild("HydraSeaKing")
+                local gs = Workspace.GhostMonster:FindFirstChild("Ghost Ship")
 
-    -- Spawn N coroutine cùng lúc, mỗi luồng tự tìm server và spam độc lập
-    for i = 1, SPAM_THREADS do
-        coroutine.wrap(function()
-            while true do
-                local srv = findValidServer()
-                if srv then
-                    saveVisited(srv.JobId)
-                    pcall(TeleportService.TeleportToPlaceInstance,
-                        TeleportService, srv.PlaceId, srv.JobId, lplr)
+                -- Lấy thời gian spawn từ GUI
+                local skTimeLabel = SecondSea:FindFirstChild("SKTimeLabel")
+                local gsTimeLabel = SecondSea:FindFirstChild("GSTimeLabel")
+
+                local function ConvertTimeToSeconds(timeStr)
+                    local h, m, s = timeStr:match("(%d+):(%d+):(%d+)")
+                    if h and m and s then
+                        return tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s)
+                    end
+                    return 9999
+                end
+
+                local skSpawnTime = skTimeLabel and ConvertTimeToSeconds(skTimeLabel.Text) or 9999
+                local gsSpawnTime = gsTimeLabel and ConvertTimeToSeconds(gsTimeLabel.Text) or 9999
+
+local function spamTeleport()
+    coroutine.wrap(function()
+        while getgenv().SeaKinghop do
+            local success = pcall(function()
+                -- Gọi hàm Teleport ở đây
+                Teleport()
+            end)
+            
+            -- Nếu teleport thành công, thoát vòng lặp
+            if success then
+                break
+            end
+
+            task.wait(0.2)
+        end
+    end)()
+end
+                -- Kiểm tra thời gian spawn và quyết định hop
+                if skSpawnTime < Settings.HopThreshold then
+                    th.New("Sea King hoặc Hydra spawn sau " .. skSpawnTime .. " giây, không hop!", 1)
+                    task.wait()
+                elseif gsSpawnTime < Settings.HopThreshold then
+                    th.New("Ghost Ship spawn sau " .. gsSpawnTime .. " giây, không hop!", 1)
+                    task.wait()
+                elseif gs and gs:FindFirstChild("HumanoidRootPart") then
+                    th.New("Ghost Ship đang hiện diện, không hop!", 1)
+                    task.wait()
+                elseif getBossRoot() then
+                    th.New("Boss đang hiện diện, không hop!", 1)
+                    task.wait()
                 else
-                    removeOldest()
-                end
-                task.wait()  -- 1 frame, không CD
-            end
-        end)()
-    end
-end
 
--- ════════════════════════════════════════════════
--- [1] AUTO HOP THÔNG MINH
--- ════════════════════════════════════════════════
--- _teleporting đã được khai báo ở HOP CORE bên trên
--- Vòng này bỏ qua nếu đang trong spamTeleport retry
-
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        if not cfg("AutoHop") then continue end
-        if _teleporting then continue end  -- Đang retry teleport → không trigger thêm
-        pcall(function()
-            local stats = lplr:FindFirstChild("PlayerStats")
-            if not stats then return end
-
-            local sk = workspace.SeaMonster:FindFirstChild("SeaKing")
-            local hd = workspace.SeaMonster:FindFirstChild("HydraSeaKing")
-            local gs = workspace.GhostMonster:FindFirstChild("Ghost Ship")
-
-            local function getSpawnSec(label)
-                local ok2, val = pcall(function()
-                    return lplr.PlayerGui.MainGui.StarterFrame
-                        .LegacyPoseFrame.SecondSea[label].Text
-                end)
-                if not ok2 then return 9999 end
-                local h,m,s = val:match("(%d+):(%d+):(%d+)")
-                return h and tonumber(h)*3600+tonumber(m)*60+tonumber(s) or 9999
-            end
-
-            local skSec = getSpawnSec("SKTimeLabel")
-            local gsSec = getSpawnSec("GSTimeLabel")
-            local thr   = cfg("HopThreshold")
-
-            if skSec < thr then
-                Notify("🟡 SK/HD spawn sau "..skSec.."s — giữ server", 1) return end
-            if gsSec < thr then
-                Notify("🟡 GS spawn sau "..gsSec.."s — giữ server", 1)   return end
-            if gs and gs:FindFirstChild("HumanoidRootPart") then
-                Notify("🟡 Ghost Ship đang hiện diện", 1)                 return end
-            if getBossRoot() then
-                Notify("🟡 Boss đang hiện diện", 1)                       return end
-
-            -- Kiểm tra đảo / rương còn không
-            local hasSK, hasHD, hasGSChest = false, false, false
-
-            local islandFolder = workspace:FindFirstChild("Island")
-            if islandFolder then
-                for _, obj in ipairs(islandFolder:GetDescendants()) do
-                    if obj:IsA("Model") then
-                        local n = obj.Name
-                        if n == "EpicChest" or n == "SeaBeastChest" or n == "DragonChest" then
-                            hasSK = true
-                        elseif n == "HydraChest" then
-                            hasHD = true
+                    local hasSeaKing = false
+                    
+                    for _, islandName in ipairs({"Legacy Island1", "Legacy Island2", "Legacy Island3", "Legacy Island4"}) do
+                        local island = workspaceIsland:FindFirstChild(islandName)
+                        if island and island:FindFirstChild("ChestSpawner") then
+                            hasSeaKing = true -- Có ChestSpawner
+                
                         end
+                    
                     end
-                end
-            end
-            if workspace:FindFirstChild("Chest1") then hasGSChest = true end
 
-            -- Không có gì → hop ngay
-            if not hasSK and not hasHD and not hasGSChest
-                and not hd
-                and (not gs or not gs:FindFirstChild("HumanoidRootPart")) then
-                doHop()
-                return
-            end
-
-            -- Có rương → chờ nhặt rồi mới hop (vòng ngoài sẽ bị block bởi _teleporting sau khi hop)
-            local initBeli = stats.beli.Value
-            local initGem  = stats.Gem.Value
-            local elapsed  = 0
-            local hopped   = false
-
-            while elapsed < 25 do
-                task.wait(0.15)
-                elapsed += 0.15
-                if not cfg("AutoHop") then break end
-                if _teleporting then hopped = true; break end  -- doHop đã được gọi từ ngoài → thoát
-
-                -- Chỉ cần beli HOẶC gem tăng là đã nhận rương xong
-                if stats.beli.Value > initBeli or stats.Gem.Value > initGem then
-                    task.wait(0.8)
-                    doHop(); hopped = true; break
-                end
-
-                -- Thoát sớm nếu rương đã biến mất (despawn hoặc đã nhặt hết)
-                local stillHasChest = false
-                if islandFolder then
-                    for _, obj in ipairs(islandFolder:GetDescendants()) do
-                        if obj:IsA("Model") then
-                            local on = obj.Name
-                            if on=="EpicChest" or on=="SeaBeastChest"
-                                or on=="DragonChest" or on=="HydraChest" then
-                                stillHasChest = true; break
+                    local hasHydraStand = false
+                    
+                    for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+                        local island = workspaceIsland:FindFirstChild(name)
+                        if island then
+                            if island:FindFirstChild("HydraStand") then
+                                hasHydraStand = true -- Có HydraStand
                             end
+                            
+                        end
+                        
+                    end
+
+                    local hasGhostShipChest = false
+                    local ghostShipChest = Workspace:FindFirstChild("Chest1")
+                    if ghostShipChest then
+                        hasGhostShipChest = true
+                    end
+
+                    -- Kiểm tra ngoài hasCollectedChest
+                    if not hasSeaKing and not hasHydraStand and not hasGhostShipChest and not hydra and (not gs or not gs:FindFirstChild("HumanoidRootPart") or not seaKing:FindFirstChild("HumanoidRootPart")) then
+
+                            spamTeleport()
+                     
+                    else
+                        -- Nếu có Sea King, Hydra hoặc rương, kiểm tra thu thập trong hasCollectedChest
+                        local function hasCollectedChest()
+                            
+                            local timeout = 15 -- Timeout 5 giây
+                            local elapsedTime = 0
+
+                            -- Chờ nhặt rương
+                            while elapsedTime < timeout do
+                                task.wait(0.1)
+                                elapsedTime = elapsedTime + 0.1
+
+                                local currentBeli = PlayerStats.beli.Value
+                                local currentGem = PlayerStats.Gem.Value
+
+                                -- Kiểm tra nếu nhặt được rương (dựa trên Beli/Gem)
+                                if (hasSeaKing or hasSeaKingChest or hasHydraStand or hasHydraChest) and currentBeli > initialBeli and currentGem > initialGem then
+                                    
+                                    return true
+                                elseif hasGhostShipChest then
+                                    th.New("Đã nhặt rương Ghost Ship!", 2)
+                                    
+                                    return true
+                                end
+
+                                -- Kiểm tra lại Sea King, Hydra, và rương để thoát sớm nếu đảo chìm
+                                hasSeaKing = false
+                                hasSeaKingChest = false
+                                for _, islandName in ipairs({"Legacy Island1", "Legacy Island2", "Legacy Island3", "Legacy Island4"}) do
+                                    local island = workspaceIsland:FindFirstChild(islandName)
+                                    if island and island:FindFirstChild("ChestSpawner") then
+                                        hasSeaKing = true
+                                        for _, v in pairs(island.ChestSpawner:GetChildren()) do
+                                            if v:IsA("Model") and v.Name:match("Chest$") then
+                                                hasSeaKingChest = true
+                                                break
+                                            end
+                                        end
+                                    end
+                                    if hasSeaKingChest then break end
+                                end
+
+                                hasHydraStand = false
+                                hasHydraChest = false
+                                for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+                                    local island = workspaceIsland:FindFirstChild(name)
+                                    if island then
+                                        if island:FindFirstChild("HydraStand") then
+                                            hasHydraStand = true
+                                        end
+                                        for _, chest in ipairs(island:GetChildren()) do
+                                            if chest:IsA("Model") and chest.Name:match("Chest$") then
+                                                hasHydraChest = true
+                                                break
+                                            end
+                                        end
+                                    end
+                                    if hasHydraChest then break end
+                                end
+
+                                local ghostShipChestCheck = Workspace:FindFirstChild("Chest1")
+                                if ghostShipChestCheck and ghostShipChestCheck:FindFirstChild("Top") then
+                                    hasGhostShipChest = true
+                                end
+
+                                local seaKingCheck = Workspace.SeaMonster:FindFirstChild("SeaKing")
+                                local hydraCheck = Workspace.SeaMonster:FindFirstChild("HydraSeaKing")
+                                local gsCheck = Workspace.GhostMonster:FindFirstChild("Ghost Ship")
+
+                                -- Thoát sớm nếu không còn rương hoặc boss (đảo chìm)
+                                if not hasSeaKing and not hasSeaKingChest and not hasHydraStand and not hasHydraChest and not hasGhostShipChest and not seaKingCheck and not hydraCheck and (not gsCheck or not gsCheck:FindFirstChild("HumanoidRootPart")) then
+                                    
+                                    return false
+                                end
+                            end
+
+                            
+                            return false
+                        end
+
+                        -- Thực hiện hop dựa trên kết quả nhặt rương
+                        if hasCollectedChest() then
+                            
+                            -- Đã nhặt được rương -> Chạy vào đây
+                            th.New("✅ Đã nhặt rương! Đợi 5s để Storage Fruit", 5) -- Thông báo cho đẹp
+                            task.wait(5) -- <--- CHỈ ĐỢI 1 LẦN DUY NHẤT TẠI ĐÂY (Sau khi đã nhặt xong)
+                            spamTeleport() -- Bỏ  để hop ngay
+                            break
+                        else
+                            th.New("Không nhặt được rương, dịch chuyển ngay!", 2)
+                            spamTeleport()
+                            break
                         end
                     end
                 end
-                for i = 1, 5 do
-                    if workspace:FindFirstChild("Chest"..i) then
-                        stillHasChest = true; break
-                    end
-                end
-                if not stillHasChest then
-                    Notify("🔴 Rương đã hết → hop ngay!", 1)
-                    doHop(); hopped = true; break
-                end
-            end
-
-            if not hopped then
-                Notify("⏱ Timeout → hop tiếp!", 1)
-                doHop()
             end
         end)
     end
-end)
-
--- ════════════════════════════════════════════════
--- [2] AUTO TELEPORT LÊN BOSS / RƯƠNG
--- Ưu tiên: rương tồn tại → nhặt trước
---          không có rương → đứng cạnh boss đang sống
--- ════════════════════════════════════════════════
-task.spawn(function()
-    while true do
-        task.wait(1)
-        if not cfg("AutoTeleport") then unstop(); continue end
-        pcall(function()
-            stop()
-            local wIsland = workspace.Island
-            local root    = getRoot()
-            if not root then return end
-
-            -- ── Kiểm tra rương vật lý đang tồn tại ──────────────
-            local hasHydraChest, hasSKChest, hasGSChest = false, false, false
-
-            for _, n in ipairs({"Sea King Thunder","Sea King Water","Sea King Lava"}) do
-                local isl = wIsland:FindFirstChild(n)
-                if isl then
-                    for _, obj in ipairs(isl:GetChildren()) do
-                        if obj:IsA("Model") and obj.Name:match("Chest$") then
-                            hasHydraChest = true; break
-                        end
-                    end
-                end
-                if hasHydraChest then break end
-            end
-
-            for _, n in ipairs({"Legacy Island1","Legacy Island2","Legacy Island3","Legacy Island4"}) do
-                local isl = wIsland:FindFirstChild(n)
-                if isl and isl:FindFirstChild("ChestSpawner") then
-                    for _, obj in ipairs(isl.ChestSpawner:GetChildren()) do
-                        if obj:IsA("Model") and obj.Name:match("Chest$") then
-                            hasSKChest = true; break
-                        end
-                    end
-                end
-                if hasSKChest then break end
-            end
-
-            for i = 1, 5 do
-                if workspace:FindFirstChild("Chest"..i) then
-                    hasGSChest = true; break
-                end
-            end
-
-            local hasAnyChest = hasHydraChest or hasSKChest or hasGSChest
-
-            -- ── Nếu có rương → nhặt ngay, không quan tâm boss khác còn sống ──
-            if hasAnyChest then
-                -- Hydra chest
-                if hasHydraChest then
-                    for _, n in ipairs({"Sea King Thunder","Sea King Water","Sea King Lava"}) do
-                        local isl = wIsland:FindFirstChild(n)
-                        if isl and isl:FindFirstChild("HydraStand") then
-                            root.CFrame = isl.HydraStand.CFrame
-                        end
-                    end
-                end
-                -- SK chest
-                if hasSKChest then
-                    for _, n in ipairs({"Legacy Island1","Legacy Island2","Legacy Island3","Legacy Island4"}) do
-                        local isl = wIsland:FindFirstChild(n)
-                        if isl and isl:FindFirstChild("ChestSpawner") then
-                            root.CFrame = isl.ChestSpawner.CFrame
-                        end
-                    end
-                end
-                -- GS chest
-                if hasGSChest then
-                    local totalChests, collected = 0, 0
-                    for i = 1, 5 do
-                        if workspace:FindFirstChild("Chest"..i) then totalChests += 1 end
-                    end
-                    for i = 1, 5 do
-                        local chest = workspace:FindFirstChild("Chest"..i)
-                        if chest and chest:FindFirstChild("Top") then
-                            root.CFrame = chest.Top.CFrame
-                            task.wait(0.3)
-                            collected += 1
-                        end
-                    end
-                end
-                return  -- Đã xử lý rương → thoát, không teleport sang boss
-            end
-
-            -- ── Không có rương → đứng cạnh boss đang sống ──────
-            local bRoot = getBossRoot()
-            if bRoot then
-                root.CFrame = bRoot.CFrame * CFrame.new(0,-10,100)
-            end
-        end)
+})
+sTab:AddSlider({
+    Name = "Thời gian Chờ GS+HD+SK (giây)",
+    Min = 0,
+    Max = 300,
+    Default = Settings.HopThreshold,
+    Increment = 5,
+    ValueName = "giây",
+    Callback = function(value)
+        Settings.HopThreshold = value
+        SaveSettings()
     end
-end)
+})
 
--- ════════════════════════════════════════════════
--- [3] AUTO AIM SKILL  (FIXED — autoskill_fixed.lua)
--- ✅ Fix sendSkill: đúng thứ tự prefix_tool_key
--- ✅ Fix lọc tool: dùng isBadTool() tránh equip Fruit/Compass...
--- ✅ Fix M1: gửi Down → Up đúng chuẩn (không dùng "Click")
--- ✅ Fix getWeapon(): ưu tiên SW trước DF, chờ equip đủ thời gian
--- ════════════════════════════════════════════════
 
--- Remote SkillAction (dùng chung cho [3] và các sub-loop)
-local skillAction = ReplicatedStorage
-    :WaitForChild("Chest")
-    :WaitForChild("Remotes")
-    :WaitForChild("Functions")
-    :WaitForChild("SkillAction")
+local player = game:GetService("Players").LocalPlayer
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local fruitStorage = replicatedStorage:FindFirstChild("Chest") and replicatedStorage.Chest:FindFirstChild("Fruits")
 
--- [FIX] Danh sách tool bị loại (không dùng để đánh)
-local EXCLUDED_TOOLS = { Compass=true, LegacyPose=true, Cyborg=true }
-local function isBadTool(name)
-    if name:match("Fruit") then return true end
-    for bad in pairs(EXCLUDED_TOOLS) do
-        if name == bad or name:match(bad) then return true end
-    end
-    return false
-end
+getgenv().AutoStoreFruit = true -- Biến toggle chính
 
--- [FIX] getWeapon: trả về { tool, isDF }
--- isDF=true → prefix "DF"  |  isDF=false → prefix "SW"
-local function getWeapon()
-    local c = getChar()
-    if not c then return nil end
-    -- Đang cầm gì hợp lệ?
-    local eq = c:FindFirstChildOfClass("Tool")
-    if eq and not isBadTool(eq.Name) then
-        return { tool=eq, isDF=eq:FindFirstChild("DevilFruit")~=nil }
-    end
-    -- Ưu tiên kiếm/melee (SW)
-    local bp = lplr:FindFirstChild("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") and not isBadTool(t.Name) and not t:FindFirstChild("DevilFruit") then
-                c.Humanoid:EquipTool(t)
-                task.wait(0.2)
-                return { tool=t, isDF=false }
-            end
+
+function ClickButton(path)
+    if path then
+        game:GetService("GuiService").SelectedObject = path
+        if game:GetService("GuiService").SelectedObject == path then
+            game:GetService("VirtualInputManager"):SendKeyEvent(true, 13, false, game)
+            task.wait()
+            game:GetService("VirtualInputManager"):SendKeyEvent(false, 13, false, game)
         end
-        -- Fallback: DF
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") and t:FindFirstChild("DevilFruit") then
-                c.Humanoid:EquipTool(t)
-                task.wait(0.2)
-                return { tool=t, isDF=true }
-            end
-        end
+        task.wait()
+        game:GetService("GuiService").SelectedObject = nil
     end
-    return nil
 end
 
--- [FIX] sendSkill: prefix_toolName_key  + Down/Up đúng chuẩn
-local function sendSkill(prefix, toolName, key, targetCF)
-    local name = prefix.."_"..toolName.."_"..key
-    skillAction:InvokeServer(name, {MouseHit=targetCF, Type="Down"})
-    task.wait(0.05)
-    skillAction:InvokeServer(name, {MouseHit=targetCF, Type="Up"})
-end
 
--- ── AutoM1 loop (riêng biệt, rate 0.15s) ─────────────────────
-task.spawn(function()
-    while task.wait(0.15) do
-        if not cfg("AutoSkill") then continue end
-        pcall(function()
-            local target = getBossRoot()
-            local w      = getWeapon()
-            if not target or not w then return end
-            local prefix = w.isDF and "DF" or "SW"
-            local tCF    = target.CFrame
-            -- [FIX] M1: Down → Up (không dùng "Click")
-            skillAction:InvokeServer(
-                prefix.."_"..w.tool.Name.."_M1",
-                {MouseHit=tCF, Type="Down"}
-            )
-            task.wait(0.05)
-            skillAction:InvokeServer(
-                prefix.."_"..w.tool.Name.."_M1",
-                {MouseHit=tCF, Type="Up"}
-            )
-        end)
-    end
-end)
 
--- ── AutoSkill Z/X/C/V/E loop (rate 0.4s) ─────────────────────
-task.spawn(function()
-    local KEYS = {"Z","X","C","V","E"}
-    while task.wait(0.4) do
-        if not cfg("AutoSkill") then continue end
-        pcall(function()
-            local target = getBossRoot()
-            local w      = getWeapon()
-            if not target or not w then return end
-
-            local tCF   = target.CFrame
-            local tName = w.tool.Name
-
-            -- Ope Room check: nếu boss ngoài Room → dùng DF_OpOp_Z kéo vào
-            local opeRoom = workspace:FindFirstChild("OpeRoom"..pName)
-            if opeRoom then
-                local rCF, rSz = opeRoom.CFrame, opeRoom.Size
-                local out, total = 0, 0
-                for _, boss in pairs(workspace.SeaMonster:GetChildren()) do
-                    if boss:FindFirstChild("HumanoidRootPart") and boss.Name ~= "Hydra's Minion" then
-                        total += 1
-                        local bp = boss.HumanoidRootPart.Position
-                        if not (math.abs(bp.X-rCF.Position.X)<=rSz.X/2
-                            and math.abs(bp.Y-rCF.Position.Y)<=rSz.Y/2
-                            and math.abs(bp.Z-rCF.Position.Z)<=rSz.Z/2) then
-                            out += 1
-                        end
-                    end
-                end
-                if total > 0 and (out/total) > 0.5 then
-                    task.spawn(function()
-                        skillAction:InvokeServer("DF_OpOp_Z",{MouseHit=CFrame.new(),Type="Down"})
-                        task.wait(0.05)
-                        skillAction:InvokeServer("DF_OpOp_Z",{MouseHit=CFrame.new(),Type="Up"})
-                    end)
-                end
-            else
-                task.spawn(function()
-                    skillAction:InvokeServer("DF_OpOp_Z",{MouseHit=CFrame.new(),Type="Down"})
-                    task.wait(0.05)
-                    skillAction:InvokeServer("DF_OpOp_Z",{MouseHit=CFrame.new(),Type="Up"})
-                end)
-            end
-
-            -- [FIX] Kioru V2 / Ope Ope mode
-            local hasOpeV2 = lplr.Backpack:FindFirstChild("Kioru V2") ~= nil
-                or tName == "Kioru V2"
-            if hasOpeV2 then
-                for _, key in ipairs({"X","C","V"}) do
-                    task.spawn(function() sendSkill("DF","OpOp",key,tCF) end)
-                end
-                for _, key in ipairs({"M1","Z","X"}) do
-                    task.spawn(function() sendSkill("SW","Kioru V2",key,tCF) end)
-                end
-                return
-            end
-
-            -- [FIX] Tool thường: prefix đúng theo loại, KHÔNG gửi cả SW lẫn DF cùng lúc
-            local prefix = w.isDF and "DF" or "SW"
-            for _, key in ipairs(KEYS) do
-                task.spawn(function()
-                    sendSkill(prefix, tName, key, tCF)
-                end)
-            end
-
-            -- Nếu là Sword → thêm DF_OpOp_Z để pull boss vào room
-            if not w.isDF then
-                task.spawn(function()
-                    skillAction:InvokeServer("DF_OpOp_Z",{MouseHit=CFrame.new(),Type="Down"})
-                    task.wait(0.05)
-                    skillAction:InvokeServer("DF_OpOp_Z",{MouseHit=CFrame.new(),Type="Up"})
-                end)
-            end
-        end)
-    end
-end)
-
--- ════════════════════════════════════════════════
--- [4] AUTO START / SKIP LOADING / HAKI
--- ════════════════════════════════════════════════
-task.spawn(function()
-    while true do
-        task.wait(1)
-        if not cfg("AutoStart") then continue end
-        pcall(function()
-            local pgui = lplr:FindFirstChild("PlayerGui")
-            if not pgui then return end
-
-            -- Skip màn loading
-            if pgui:FindFirstChild("LoadingGUI") then
-                local lg = pgui.LoadingGUI
-                if lg:FindFirstChild("Play") then
-                    ReplicatedStorage.Chest.Remotes.Functions.EtcFunction
-                        :InvokeServer("EnterTheGame",{})
-                    repeat task.wait() until lplr.Character
-                        and lplr.Character:FindFirstChild("Humanoid")
-                    lplr.Character.Humanoid.Health = 0
-                end
-            end
-
-            -- Chọn Hard mode
-            if pgui:FindFirstChild("ChooseMap") then
-                ReplicatedStorage:WaitForChild("ChooseMapRemote"):FireServer("Hard")
-            end
-
-            -- Armament Haki
-            local cw = workspace:FindFirstChild("CharacterWorkshop")
-            if cw and not cw:FindFirstChild(pName.."ArmamentGroup") then
-                ReplicatedStorage.Chest.Remotes.Events.Armament:FireServer()
-            end
-
-            -- Kenbun Haki
-            local pcChars = workspace:FindFirstChild("PlayerCharacters")
-            if pcChars and pcChars:FindFirstChild(pName) then
-                local kenOpen = pcChars[pName]:FindFirstChild("Services")
-                    and pcChars[pName].Services:FindFirstChild("KenOpen")
-                if kenOpen and kenOpen.Value == false then
-                    ReplicatedStorage.Chest.Remotes.Functions.KenEvent:InvokeServer()
-                end
-            end
-
-            -- Golden Arena auto start
-            if sea(4) then
-                local gaGui = pgui:FindFirstChild("GoldenArena GUI")
-                if gaGui and gaGui:FindFirstChild("StartButton") then
-                    ReplicatedStorage.GoldenArenaEvents.StartEvent:FireServer()
-                end
-            end
-        end)
-    end
-end)
-
--- ════════════════════════════════════════════════
--- [5] AUTO CẤT FRUIT  (FIXED — autostore_fixed.lua)
--- ✅ Fix vòng lặp chết: dùng continue thay vì return
--- ✅ Fix chờ GUI EatFruitBecky mở đúng cách (retry + WaitForChild)
--- ✅ Fix reload storedFruits sau mỗi lần cất (không bị cache cũ)
--- ✅ Fix equip → chờ → click đúng thứ tự
--- ════════════════════════════════════════════════
-local fruitStorage = ReplicatedStorage:FindFirstChild("Chest")
-    and ReplicatedStorage.Chest:FindFirstChild("Fruits")
-
--- [FIX] Chờ nút Collect/Store xuất hiện (tối đa timeout giây)
+-- [FIX] Chờ nút Collect xuất hiện thật sự trong GUI (tối đa timeout giây)
 local function waitForCollectBtn(timeout)
     timeout = timeout or 3
     local t0 = tick()
     while tick() - t0 < timeout do
-        local gui      = lplr.PlayerGui:FindFirstChild("EatFruitBecky")
+        local gui      = player.PlayerGui:FindFirstChild("EatFruitBecky")
         local dialogue = gui and gui:FindFirstChild("Dialogue")
         if dialogue then
             local btn = dialogue:FindFirstChild("Collect") or dialogue:FindFirstChild("Store")
@@ -925,581 +933,1480 @@ local function waitForCollectBtn(timeout)
     return nil
 end
 
--- [FIX] Cất 1 trái: equip → chờ GUI → click Collect → xác nhận biến mất
-local function storeFruit(fruitName)
-    local backpack = lplr:FindFirstChild("Backpack")
-    local c        = getChar()
-    if not backpack or not c then return false end
-
-    local fruitInBag = backpack:FindFirstChild(fruitName)
-    if not fruitInBag then return false end
-
-    -- 1. Equip trái vào tay
-    fruitInBag.Parent = c
-    task.wait(0.6)
-
-    -- 2. Đảm bảo đang cầm (retry nếu equip chậm)
-    if not c:FindFirstChild(fruitName) then
-        local retry = backpack:FindFirstChild(fruitName)
-        if retry then
-            retry.Parent = c
-            task.wait(0.6)
+-- [FIX] Hàm cất 1 trái: equip → chờ GUI → click Collect → xác nhận biến mất
+local function EatFruit()
+    local character = player.Character
+    if not character then return end
+    local tool = character:FindFirstChildOfClass("Tool")
+    if not tool then return end
+    pcall(function()
+        -- Chờ GUI thật sự hiện thay vì click mù
+        local btn = waitForCollectBtn(2)
+        if btn then
+            ClickButton(btn)
         end
-    end
-    if not c:FindFirstChild(fruitName) then
-        warn("⚠️ Không equip được " .. fruitName)
-        return false
-    end
-
-    -- 3. Click màn hình kích hoạt menu trái
-    game:GetService("VirtualUser"):ClickButton1(Vector2.new(300,300))
-    task.wait(0.3)
-
-    -- 4. Chờ nút Collect (tối đa 3s), thử lại nếu chưa thấy
-    local collectBtn = waitForCollectBtn(3)
-    if not collectBtn then
-        game:GetService("VirtualUser"):ClickButton1(Vector2.new(300,300))
-        task.wait(0.8)
-        collectBtn = waitForCollectBtn(2)
-    end
-    if collectBtn then
-        ClickButton(collectBtn)
-        task.wait(0.5)
-    end
-
-    -- 5. Xác nhận trái đã biến mất (tối đa 4s), bấm lại nếu GUI vẫn còn
-    local elapsed = 0
-    while elapsed < 4 do
-        task.wait(0.4)
-        elapsed += 0.4
-        if not backpack:FindFirstChild(fruitName) and not c:FindFirstChild(fruitName) then
-            return true
-        end
-        local btn2 = waitForCollectBtn(0.5)
-        if btn2 then ClickButton(btn2) end
-    end
-
-    -- Thất bại → trả về balo
-    warn("⚠️ Cất thất bại: " .. fruitName .. " → trả về Backpack")
-    local stuck = c:FindFirstChild(fruitName)
-    if stuck then stuck.Parent = backpack end
-    return false
+    end)
 end
 
-task.spawn(function()
-    while task.wait(1) do
-        -- [FIX] continue (không return) → vòng lặp không chết khi tắt
-        if not cfg("AutoCatFruit") then continue end
-        pcall(function()
-            if not fruitStorage then return end
-            local stats    = lplr:FindFirstChild("PlayerStats")
-            local fStore   = stats and stats:FindFirstChild("FruitStore")
-            local fLimit   = stats and stats:FindFirstChild("FruitStorage")
-            -- [FIX] Stats chưa load → continue (không crash)
-            if not fStore or not fLimit then
-                warn("⚠️ Chờ PlayerStats...") return
+-- [FIX] StoreFruit: sửa 4 lỗi gốc
+--   1. return → continue  (vòng lặp không chết khi stats chưa load)
+--   2. return → continue  (vòng lặp không chết khi backpack/char nil)
+--   3. Reload storedFruits sau mỗi lần cất để qty luôn mới
+--   4. Chờ GUI mở đúng cách (waitForCollectBtn) thay vì click thẳng
+local function StoreFruit()
+    spawn(function()
+        while getgenv().AutoStoreFruit do
+            task.wait(0.5)
+
+            -- [FIX 1] stats chưa load → continue thay vì return
+            local fruitStore        = player.PlayerStats:FindFirstChild("FruitStore")
+            local fruitStorageLimit = player.PlayerStats:FindFirstChild("FruitStorage")
+            if not fruitStore or not fruitStorageLimit then
+                warn("Chua tim thay FruitStore / FruitStorage, thu lai...")
+                continue
             end
 
-            -- [FIX] Reload storedFruits MỖI VÒNG (không dùng cache cũ)
+            -- [FIX 2] backpack/char nil → continue thay vì return
+            local backpack  = player:FindFirstChild("Backpack")
+            local character = player.Character
+            if not backpack or not character then continue end
+
+            -- [FIX 3] Reload storedFruits mỗi vòng để qty luôn đúng
             local ok, storedFruits = pcall(function()
-                return HttpService:JSONDecode(fStore.Value)
+                return game:GetService("HttpService"):JSONDecode(fruitStore.Value)
             end)
             if not ok or type(storedFruits) ~= "table" then storedFruits = {} end
 
-            local limit  = tonumber(fLimit.Value) or 1
-            local bp     = lplr:FindFirstChild("Backpack")
-            local c      = getChar()
-            if not bp or not c then return end
+            local storageLimit = tonumber(fruitStorageLimit.Value) or 1
 
-            for _, fruitObj in ipairs(fruitStorage:GetChildren()) do
-                if not cfg("AutoCatFruit") then break end
-                local fn  = fruitObj.Name
-                local qty = tonumber(storedFruits[fn]) or 0
-                if qty < limit and bp:FindFirstChild(fn) then
-                    storeFruit(fn)
-                    -- [FIX] Reload sau mỗi lần cất để qty cập nhật đúng
-                    local ok2, fresh = pcall(function()
-                        return HttpService:JSONDecode(fStore.Value)
-                    end)
-                    if ok2 and type(fresh) == "table" then
-                        storedFruits = fresh
+            for _, fruit in ipairs(fruitStorage:GetChildren()) do
+                if not getgenv().AutoStoreFruit then break end
+
+                local fruitName     = fruit.Name
+                local currentAmount = storedFruits[fruitName] or 0
+
+                if currentAmount < storageLimit then
+                    local foundFruit = backpack:FindFirstChild(fruitName)
+
+                    if foundFruit then
+                        -- Equip trái vào tay
+                        foundFruit.Parent = character
+                        task.wait(0.6)
+
+                        -- Xác nhận đã equip thật sự
+                        local held = character:FindFirstChild(fruitName)
+                        if not held then
+                            -- Thử lại một lần
+                            local retry = backpack:FindFirstChild(fruitName)
+                            if retry then
+                                retry.Parent = character
+                                task.wait(0.6)
+                            end
+                        end
+
+                        -- [FIX 4] Click → chờ GUI mở → click Collect đúng nút
+                        game:GetService("VirtualUser"):ClickButton1(Vector2.new(300, 300))
+                        task.wait(0.3)
+
+                        local collectBtn = waitForCollectBtn(3)
+                        if collectBtn then
+                            ClickButton(collectBtn)
+                            task.wait(0.5)
+                        else
+                            -- GUI chưa hiện, thử click thêm lần nữa
+                            game:GetService("VirtualUser"):ClickButton1(Vector2.new(300, 300))
+                            task.wait(0.8)
+                            local btn2 = waitForCollectBtn(2)
+                            if btn2 then
+                                ClickButton(btn2)
+                                task.wait(0.5)
+                            end
+                        end
+
+                        -- Đợi trái biến mất (xác nhận cất xong)
+                        local startTime = tick()
+                        while (backpack:FindFirstChild(fruitName) or character:FindFirstChild(fruitName))
+                            and (tick() - startTime < 5) do
+                            task.wait(0.4)
+                            -- Thử bấm lại nếu GUI vẫn còn mở
+                            local btnRetry = waitForCollectBtn(0.5)
+                            if btnRetry then ClickButton(btnRetry) end
+                        end
+
+                        -- Cất thất bại: trả trái về balo để vòng sau xử lý lại
+                        local stuck = character:FindFirstChild(fruitName)
+                        if stuck then stuck.Parent = backpack end
+
+                        -- Reload qty sau khi cất xong để kiểm tra đúng
+                        local ok2, fresh = pcall(function()
+                            return game:GetService("HttpService"):JSONDecode(fruitStore.Value)
+                        end)
+                        if ok2 and type(fresh) == "table" then
+                            storedFruits = fresh
+                        end
                     end
                 end
-            end
-        end)
-    end
-end)
-
--- ════════════════════════════════════════════════
--- [6] AUTO VỨT FRUIT
--- ════════════════════════════════════════════════
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if not cfg("AutoDropFruit") then continue end
-        pcall(function()
-            local bp  = lplr:FindFirstChild("Backpack")
-            local c   = getChar()
-            local hum = c and c:FindFirstChildOfClass("Humanoid")
-            if not bp or not hum or not c then return end
-            local eq = hum:FindFirstChildOfClass("Tool")
-            if not (eq and eq:FindFirstChild("FakeHandle")) then
-                for _, tool in ipairs(bp:GetChildren()) do
-                    if tool:IsA("Tool") and tool:FindFirstChild("Handle") and tool.Name ~= "LegacyPose" then
-                        hum:EquipTool(tool)
-                        task.wait(0.5)
-                        eq = tool
-                        break
-                    end
-                end
-            end
-            if eq and eq:FindFirstChild("Handle") then
-                game:GetService("VirtualUser"):ClickButton1(Vector2.new(50,50))
-                task.wait(1)
-            end
-            local gui = lplr.PlayerGui:FindFirstChild("EatFruitBecky")
-            local dropBtn = gui and gui:FindFirstChild("Dialogue")
-                and gui.Dialogue:FindFirstChild("Drop")
-            if dropBtn then ClickButton(dropBtn) end
-            task.wait(0.8)
-        end)
-    end
-end)
-
--- ════════════════════════════════════════════════
--- [7] XÓA EFFECT (giảm lag đáng kể)
--- ════════════════════════════════════════════════
-local function deleteEffects()
-    pcall(function()
-        local chest = ReplicatedStorage:FindFirstChild("Chest")
-        if not chest then return end
-        for _, v in pairs(chest:GetChildren()) do
-            if v.Name == "FruitEffect" or v.Name == "SwordEffect" then
-                v:Destroy()
             end
         end
     end)
 end
 
-if cfg("AutoDeleteEffect") then deleteEffects() end
-
-task.spawn(function()
-    local chest = ReplicatedStorage:FindFirstChild("Chest")
-    if not chest then return end
-    chest.ChildAdded:Connect(function(child)
-        if cfg("AutoDeleteEffect")
-            and (child.Name=="FruitEffect" or child.Name=="SwordEffect") then
-            task.wait(0.05)
-            pcall(function() child:Destroy() end)
+sTab:AddToggle({
+    Name = "Auto Cất Fruit",
+    Default = Settings.autocat,
+    Callback = function(Value)
+        Settings.autocat = Value
+        SaveSettings()
+        getgenv().AutoStoreFruit = Value
+        if Value then
+            StoreFruit()
         end
-    end)
-end)
+    end
+})
 
--- ════════════════════════════════════════════════
--- [8] AUTO REJOIN KHI LỖI
--- ════════════════════════════════════════════════
-local rejoinConn
-local function setupRejoin()
-    if rejoinConn then rejoinConn:Disconnect(); rejoinConn = nil end
-    if not cfg("AutoRejoin") then return end
-    pcall(function()
-        local overlay = CoreGui:WaitForChild("RobloxPromptGui",5)
-        if not overlay then return end
-        local promptOverlay = overlay:WaitForChild("promptOverlay",5)
-        if not promptOverlay then return end
-        rejoinConn = promptOverlay.ChildAdded:Connect(function(child)
-            if child.Name == "ErrorPrompt"
-                and child:FindFirstChild("MessageArea")
-                and child.MessageArea:FindFirstChild("ErrorFrame") then
-                task.wait(3)
-                Notify("🔵 Lỗi phát hiện → rejoin...", 3)
-                TeleportService:Teleport(sea(4) and 4520749081 or game.PlaceId)
+
+sTab:AddToggle({
+    Name = "Xóa Effect",
+    Default = Settings.eff, 
+    Callback = function(state)
+        Settings.eff = state
+        SaveSettings() 
+if state then
+                   
+            for _, v in pairs(game.ReplicatedStorage.Chest:GetChildren()) do
+                if v.Name == "FruitEffect" or v.Name == "SwordEffect" then
+                    v:Destroy()
+                end
+            end
+        end
+    end
+})
+
+
+
+
+
+
+sTab:AddToggle({
+    Name = "Auto Start, Skip, Haki",
+    Default = Settings.start,
+    Callback = function(value)
+    Settings.start = value
+        
+        SaveSettings()
+        getgenv().start = value
+        spawn(function()
+        while getgenv().start do
+        pcall(function()
+            wait(1)
+     if not value then return end
+if game.Workspace.CharacterWorkshop:FindFirstChild(game.Players.LocalPlayer.Name.."ArmamentGroup") then
+
+else
+game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Events"):WaitForChild("Armament"):FireServer()
+end
+if workspace.PlayerCharacters[game.Players.LocalPlayer.Name].Services.KenOpen.Value == false then
+
+game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("KenEvent"):InvokeServer()
+
+else
+
+end
+if sea(4) then
+if game.Players.LocalPlayer.PlayerGui: WaitForChild("GoldenArena GUI"): FindFirstChild("StartButton")
+then
+game:GetService("ReplicatedStorage"):WaitForChild("GoldenArenaEvents"):WaitForChild("StartEvent"):FireServer()
+end
+
+            
+end
+            end)
+        end
+        end)
+    end
+})
+end
+if not sea(4) then
+local latTab = Window:MakeTab({
+    Name = "Webhook",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+local Section = latTab:AddSection({
+	Name = "Duy"
+})
+latTab:AddTextbox({
+    Name = "Webhook Theo Dõi Khi Gặp Rương Hoặc Khi Xong Raid",
+    Default = Webhook_URL2,
+    TextDisappear = false,
+    Callback = function(value)
+        if value and value:match("^https://discord.com/api/webhooks/") then
+            Webhook_URL2 = value
+            Settings.Webhook_URL2 = value
+            SaveSettings()
+            StarterGui:SetCore("SendNotification", {
+                Title = "Webhook URL2",
+                Text = "Đã lưu Webhook_URL2 thành công!",
+                Duration = 5
+            })
+        else
+            StarterGui:SetCore("SendNotification", {
+                Title = "Lỗi Webhook",
+                Text = "URL không hợp lệ!",
+                Duration = 5
+            })
+        end
+    end
+})
+
+
+latTab:AddToggle({
+    Name = "Auto Vứt Fruit",
+    Default = dropfruit,
+    Callback = function(value)
+        Settings.dropfruit = value
+        SaveSettings()
+        getgenv().AutoDrop = value
+        local player = game:GetService("Players").LocalPlayer
+local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+
+local function DropFruit()
+    local backpack = player:FindFirstChild("Backpack")
+    local character = player.Character
+    if not backpack or not humanoid or not character then return end
+
+    local equippedTool = humanoid:FindFirstChildOfClass("Tool")
+
+    -- Nếu không cầm Tool có "FakeHandle", thử trang bị từ Backpack
+    if not (equippedTool and equippedTool:FindFirstChild("FakeHandle")) then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") and tool:FindFirstChild("Handle") and tool.Name ~= "LegacyPose" then
+                humanoid:EquipTool(tool)
+                task.wait(0.5)
+                equippedTool = tool
+                break
+            end
+        end
+    end
+
+    -- Nếu có Tool hợp lệ, nhấn chuột để mở giao diện
+    if equippedTool and equippedTool:FindFirstChild("Handle") then
+        print("Đang cầm:", equippedTool.Name)
+        game:GetService("VirtualUser"):ClickButton1(Vector2.new(50, 50))
+        wait(1) -- Chờ UI xuất hiện
+    end
+if game.Players.LocalPlayer.Character:FindFirstChildOfClass("Tool") then
+        
+        game:GetService("VirtualUser"):ClickButton1(Vector2.new(50, 50))
+        wait(1) -- Chờ UI xuất hiện
+    end
+
+    -- Tìm và nhấn nút Drop
+    local gui = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("EatFruitBecky")
+    local dropButton = gui and gui:FindFirstChild("Dialogue") and gui.Dialogue:FindFirstChild("Drop")
+
+    if dropButton then
+       
+        ClickButton(dropButton)
+    end
+
+    wait(0.8)
+end
+        spawn(function()
+            while getgenv().AutoDrop do
+                DropFruit()
+                wait()
             end
         end)
+    end
+})
+latTab:AddButton({
+    Name = "Unlock Passive",
+    Callback = function()
+    local player = game:GetService("Players").LocalPlayer
+local humanoidRootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+local passiveTree = game:GetService("Workspace"):FindFirstChild("AllNPC") and game.Workspace.AllNPC:FindFirstChild("PassiveTree")
+
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local remote = replicatedStorage.Chest.Remotes.Functions.EtcFunction
+
+if humanoidRootPart and passiveTree then
+    -- Dịch chuyển đến cây
+    humanoidRootPart.CFrame = passiveTree.CFrame*CFrame.new(10,10,0)
+    wait(1) -- Chờ để đảm bảo dịch chuyển xong
+
+    -- Gọi Remote
+    local success, result = pcall(function()
+        return remote:InvokeServer("Blessing Passive", {})
     end)
-end
-setupRejoin()
 
--- ════════════════════════════════════════════════
--- [9] FREE POSE (UI SecondSea / ThirdSea)
--- ════════════════════════════════════════════════
-local function getSeaPose()
-    if sea(2) then return "SecondSea"
-    elseif sea(3) then return "ThirdSea"
-    else return "" end
+    
+else
+    th.New("Không Tìm Thấy PassiveTree",5)
 end
+    end
+})
+local selectedKey = "Copper Key"
+local quantityToBuy = 1
+local autoBuy = false
 
-task.spawn(function()
-    local ok, clientBeckUI = pcall(function()
-        return ReplicatedStorage
-            :WaitForChild("Chest",10)
-            :WaitForChild("Remotes",10)
-            :WaitForChild("Bindables",10)
-            :WaitForChild("ClientBeckUI",10)
+local keyTab = Window:MakeTab({
+    Name = "Key Buying",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+
+-- Dropdown chọn loại chìa khóa
+keyTab:AddDropdown({
+    Name = "Chọn Loại Chìa Khóa",
+    Default = Settings.chonkey,
+    Options = {"Copper Key", "Iron Key", "Gold Key","Platinum Key"},
+    Callback = function(value)
+    Settings.chonkey = value
+    SaveSettings()
+        selectedKey = value
+    end
+})
+
+-- Slider điều chỉnh số lượng
+keyTab:AddSlider({
+    Name = "Số Lượng Cần Mua",
+    Min = 1,
+    Max = 100,
+    Default = Settings.slkey,
+    Color = Color3.fromRGB(255, 170, 0),
+    Increment = 1,
+    ValueName = "Số Lượng",
+    Callback = function(value)
+    Settings.slkey = value
+    SaveSettings()
+        quantityToBuy = value
+    end
+})
+
+-- Nút nhấn mua chìa khóa
+keyTab:AddButton({
+    Name = "Mua Ngay",
+    Callback = function()
+    if selectedKey == "Platinum Key" then 
+    th.New("Không Thể Mua Key Này❌")
+    else
+        local args = {
+            [1] = selectedKey,
+            [2] = quantityToBuy
+        }
+        game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("BuyKey"):InvokeServer(unpack(args))
+end
+    end
+})
+
+-- Công tắc tự động mua
+keyTab:AddToggle({
+    Name = "Tự Động Mua",
+    Default = Settings.autobuy,
+    Callback = function(state)
+    if selectedKey == "Platinum Key" and state == true then 
+    th.New("Không Thể Mua Key Này❌")
+    end
+        autoBuy = state
+        Settings.autobuy = state
+        SaveSettings()
+        spawn(function()
+            while task.wait(0.2) do
+            if Settings.autobuy then
+            if not state then return end
+                local args = {
+                    [1] = selectedKey,
+                    [2] = quantityToBuy
+                }
+                game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("BuyKey"):InvokeServer(unpack(args))
+                
+            end
+        end
     end)
-    if not ok or not clientBeckUI then return end
-    while true do
-        task.wait(2)
-        if not cfg("FreePose") then continue end
-        pcall(function()
-            clientBeckUI:Fire("LegacyPoseFrame",{Sea=getSeaPose(),VisibleType=true})
+    end
+})
+keyTab:AddToggle({
+    Name = "Tự Động Mở Key Đã Chọn X10 ",
+    Default = false,
+    Callback = function(state)
+    getgenv().autopen = state
+        spawn(function()
+            while task.wait() do
+            if getgenv().autopen then
+            if not state then return end
+local args = {
+    [1] = selectedKey,
+    [2] = "Open10"
+                }
+game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("UseKey"):InvokeServer(unpack(args))
+
+            end
+        end
         end)
     end
-end)
+})
 
--- ════════════════════════════════════════════════
--- [10] AUTO MUA KEY
--- ════════════════════════════════════════════════
-local buyKeyRemote = ReplicatedStorage.Chest.Remotes.Functions.BuyKey
+-- 📌 Khai báo biến
+local autoConvert = false -- Công tắc tự động chuyển đổi
 
-task.spawn(function()
-    while true do
-        task.wait(0.2)
-        if not cfg("AutoBuyKey") then continue end
-        pcall(function()
-            local k = cfg("SelectedKey")
-            if k == "Platinum Key" then return end
-            buyKeyRemote:InvokeServer(k, cfg("KeyQuantity"))
-        end)
-    end
-end)
+-- 🏆 Lấy remote chuyển đổi Fruit sang Key
+local remote = game:GetService("ReplicatedStorage"):WaitForChild("Chest"):WaitForChild("Remotes"):WaitForChild("Functions"):WaitForChild("DealFruit")
 
--- ════════════════════════════════════════════════
--- [11] AUTO MỞ KEY x10
--- ════════════════════════════════════════════════
-local useKeyRemote = ReplicatedStorage.Chest.Remotes.Functions.UseKey
-
-task.spawn(function()
-    while true do
-        task.wait(0.1)
-        if not cfg("AutoOpenKey") then continue end
-        pcall(function()
-            useKeyRemote:InvokeServer(cfg("SelectedKey"), "Open10")
-        end)
-    end
-end)
-
--- ════════════════════════════════════════════════
--- [12] AUTO ĐỔI FRUIT → KEY
--- ════════════════════════════════════════════════
-local dealFruitRemote = ReplicatedStorage.Chest.Remotes.Functions.DealFruit
+-- 📜 Lấy danh sách Fruit có thể chuyển đổi từ ReplicatedStorage
 local availableFruits = {}
-local excludedFruits  = {
-    DoughFruit=true, GateFruit=true, DragonFruit=true,
-    PhoenixFruit=true, ToyFruit=true, OpFruit=true, MelodyFruit=true
+for _, fruit in ipairs(game:GetService("ReplicatedStorage").Chest.Fruits:GetChildren()) do
+    table.insert(availableFruits, fruit.Name)
+end
+
+-- ❌ Danh sách Fruit cần loại trừ
+local excludedFruits = {
+    ["DoughFruit"] = true,
+    ["GateFruit"] = true,
+    ["DragonFruit"] = true,
+    ["PhoenixFruit"] = true,
+    ["ToyFruit"] = true,
+    ["OpFruit"] = true,
+    ["MelodyFruit"] = true
 }
 
-pcall(function()
-    for _, f in ipairs(ReplicatedStorage.Chest.Fruits:GetChildren()) do
-        table.insert(availableFruits, f.Name)
+-- 🔍 Kiểm tra Backpack và tìm các Fruit hợp lệ
+local function getFruitsInBackpack()
+    local backpack = game.Players.LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return {} end
+
+    local fruitsInBackpack = {}
+    for _, item in ipairs(backpack:GetChildren()) do
+        if table.find(availableFruits, item.Name) and not excludedFruits[item.Name] then
+            table.insert(fruitsInBackpack, item.Name)
+        end
+    end
+
+    return fruitsInBackpack
+end
+
+-- 🔄 Chuyển đổi Fruit sang Key
+local function convertFruitsToKey()
+    if not autoConvert then return end
+
+    local fruitsToConvert = getFruitsInBackpack()
+    if #fruitsToConvert > 0 then
+        local args = {
+            [1] = selectedKey, -- Chìa khóa đã chọn
+            [2] = fruitsToConvert -- Danh sách Fruit hợp lệ
+        }
+
+        remote:InvokeServer(unpack(args))
+        print("✅ Đã chuyển Fruit thành Key:", selectedKey, "với các Fruit:", table.concat(fruitsToConvert, ", "))
+        StarterGui:SetCore("SendNotification", {
+                Title = "DuyHub",
+                Text = "Đã chuyển Fruit thành Key :"..selectedKey.." | Fruit:"..table.concat(fruitsToConvert, ", "),
+                Duration = 2
+            })
+        th.New("✅ Đã chuyển Fruit thành Key :"..selectedKey,5)
+    else
+   
+        th.New("❌ Không có Fruit hợp lệ trong Backpack để đổi Key.",5)
+    end
+
+    task.wait(4) -- Chờ 5 giây trước khi tiếp tục kiểm tra
+    convertFruitsToKey() -- Lặp lại nếu công tắc đang bật
+end
+
+
+
+-- 🔘 Công tắc tự động đổi Fruit
+keyTab:AddToggle({
+    Name = "Tự Động Đổi Fruit Sang Key Đã Chọn",
+    Default = false,
+    Callback = function(value)
+        autoConvert = value
+        if value then
+        th.New("Sẽ Loại Tự Lọai Trừ Fruit Legendary Và Trái Ope",5)
+            convertFruitsToKey()
+        end
+    end
+})
+
+end
+
+local TeleportTab = Window:MakeTab({
+ 
+    Name = "Server Info",
+ 
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+local TeleportService = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
+
+local function Rejoin()
+    if not sea(4) then
+        TeleportService:Teleport(game.PlaceId)
+    else
+        TeleportService:Teleport(4520749081)
+    end
+end
+
+local rejoinConnection
+
+TeleportTab:AddToggle({
+    Name = "Auto Rejoin",
+    Default = Settings.AutoRejoin,
+    Callback = function(value)
+        Settings.AutoRejoin = value
+        SaveSettings()
+        _G.AutoRejoin = value
+
+        -- Hủy kết nối cũ nếu có
+        if rejoinConnection then
+            rejoinConnection:Disconnect()
+            rejoinConnection = nil
+        end
+
+        if value then
+            rejoinConnection = CoreGui.RobloxPromptGui.promptOverlay.ChildAdded:Connect(function(child)
+                if child.Name == "ErrorPrompt" and child:FindFirstChild("MessageArea") and child.MessageArea:FindFirstChild("ErrorFrame") then
+                wait(3)
+                    print("Lỗi phát hiện! Đang rejoin...")
+                    Rejoin()
+                end
+            end)
+        end
+    end
+})
+TeleportTab:AddButton({
+
+
+
+    Name = "Copy Script Server",
+
+    Callback = function()
+        local currentPlayers = #game.Players:GetPlayers()
+local maxPlayers = game.Players.MaxPlayers
+local playerInfo = string.format(" %d/%d", currentPlayers, maxPlayers)
+ 
+setclipboard("--[[ " .. playerInfo .. " ]]--\n"
+    .. "game:GetService('TeleportService'):TeleportToPlaceInstance(game.PlaceId,' "..game.JobId.." ',game.Players.LocalPlayer)")
+    end
+})
+ TeleportTab:AddButton({
+
+
+
+    Name = "Copy Jobid Server",
+
+    Callback = function()
+ 
+setclipboard(game.JobId)
+    end
+})
+local Section = TeleportTab:AddSection({Name = "Teleport"})
+if sea(4) then
+TeleportTab:AddButton({
+
+
+
+    Name = "Dịch Chuyển Thẳng Về Sea1",
+
+    Callback = function()
+    OrionLib:MakeNotification({
+    Name = "TestHubV2",
+    Content = "Đang Dịch Chuyển",
+    Image = "rbxassetid://4483345998",
+    Time = 5
+})
+        TeleportService:Teleport(4520749081)
+    end
+})
+end
+-- Change Server Button
+TeleportTab:AddButton({
+    Name = "Đổi Server",
+    Callback = function()
+        local httprequest = request or http_request or (http and http.request) or (fluxus and fluxus.request) or syn.request
+        local PlaceId = game.PlaceId
+        local JobId = game.JobId
+        if httprequest then
+            local servers = {}
+            local req = httprequest({Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100", PlaceId)})
+            local body = game:GetService("HttpService"):JSONDecode(req.Body)
+            if body and body.data then
+                for i, v in next, body.data do
+                    if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
+                        table.insert(servers, 1, v.id)
+                    end
+                end
+            end
+            if #servers > 0 then
+                game:GetService("TeleportService"):TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], game:GetService("Players").LocalPlayer)
+            else
+                OrionLib:MakeNotification({
+    Name = "TestHubV2",
+    Content = "Không Tìm Được Server",
+    Image = "rbxassetid://4483345998",
+    Time = 5
+})
+            end
+        end
+    end
+})
+
+
+TeleportTab:AddButton({
+    Name = "Đổi Server Ít Người",
+    Callback = function()
+        local httprequest = request or http_request or (http and http.request) or (fluxus and fluxus.request) or syn.request
+        local PlaceId = game.PlaceId
+        local JobId = game.JobId
+        if httprequest then
+            local servers = {}
+            local req = httprequest({Url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", PlaceId)})
+            local body = game:GetService("HttpService"):JSONDecode(req.Body)
+            if body and body.data then
+                for _, v in next, body.data do
+                    if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
+                        table.insert(servers, {id = v.id, players = v.playing})
+                    end
+                end
+            end
+
+            if #servers > 0 then
+                -- Sắp xếp servers theo số người chơi tăng dần
+                table.sort(servers, function(a, b)
+                    return a.players < b.players
+                end)
+                -- Dịch chuyển tới server ít người chơi nhất
+                game:GetService("TeleportService"):TeleportToPlaceInstance(PlaceId, servers[1].id, game:GetService("Players").LocalPlayer)
+            else
+                OrionLib:MakeNotification({
+                    Name = "TestHubV2",
+                    Content = "Không Tìm Được Server",
+                    Image = "rbxassetid://4483345998",
+                    Time = 5
+                })
+            end
+        end
+    end
+})
+local Ping = TeleportTab:AddLabel("Ping [ "..game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValueString().." ]")
+ServerPlayer = TeleportTab:AddLabel("Player In Server [ "..#game.Players:GetPlayers().." / "..game.Players.MaxPlayers.." ]")
+ 
+local fps = TeleportTab:AddLabel("FPS: "..workspace:GetRealPhysicsFPS()) 
+ 
+ spawn(function() 
+ 
+ while task.wait(1) do 
+ 
+     Ping:Set("Ping [ "..game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValueString().." ]")
+     
+     ServerPlayer:Set("Player In Server [ "..#game.Players:GetPlayers().." / "..game.Players.MaxPlayers.." ]")
+     
+         fps:Set("FPS: "..FPS) 
+         FPS = 0 
+ end 
+ end)
+ 
+ 
+local time = TeleportTab:AddLabel(""..os.date("%A, %B %d, %I:%M:%S %p", os.time()))
+spawn(function()
+while task.wait() do
+    time:Set(""..os.date("%A, %B %d, %I:%M:%S %p", os.time()))
+end
+end)
+ 
+ 
+TeleportTab:AddLabel("Name: "..name..".")
+TeleportTab:AddLabel("Display name: "..dname..".")
+TeleportTab:AddLabel("User id: "..userid..".")
+local Section = TeleportTab:AddSection({Name = " "})
+TeleportTab:AddLabel("Executor: "..executor)
+TeleportTab:AddButton({
+    Name = "Rejoin",
+    Callback = function()
+        local tps = game:GetService("TeleportService")
+        local plr = game:GetService("Players").LocalPlayer
+        tps:TeleportToPlaceInstance(game.PlaceId, game.JobId, plr)
+    end
+})
+ 
+-- Create a Miscellaneous tab
+local MiscTab = Window:MakeTab({
+    Name = "❕Misc",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+ 
+ 
+-- Fast Mode Button
+MiscTab:AddButton({
+    Name = "Fast Mode",
+    Callback = function()
+        local ToDisable = {
+            Textures = true,
+            VisualEffects = true,
+            Parts = true,
+            Particles = true,
+            Sky = true
+        }
+ 
+        local ToEnable = {
+            FullBright = false
+        }
+ 
+        local Stuff = {}
+ 
+        for _, v in next, game:GetDescendants() do
+            if ToDisable.Parts then
+                if v:IsA("Part") or v:IsA("Union") or v:IsA("BasePart") then
+                    v.Material = Enum.Material.SmoothPlastic
+                    table.insert(Stuff, 1, v)
+                end
+            end
+ 
+            if ToDisable.Particles then
+                if v:IsA("ParticleEmitter") or v:IsA("Smoke") or v:IsA("Explosion") or v:IsA("Sparkles") or v:IsA("Fire") then
+                    v.Enabled = false
+                    table.insert(Stuff, 1, v)
+                end
+            end
+ 
+            if ToDisable.VisualEffects then
+                if v:IsA("BloomEffect") or v:IsA("BlurEffect") or v:IsA("DepthOfFieldEffect") or v:IsA("SunRaysEffect") then
+                    v.Enabled = false
+                    table.insert(Stuff, 1, v)
+                end
+            end
+ 
+            if ToDisable.Textures then
+                if v:IsA("Decal") or v:IsA("Texture") then
+                    v.Texture = ""
+                    table.insert(Stuff, 1, v)
+                end
+            end
+ 
+            if ToDisable.Sky then
+                if v:IsA("Sky") then
+                    v.Parent = nil
+                    table.insert(Stuff, 1, v)
+                end
+            end
+        end
+ 
+        game:GetService("TestService"):Message("Effects Disabler Script : Successfully disabled "..#Stuff.." assets / effects. Settings :")
+ 
+        for i, v in next, ToDisable do
+            print(tostring(i) .. ": " .. tostring(v))
+        end
+ 
+        if ToEnable.FullBright then
+            local Lighting = game:GetService("Lighting")
+ 
+            Lighting.FogColor = Color3.fromRGB(255, 255, 255)
+            Lighting.FogEnd = math.huge
+            Lighting.FogStart = math.huge
+            Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+            Lighting.Brightness = 5
+            Lighting.ColorShift_Bottom = Color3.fromRGB(255, 255, 255)
+            Lighting.ColorShift_Top = Color3.fromRGB(255, 255, 255)
+            Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+            Lighting.Outlines = true
+        end
+    end
+})
+ -- Pose cũ
+ local player = game:GetService("Players").LocalPlayer
+local gui
+
+-- Chờ GUI tải xong
+repeat
+    gui = player.PlayerGui:FindFirstChild("MainGui")
+        and player.PlayerGui.MainGui:FindFirstChild("StarterFrame")
+        and player.PlayerGui.MainGui.StarterFrame:FindFirstChild("LegacyPoseFrame")
+        and player.PlayerGui.MainGui.StarterFrame.LegacyPoseFrame:FindFirstChild("SecondSea")
+    task.wait()
+until gui
+
+local skTimeLabel, gsTimeLabel, skImage, gsImage, hdImage
+
+repeat
+    skTimeLabel = gui:FindFirstChild("SKTimeLabel")
+    gsTimeLabel = gui:FindFirstChild("GSTimeLabel")
+    skImage = gui:FindFirstChild("SKImage")
+    gsImage = gui:FindFirstChild("GSImage")
+    hdImage = gui:FindFirstChild("HDImage")
+    task.wait()
+until skTimeLabel and gsTimeLabel and skImage and gsImage and hdImage
+local player = game:GetService("Players").LocalPlayer
+local gui = player.PlayerGui.MainGui.StarterFrame.LegacyPoseFrame.SecondSea
+
+-- Đặt vị trí ban đầu
+gui.SKTimeLabel.Position = UDim2.new(0.5, 100, 0, -130) -- Căn giữa
+gui.GSTimeLabel.Position = UDim2.new(0.5, 250, 0, -130)  -- Cạnh SKTimeLabel
+
+
+-- Hàm cập nhật vị trí hình ảnh
+local function updateImagePosition(label, image)
+    if label and image then
+        image.Position = UDim2.new(0, label.Position.X.Offset + label.Size.X.Offset + 70, label.Position.Y.Scale, label.Position.Y.Offset)
+    end
+end
+
+-- Theo dõi vị trí thay đổi
+gsTimeLabel:GetPropertyChangedSignal("Position"):Connect(function()
+    updateImagePosition(gsTimeLabel, gsImage)
+end)
+
+skTimeLabel:GetPropertyChangedSignal("Position"):Connect(function()
+    updateImagePosition(skTimeLabel, skImage)
+    updateImagePosition(skTimeLabel, hdImage)
+end)
+
+-- Cập nhật ban đầu
+updateImagePosition(gsTimeLabel, gsImage)
+updateImagePosition(skTimeLabel, skImage)
+updateImagePosition(skTimeLabel, hdImage)
+
+-- Chờ ReplicatedStorage
+repeat task.wait(.1) until game:GetService("ReplicatedStorage"):FindFirstChild("Chest")
+    and game.ReplicatedStorage.Chest:FindFirstChild("Remotes")
+    and game.ReplicatedStorage.Chest.Remotes:FindFirstChild("Bindables")
+    and game.ReplicatedStorage.Chest.Remotes.Bindables:FindFirstChild("ClientBeckUI")
+
+local var17 = game:GetService("ReplicatedStorage").Chest.Remotes.Bindables.ClientBeckUI
+getgenv().AutoUpdateUI = false
+
+-- Xác định khu vực biển
+local function getSeaPose()
+    if sea(2) then
+        return "SecondSea"
+    elseif sea(3) then
+        return "ThirdSea"
+    end
+    return ""
+end
+
+
+local function AutoUpdate()
+    -- Hàm gửi remote mỗi giây
+spawn(function()
+    while getgenv().AutoUpdateUI do
+        var17:Fire("LegacyPoseFrame", {
+            Sea = getSeaPose(),
+            VisibleType = true
+        })
+        task.wait(2) -- Lặp lại mỗi giây
+    end
+    end)
+end
+
+-- Tạo công tắc bật/tắt UI với vòng lặp
+MiscTab:AddToggle({
+    Name = "Free Pose",
+    Default = true,
+    Callback = function(Value)
+        getgenv().AutoUpdateUI = Value
+        if Value then
+            AutoUpdate()
+        else
+            var17:Fire("LegacyPoseFrame", { Sea = getSeaPose(), VisibleType = false })
+        end
+    end
+})
+
+ 
+-- Infinite Yield Button
+MiscTab:AddButton({
+    Name = "Infinite Yield",
+    Callback = function()
+        loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+    end
+})
+ 
+-- Anti AFK Button
+MiscTab:AddButton({
+    Name = "Anti AFK",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/ginchao/Anti-AFK/main/NO%20KICK", true))()
+    end
+})
+ 
+-- Keyboard Button
+MiscTab:AddButton({
+    Name = "Keyboard",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/advxzivhsjjdhxhsidifvsh/mobkeyboard/main/main.txt", true))()
+    end
+})
+ 
+-- FlyV3 Button
+MiscTab:AddButton({
+    Name = "FlyV3",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/XNEOFF/FlyGuiV3/main/FlyGuiV3.txt"))()
+    end
+})
+ 
+-- Shift Lock Button
+MiscTab:AddButton({
+    Name = "Shift Lock",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/MiniNoobie/ShiftLockx/main/Shiftlock-MiniNoobie", true))()
+    end
+})
+local hubTab = Window:MakeTab({
+ 
+    Name = "Hub",
+ 
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+hubTab:AddButton({
+ 
+    Name = "Xoá Toàn Bộ Giao Diện",
+ 
+    Callback = function()
+        OrionLib:Destroy()
+        if game.Players.LocalPlayer.PlayerGui:FindFirstChild("ToggleUi") then
+            game.Players.LocalPlayer.PlayerGui:FindFirstChild("ToggleUi"):Destroy()
+        end
+    end 
+})
+ 
+--------------------------------------------------------
+local rd = {104752867797759,88832603203016,121648173742029,132902492294028}
+if gethui():FindFirstChild("Orion") and game.Players.LocalPlayer.PlayerGui:FindFirstChild("ToggleUi") == nil then
+    local TOGGLE = {}
+    TOGGLE["Ui"] = Instance.new("ScreenGui", game.Players.LocalPlayer.PlayerGui)
+    TOGGLE["DaIcon"] = Instance.new("ImageButton", TOGGLE["Ui"])
+    TOGGLE["das"] = Instance.new("UICorner", TOGGLE["DaIcon"])
+ 
+    TOGGLE["Ui"].Name = "ToggleUi"
+    TOGGLE["Ui"].ResetOnSpawn = false
+ 
+    TOGGLE["DaIcon"].Size = UDim2.new(0,45,0,45)
+    TOGGLE["DaIcon"].Position = UDim2.new(0,0,0)
+    TOGGLE["DaIcon"].Draggable = true
+TOGGLE["DaIcon"].Image = "rbxassetid://" .. rd[math.random(#rd)]
+    TOGGLE["DaIcon"].BackgroundColor3 = Color3.fromRGB(255, 182, 193)
+    TOGGLE["DaIcon"].BorderColor3 = Color3.fromRGB(255, 105, 180)
+    task.spawn(function()
+        while true do
+            for i = 0, 255, 4 do
+                TOGGLE["DaIcon"].BorderColor3 = Color3.fromHSV(i/256, 1, 1)
+                TOGGLE["DaIcon"].BackgroundColor3 = Color3.fromHSV(i/256, .5, .8)
+                task.wait()
+            end
+        end
+    end)
+    TOGGLE["DaIcon"].MouseButton1Click:Connect(function()
+        if gethui():FindFirstChild("Orion") then
+            for i,v in pairs(gethui():GetChildren()) do
+                if v.Name == "Orion" then
+                    v.Enabled = not v.Enabled
+                end
+            end
+        end
+    end)
+    TOGGLE["das"]["CornerRadius"] = UDim.new(0.20000000298023224, 0)
+end 
+
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local hubColorFile = "HubColor.json"
+local textAndBorderColorFile = "TextAndBorderColor.json"
+local savedHubColor = nil
+local savedTextAndBorderColor = nil
+
+-- Hàm lưu màu vào file
+local function saveColor(color, path)
+    local colorData = { r = color.R, g = color.G, b = color.B }
+    local jsonData = HttpService:JSONEncode(colorData)
+    writefile(path, jsonData)
+end
+
+-- Hàm tải màu từ file
+local function loadColor(path, defaultColor)
+    if isfile(path) then
+        local jsonData = readfile(path)
+        local colorData = HttpService:JSONDecode(jsonData)
+        return Color3.new(colorData.r, colorData.g, colorData.b)
+    else
+        return defaultColor -- Màu mặc định nếu file không tồn tại
+    end
+end
+
+-- Hàm áp dụng màu nền cho Hub
+local function applyHubColor(hubColor)
+    if gethui():FindFirstChild("Orion") then
+        for _, i in pairs(gethui():GetChildren()) do
+            if i.Name == "Orion" then
+                for _, v in pairs(i:GetDescendants()) do
+                    if v.ClassName == "Frame" and v.BackgroundTransparency < 0.99 then
+                        
+                        v.BackgroundColor3 = hubColor -- Màu nền
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Hàm áp dụng màu viền và chữ
+local function applyTextAndBorderColor(color)
+    if gethui():FindFirstChild("Orion") then
+        for _, i in pairs(gethui():GetChildren()) do
+            if i.Name == "Orion" then
+                for _, v in pairs(i:GetDescendants()) do
+                    if v.ClassName == "Frame" then
+                        v.BorderColor3 = color -- Màu viền
+                    end
+
+                    if v:IsA("TextLabel") or v:IsA("TextButton") or v:IsA("TextBox") then
+                        v.TextColor3 = color -- Màu chữ
+                    end
+                end
+            end
+        end
+    end
+end
+
+
+ -- Màu viền và chữ mặc định
+savedHubColor = loadColor(hubColorFile, Color3.fromRGB(0, 0, 0)) -- Màu nền mặc định
+savedTextAndBorderColor = loadColor(textAndBorderColorFile, Color3.fromRGB(255, 255, 255))
+-- Áp dụng màu đã lưu
+
+
+local Anh_Gai_Alimi = {
+    "18273888587", "18275995451", "", "18277860491", "","72316572273088"
+}
+
+local previousBackgroundId = nil -- Biến lưu lại ID hình nền trước khi bật công tắc
+
+-- Hàm chọn ngẫu nhiên một ID trong danh sách
+local function getRandomImageId()
+    local randomIndex = math.random(1, #Anh_Gai_Alimi)
+    return Anh_Gai_Alimi[randomIndex]
+end
+
+-- Hàm để áp dụng hình nền mới
+local function applyHubBackground(imageId)
+    if gethui():FindFirstChild("Orion") then
+        for _, gui in pairs(gethui():GetChildren()) do
+            if gui.Name == "Orion" then
+                local largestFrame = nil
+                local maxSize = 0
+
+                -- Duyệt qua tất cả các frame con
+                for _, frame in pairs(gui:GetDescendants()) do
+                    if frame:IsA("Frame") and frame.BackgroundTransparency < 1 then
+                        local frameSize = frame.AbsoluteSize.X * frame.AbsoluteSize.Y
+                        if frameSize > maxSize then
+                            maxSize = frameSize
+                            largestFrame = frame
+                        end
+                    end
+                end
+
+                -- Nếu tìm thấy Frame lớn nhất
+                if largestFrame then
+                    -- Lưu lại hình nền cũ
+                    if largestFrame:FindFirstChild("HubBackground") then
+                        previousBackgroundId = largestFrame.HubBackground.Image
+                        largestFrame:FindFirstChild("HubBackground"):Destroy()
+                    end
+
+                    -- Thêm hình nền mới
+                    local background = Instance.new("ImageLabel")
+                    background.Name = "HubBackground"
+                    background.Parent = largestFrame
+                    background.Size = UDim2.new(1, 0, 1, 0) -- Full kích thước
+                    background.Position = UDim2.new(0, 0, 0, 0) -- Đặt ở góc trái, trên cùng
+                    background.Image = "rbxassetid://" .. imageId
+                    background.BackgroundTransparency = 1
+                    background.ImageTransparency = Settings.alime or 0.7 -- Mờ hơn
+                    background.ScaleType = Enum.ScaleType.Stretch
+                end
+            end
+        end
+    end
+end
+
+-- Hàm để trả về trạng thái ban đầu (xóa hình nền)
+local function resetBackground()
+    if gethui():FindFirstChild("Orion") then
+        for _, gui in pairs(gethui():GetChildren()) do
+            if gui.Name == "Orion" then
+                for _, frame in pairs(gui:GetDescendants()) do
+                    if frame:IsA("Frame") then
+                        -- Xóa hình nền nếu có
+                        if frame:FindFirstChild("HubBackground") then
+                            frame:FindFirstChild("HubBackground"):Destroy()
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Hàm gọi khi công tắc thay đổi trạng thái
+local function toggleBackground(isOn)
+    if isOn then
+        -- Áp dụng hình nền mới khi bật
+        local randomImageId = getRandomImageId()
+        applyHubBackground(randomImageId)
+    else
+        -- Trả về trạng thái cũ khi tắt
+        resetBackground()
+        if previousBackgroundId then
+            -- Có thể áp dụng lại hình nền cũ nếu cần
+            applyHubBackground(previousBackgroundId)
+        end
+    end
+end
+
+-- Tạo GUI với công tắc
+hubTab:AddToggle({
+    Name = "Bật/Tắt Hình Nền",
+    Default = Settings.giaodien,
+    Callback = function(isOn)
+        Settings.giaodien = isOn
+        toggleBackground(isOn)
+        SaveSettings()
+    end
+})
+
+-- Hàm áp dụng độ trong suốt của Hub
+local function applyHubTransparency(transparency)
+    if gethui():FindFirstChild("Orion") then
+        for _, gui in pairs(gethui():GetChildren()) do
+            if gui.Name == "Orion" then
+                for _, frame in pairs(gui:GetDescendants()) do
+                    if frame:IsA("Frame") and frame.BackgroundTransparency < 0.99 then
+                        -- Đảm bảo rằng đối tượng frame có thể thay đổi độ trong suốt
+                        if frame.BackgroundTransparency ~= transparency then
+                            frame.BackgroundTransparency = transparency
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Hàm thay đổi độ trong suốt của hình nền
+local function applyBackgroundTransparency(transparency)
+    if gethui():FindFirstChild("Orion") then
+        for _, gui in pairs(gethui():GetChildren()) do
+            if gui.Name == "Orion" then
+                for _, frame in pairs(gui:GetDescendants()) do
+                    if frame:IsA("Frame") then
+                        -- Tìm đối tượng ImageLabel với hình nền và thay đổi độ trong suốt
+                        if frame:FindFirstChild("HubBackground") then
+                            local hubBackground = frame.HubBackground
+                            if hubBackground.ImageTransparency ~= transparency then
+                                hubBackground.ImageTransparency = transparency
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Các slider cho việc điều chỉnh độ trong suốt
+hubTab:AddSlider({
+    Name = "Độ Trong Suốt Hub",
+    Min = 0.0,  -- Thay đổi Min thành 0.0
+    Max = 0.98,  -- Thay đổi Max thành 1.0
+    Default = Settings.hub,  -- Giá trị mặc định là 0.0
+    Increment = 0.1,  -- Thêm Increment để tăng độ chính xác
+    Callback = function(value)
+    Settings.hub = value
+    SaveSettings()
+        applyHubTransparency(value)
+    end
+})
+
+hubTab:AddSlider({
+    Name = "Độ Rõ Hình Nền",
+    Min = 0.1,  -- Thay đổi Min thành 0.1
+    Max = 0.98,  -- Thay đổi Max thành 0.9
+    Default = Settings.alime,  -- Giá trị mặc định là 0.8
+    Increment = 0.1,  -- Thêm Increment để tăng độ chính xác
+    Callback = function(value)
+    Settings.alime = value
+    SaveSettings()
+    applyBackgroundTransparency(value)
+    end
+})
+
+hubTab:AddColorpicker({
+    Name = "Đổi Màu Hub",
+    Default = savedHubColor,
+    Callback = function(Value)
+        savedHubColor = Value
+        saveColor(Value, hubColorFile)
+        applyHubColor(savedHubColor)
+    end
+})
+
+hubTab:AddColorpicker({
+    Name = "Đổi Màu Chữ",
+    Default = savedTextAndBorderColor,
+    Callback = function(Value)
+        savedTextAndBorderColor = Value
+        saveColor(Value, textAndBorderColorFile)
+        applyTextAndBorderColor(savedTextAndBorderColor)
+    end
+})
+applyBackgroundTransparency(Settings.alime)
+applyHubTransparency(Settings.hub)
+applyHubColor(savedHubColor)
+applyTextAndBorderColor(savedTextAndBorderColor)
+
+-- Thêm Label cập nhật thông tin
+if game.CoreGui:FindFirstChild("TestHubLabelV2") then
+    game.CoreGui.TestHubLabelV2:Destroy()
+end
+
+local TestHubLabel = Instance.new("ScreenGui")
+TestHubLabel.Name = "TestHubLabelV2"
+local Label = Instance.new("TextLabel")
+
+-- Đảm bảo GUI được hiển thị trên màn hình
+TestHubLabel.Parent = game.CoreGui
+
+-- Cài đặt thuộc tính cho Label
+Label.Parent = TestHubLabel
+Label.Size = UDim2.new(0, 200, 0, 30)
+Label.Position = UDim2.new(0, 190, 0, -57)
+Label.BackgroundTransparency = 1
+Label.TextScaled = true
+Label.TextColor3 = savedTextAndBorderColor -- Áp dụng màu chữ đã lưu
+Label.Font = Enum.Font.SourceSans
+Label.Text = "Loading..."
+
+-- Biến lưu thời gian lần cập nhật gần nhất
+local lastUpdate = 0
+
+-- Cập nhật FPS, Ping, và Thời gian
+RunService.RenderStepped:Connect(function()
+    if tick() - lastUpdate >= 1 then
+        lastUpdate = tick()
+
+        local fps = math.floor(1 / RunService.RenderStepped:Wait())
+        local ping = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValueString()
+        local time = os.date("%H:%M:%S")
+
+        Label.Text = string.format("Time: %s | FPS: %d | Ping: %s ms", time, fps, ping)
     end
 end)
 
-local function getFruitsInBP()
-    local bp = lplr:FindFirstChild("Backpack")
-    if not bp then return {} end
-    local res = {}
-    for _, item in ipairs(bp:GetChildren()) do
-        if table.find(availableFruits, item.Name) and not excludedFruits[item.Name] then
-            table.insert(res, item.Name)
-        end
-    end
-    return res
+hubTab:AddSection({
+    Name = "Cre: ginchao"
+})
+
+hubTab:AddSection({
+    Name = "Duydz | King Legacy"
+})
+
+local HttpService = game:GetService("HttpService")
+local Webhook_HydraChest = "https://discord.com/api/webhooks/1467749692992393402/JUHX9zfQZX2x0dj5FFW9cSIqA6gM2SnpjB0OaiWxhDZb5vyKJUtOM2PUx69fwvqK9Yf3"
+local Webhook_URLshop = {
+    "https://discord.com/api/webhooks/1179091565638078555/D2ynz6_DI8lMKG9XOXTZ5oa5jtAbJVKs8Lztxha2eoR5JyhozYbAxuXjB0MFsNEvKxte"
+}
+if Settings.Webhook_URL2 and Settings.Webhook_URL2 ~= "" then
+    table.insert(Webhook_URLshop, Settings.Webhook_URL2)
 end
 
+
+-- Tìm đảo Sea King hoặc Hydra hiện tại
+local function getCurrentIsland()
+    -- Kiểm tra đảo Hydra trước
+    for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
+        local island = workspace.Island:FindFirstChild(name)
+        if island and island:FindFirstChild("ClockTime") and island.ClockTime:FindFirstChild("SurfaceGui") then
+            return island, "Hydra"
+        end
+    end
+
+    -- Nếu không tìm thấy Hydra, kiểm tra đảo Sea King
+    for i = 1, 4 do
+        local island = workspace.Island:FindFirstChild("Legacy Island" .. i)
+        if island and island:FindFirstChild("ClockTime") and island.ClockTime:FindFirstChild("SurfaceGui") then
+            return island, "Sea King"
+        end
+    end
+
+    return nil, "Không xác định"
+end
+
+-- Lấy thông tin cổng và thời gian đảo chìm
+local function getIslandInfo()
+    local island, islandType = getCurrentIsland()
+    if not island then return "Không xác định", "Không xác định", "Không xác định" end
+
+    local gui = island.ClockTime.SurfaceGui
+    local sinkTime = gui:FindFirstChild("Countdown") and gui.Countdown.Text or "Không xác định"
+    
+    local gateNumber = "Không xác định"
+    if islandType == "Sea King" then
+        gateNumber = gui:FindFirstChild("Number") and gui.Number.Text or "Không xác định"
+    end
+
+    return islandType, gateNumber, sinkTime
+end
+
+local function checkChests()
+    local foundChests = {}
+
+    for _, chest in pairs(workspace.Island:GetDescendants()) do
+        if chest:IsA("Model") and chest.Name:match("Chest$") then
+            if chest.Parent and chest.Parent.Name == "Gacha Background" then
+                return
+            end
+
+            local tier = "???"
+            if chest.Name == "EpicChest" then
+                tier = "Tier1"
+            elseif chest.Name == "SeaBeastChest" then
+                tier = "Tier2"
+            elseif chest.Name == "DragonChest" then
+                tier = "Tier3"
+            elseif chest.Name == "HydraChest" then
+                tier = "Tier4"
+            end
+            
+            table.insert(foundChests, "".. tier.." ")
+        end
+    end
+
+    return foundChests
+end
+
+local function getPlayerData()
+    local targetItems, targetFruits = {}, {}
+
+    pcall(function()
+        local materialData = game:GetService("Players").LocalPlayer.PlayerStats.Material.Value
+        if type(materialData) == "string" then
+            materialData = HttpService:JSONDecode(materialData)
+        end
+        for item, amount in pairs(materialData) do
+            if (item == "Sea King's Fin" or item == "Hydra's Tail" or item == "Sea's Wraith" or item == "Sea King's Blood" or item == "Fortune Tales" or item == "Copper Key") and tonumber(amount) and tonumber(amount) > 0 then
+                table.insert(targetItems, "- " .. item .. " x" .. amount)
+            end
+        end
+    end)
+
+    pcall(function()
+        local fruitData = game:GetService("Players").LocalPlayer.PlayerStats.FruitStore.Value
+        if type(fruitData) == "string" then
+            fruitData = HttpService:JSONDecode(fruitData)
+        end
+        for fruit, amount in pairs(fruitData) do
+            if (fruit == "DoughFruit" or fruit == "DragonFruit" or fruit == "PhoenixFruit" or fruit == "ToyFruit" or fruit == "GateFruit") and tonumber(amount) and tonumber(amount) > 0 then
+                table.insert(targetFruits, "- " .. fruit .. " x" .. amount)
+            end
+        end
+    end)
+
+    return targetItems, targetFruits
+end
+local initialBeli1 = game.Players.LocalPlayer:FindFirstChild("PlayerStats"):FindFirstChild("beli").Value
+ local initialGem1 = game.Players.LocalPlayer:FindFirstChild("PlayerStats"):FindFirstChild("Gem").Value
+ local lv = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerStats"):FindFirstChild("lvl").Value
+local function sendWebhook(webhookURL, includeItemsAndFruits)
+    local chests = checkChests()
+    if #chests == 0 then return end
+
+    local islandType, gateNumber, sinkTime = getIslandInfo()
+    local executor = "Unknown"
+    pcall(function()
+        executor = identifyexecutor() or "Unknown"
+    end)
+
+    local formattedChests = " Rương:" .. table.concat(chests, "\n")
+local playerCount1 = game.Players.NumPlayers
+local maxPlayer = game.Players.MaxPlayers or "??" -- Lấy số lượng tối đa (nếu có)
+local fields = {
+    {
+        ["name"] = "```Đảo : "..islandType.." | "..formattedChests.." | Chìm Sau : "..sinkTime.." | "..playerCount1.."/"..maxPlayer.." | "..serverName.."```",
+        ["value"] = "",
+        ["inline"] = true
+    }
+}
+    if islandType == "Sea King" then
+        table.insert(fields, 2, {
+            ["name"] = "```Cổng:"..gateNumber.."```",
+            ["value"] = "",
+            ["inline"] = true
+        })
+    end
+
+    if includeItemsAndFruits then
+        local items, fruits = getPlayerData()
+        local formattedItems = #items > 0 and "🛠️ **Items:**\n" .. table.concat(items, "\n") or ""
+        local formattedFruits = #fruits > 0 and "🍏 **Fruits:**\n" .. table.concat(fruits, "\n") or ""
+
+        table.insert(fields, {
+            ["name"] = "```Beli: "..formatNumber(initialBeli1).." | Gem: "..formatNumber(initialGem1).." | Lvl: "..formatNumber(lv).."```",
+            ["value"] = formattedItems .. "\n\n" .. formattedFruits,
+            ["inline"] = false
+        })
+    end
+
+    local payload = HttpService:JSONEncode({
+        ["content"] = "",
+        ["embeds"] = {{
+            ["author"] = {
+                ["name"] = game.Players.LocalPlayer.Name .. " | Executor: " .. executor,
+                ["icon"] = ""
+            },
+            ["type"] = "rich",
+            ["color"] = tonumber(0xff0000),
+            ["fields"] = fields,
+            ["footer"] = {
+                ["text"] = "TestHub | Thông báo tự động",
+                ["icon_url"] = "https://i.imgur.com/gtePhRZ.jpeg"
+            },
+            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", os.time())
+        }}
+    })
+
+    httprequest({
+        Url = webhookURL,
+        Method = 'POST',
+        Headers = { ['Content-Type'] = 'application/json' },
+        Body = payload
+    })
+end
+
+-- Kiểm tra rương mỗi 5 giây, chỉ gửi khi có thay đổi
+local lastSent = false
 task.spawn(function()
     while true do
         task.wait(4)
-        if not cfg("AutoConvertFruit") then continue end
-        pcall(function()
-            local fruits = getFruitsInBP()
-            if #fruits > 0 then
-                dealFruitRemote:InvokeServer(cfg("SelectedKey"), fruits)
-                Notify("✅ Đổi "..#fruits.." fruit → "..cfg("SelectedKey"), 3)
-            end
-        end)
-    end
-end)
-
--- ════════════════════════════════════════════════
--- ════════════════════════════════════════════════
--- WEBHOOK SYSTEM  (FIXED — webhook_fixed.lua)
--- ✅ Fix checkChests(): tìm rương trong workspace.Island descendants
--- ✅ Fix getIslandInfo(): đọc đúng SurfaceGui → TextLabel Countdown
--- ✅ Fix SafeDecode(): không crash khi value là table sẵn
--- ✅ Fix embed: thêm Beli, Gem, Level, Server info, hopCount
--- ✅ Fix UTF-8 vỡ: toàn bộ text ASCII/plain
--- ════════════════════════════════════════════════
-local Webhook_HydraChest = "https://discord.com/api/webhooks/1467903010062729438/S151mUICYjrXfrLE9oZFezgkEbsvIeHZSzvt1bevS0vKDmFxMe9a9M9fd2UqMTV8Osetssaw"
-local Webhook_URLshop    = {}
-
--- Webhook chính từ CONFIG
-if cfg("Webhook_URL2") and cfg("Webhook_URL2") ~= "" then
-    table.insert(Webhook_URLshop, cfg("Webhook_URL2"))
-end
-
--- [FIX] SafeDecode: handle khi value đã là table (không crash)
-local function SafeDecode(val)
-    if type(val) == "table" then return val end
-    if type(val) == "string" and val ~= "" then
-        local ok, res = pcall(function() return HttpService:JSONDecode(val) end)
-        if ok and type(res) == "table" then return res end
-    end
-    return {}
-end
-
--- [FIX] getCurrentIsland: tìm đúng path workspace.Island → tên đảo → ClockTime → SurfaceGui
-local function getCurrentIsland()
-    local islandFolder = workspace:FindFirstChild("Island")
-    if not islandFolder then return nil, nil end
-
-    for _, name in ipairs({"Sea King Thunder", "Sea King Water", "Sea King Lava"}) do
-        local isl = islandFolder:FindFirstChild(name)
-        if isl and isl:FindFirstChild("ClockTime")
-            and isl.ClockTime:FindFirstChild("SurfaceGui") then
-            return isl, "Hydra"
-        end
-    end
-
-    for i = 1, 4 do
-        local isl = islandFolder:FindFirstChild("Legacy Island"..i)
-        if isl and isl:FindFirstChild("ClockTime")
-            and isl.ClockTime:FindFirstChild("SurfaceGui") then
-            return isl, "Sea King"
-        end
-    end
-
-    return nil, nil
-end
-
--- [FIX] getIslandInfo: đọc đúng TextLabel Countdown / Number trong SurfaceGui
-local function getIslandInfo()
-    local island, islandType = getCurrentIsland()
-    if not island then return "Unknown", "N/A", "N/A" end
-
-    local sinkTime = "N/A"
-    local gateNum  = "N/A"
-
-    local ct  = island:FindFirstChild("ClockTime")
-    local gui = ct and ct:FindFirstChild("SurfaceGui")
-    if gui then
-        local lbl = gui:FindFirstChild("Countdown")
-            or gui:FindFirstChildOfClass("TextLabel")
-        if lbl then sinkTime = lbl.Text end
-
-        if islandType == "Sea King" then
-            local numLbl = gui:FindFirstChild("Number")
-            if numLbl then gateNum = numLbl.Text end
-        end
-    end
-
-    return islandType, gateNum, sinkTime
-end
-
--- [FIX] checkChests: tìm rương trong Island descendants, bỏ qua Gacha Background
-local function checkChests()
-    local found        = {}
-    local islandFolder = workspace:FindFirstChild("Island")
-    if islandFolder then
-        local tierMap = {
-            EpicChest     = "Tier1 (Epic)",
-            SeaBeastChest = "Tier2 (SeaBeast)",
-            DragonChest   = "Tier3 (Dragon)",
-            HydraChest    = "Tier4 (Hydra)",
-        }
-        for _, obj in ipairs(islandFolder:GetDescendants()) do
-            if obj:IsA("Model") then
-                local tier = tierMap[obj.Name]
-                if tier and (not obj.Parent or obj.Parent.Name ~= "Gacha Background") then
-                    table.insert(found, tier)
-                end
-            end
-        end
-    end
-    -- Ghost Ship chests (Chest1..5 trực tiếp workspace)
-    for i = 1, 5 do
-        if workspace:FindFirstChild("Chest"..i) then
-            table.insert(found, "GS Chest "..i)
-        end
-    end
-    return found
-end
-
--- [FIX] getPlayerData: đọc đúng Material + FruitStore, cộng thêm trái đang cầm/balo
-local function getPlayerData()
-    local stats = lplr:FindFirstChild("PlayerStats")
-    if not stats then return {}, {} end
-
-    local matData   = SafeDecode(stats:FindFirstChild("Material")  and stats.Material.Value  or {})
-    local fruitData = SafeDecode(stats:FindFirstChild("FruitStore") and stats.FruitStore.Value or {})
-
-    local targetMats = {
-        "Sea King's Fin","Hydra's Tail","Sea's Wraith",
-        "Sea King's Blood","Fortune Tales","Copper Key",
-        "Sea King's Scale","Hydra's Scale"
-    }
-    local items = {}
-    for _, key in ipairs(targetMats) do
-        local qty = tonumber(matData[key]) or 0
-        if qty > 0 then
-            table.insert(items, string.format("  %-22s x%d", key, qty))
-        end
-    end
-
-    local targetFruits = {
-        "DoughFruit","DragonFruit","PhoenixFruit","ToyFruit","GateFruit","MelodyFruit"
-    }
-    local fruits = {}
-    for _, fn in ipairs(targetFruits) do
-        local qty = tonumber(fruitData[fn]) or 0
-        local bp  = lplr:FindFirstChild("Backpack")
-        local ch  = lplr.Character
-        if bp and bp:FindFirstChild(fn) then qty += 1 end
-        if ch and ch:FindFirstChild(fn) then qty += 1 end
-        if qty > 0 then
-            table.insert(fruits, string.format("  %-16s x%d", fn, qty))
-        end
-    end
-
-    return items, fruits
-end
-
--- [FIX] sendWebhook: embed mới với đầy đủ field, màu theo loại đảo, ASCII safe
-local function sendWebhook(url, statusMsg, includeData)
-    if not httprequest then
-        warn("Executor khong ho tro request!")
-        return
-    end
-
-    local islandType, gateNum, sinkTime = getIslandInfo()
-    local chests     = checkChests()
-    local chestStr   = #chests > 0 and table.concat(chests, ", ") or "Khong co ruong"
-    local serverName = tostring(game.JobId):sub(1, 8).."..."
-
-    local colorMap = { Hydra=0x00BFFF, ["Sea King"]=0xFF6600, Unknown=0x888888 }
-    local embedColor = colorMap[islandType] or 0x888888
-
-    local stats = lplr:FindFirstChild("PlayerStats")
-    local beli  = stats and stats:FindFirstChild("beli")  and stats.beli.Value  or 0
-    local gem   = stats and stats:FindFirstChild("Gem")   and stats.Gem.Value   or 0
-    local lvl   = stats and stats:FindFirstChild("lvl")   and stats.lvl.Value   or 0
-    local pCount = #Players:GetPlayers()
-    local pMax   = Players.MaxPlayers
-
-    local function fNum(n)
-        n = tonumber(n) or 0
-        if n >= 1e9 then return string.format("%.1fB", n/1e9)
-        elseif n >= 1e6 then return string.format("%.1fM", n/1e6)
-        elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
-        else return tostring(n) end
-    end
-
-    local fields = {}
-
-    -- Field 1: Server + đảo
-    local islandLine = islandType ~= "Unknown"
-        and string.format("%s | Gate: %s | Chim sau: %s", islandType, gateNum, sinkTime)
-        or "Chua tim duoc dao"
-    table.insert(fields, {
-        name   = "Thong tin server",
-        value  = string.format("```%s\nServer: %s | Player: %d/%d\nRuong: %s```",
-            islandLine, serverName, pCount, pMax, chestStr),
-        inline = false
-    })
-
-    -- Field 2: Stats player
-    table.insert(fields, {
-        name   = "Player Stats",
-        value  = string.format("```Name : %s\nLvl  : %s\nBeli : %s\nGem  : %s```",
-            lplr.Name, fNum(lvl), fNum(beli), fNum(gem)),
-        inline = true
-    })
-
-    -- Field 3: Hop count (session + alltime + 24h)
-    local hSession, hAllTime, h24 = getHopStats()
-    table.insert(fields, {
-        name   = "Hop Count",
-        value  = string.format("```Session : %d lan\nAll-time: %d lan\n24h     : %d lan```",
-            hSession, hAllTime, h24),
-        inline = true
-    })
-
-    -- Field 4: Trạng thái
-    table.insert(fields, {
-        name   = "Trang thai",
-        value  = string.format("```%s```", statusMsg or "N/A"),
-        inline = true
-    })
-
-    -- Field 5+6: Items & Fruits (tuỳ chọn)
-    if includeData then
-        local items, fruits = getPlayerData()
-        if #items > 0 then
-            table.insert(fields, {
-                name   = "Materials",
-                value  = "```"..table.concat(items, "\n").."```",
-                inline = true
-            })
-        end
-        if #fruits > 0 then
-            table.insert(fields, {
-                name   = "Fruits",
-                value  = "```"..table.concat(fruits, "\n").."```",
-                inline = true
-            })
-        end
-    end
-
-    local executor = "Unknown"
-    pcall(function() executor = identifyexecutor() or "Unknown" end)
-
-    local embed = {
-        author    = { name = lplr.Name.." | "..executor },
-        title     = "[ "..(islandType ~= "Unknown" and islandType or "King Legacy").." ]",
-        color     = embedColor,
-        fields    = fields,
-        footer    = {
-            text     = "KingHub | "..os.date("%H:%M:%S"),
-            icon_url = "https://i.imgur.com/gtePhRZ.jpeg"
-        },
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%S.000Z", os.time())
-    }
-
-    local ok, err = pcall(function()
-        httprequest({
-            Url     = url,
-            Method  = "POST",
-            Headers = {["Content-Type"]="application/json"},
-            Body    = HttpService:JSONEncode({embeds={embed}})
-        })
-    end)
-    if ok then print("Webhook OK: "..statusMsg)
-    else warn("Webhook LOI: "..tostring(err)) end
-end
-
--- Gửi 1 lần khi khởi động
-task.spawn(function()
-    task.wait(2)
-    for _, url in ipairs(Webhook_URLshop) do
-        pcall(sendWebhook, url, "Script da khoi dong!", true)
-    end
-end)
-
--- Theo dõi rương (mỗi 4s)
-task.spawn(function()
-    local lastSent = false
-    while task.wait(4) do
         local chests = checkChests()
+
         if #chests > 0 then
             if not lastSent then
-                local msg = "Tim thay: "..table.concat(chests, ", ")
+                local islandType = getIslandInfo()
+
+                -- Gửi vào Webhook_URLshop (luôn có item & fruit)
                 for _, url in ipairs(Webhook_URLshop) do
-                    pcall(sendWebhook, url, msg, true)
+                    sendWebhook(url, true)
                 end
-                local iType = getIslandInfo()
-                if iType == "Hydra" then
-                    pcall(sendWebhook, Webhook_HydraChest, "Hydra Chest xuat hien!", false)
+
+                -- Nếu là Hydra, gửi thêm vào Webhook_HydraChest (không có item & fruit)
+                if islandType == "Hydra" then
+                    sendWebhook(Webhook_HydraChest, false)
                 end
+
                 lastSent = true
             end
         else
@@ -1508,31 +2415,103 @@ task.spawn(function()
     end
 end)
 
--- ANTI-AFK (giữ phiên)
--- ════════════════════════════════════════════════
-task.spawn(function()
-    if game.PlaceId ~= 9821272782 then
-        getgenv().Press = function(v)
-            VIM:SendKeyEvent(true,v,false,game)
-        end
-        while true do
-            task.wait(500)
-            pcall(function() getgenv().Press("RightBracket") end)
-        end
-    else
-        while true do
-            task.wait(500)
-            pcall(function() keypress(0xDD) end)
+local player = game:GetService("Players").LocalPlayer
+local playerGui = player:FindFirstChild("PlayerGui")
+
+local Webhook_SpawnInfo = "https://discord.com/api/webhooks/1179091565638078555/D2ynz6_DI8lMKG9XOXTZ5oa5jtAbJVKs8Lztxha2eoR5JyhozYbAxuXjB0MFsNEvKxte"
+
+-- Kiểm tra GUI
+if not playerGui then return warn("Không tìm thấy PlayerGui!") end
+local mainGui = playerGui:FindFirstChild("MainGui")
+if not mainGui then return warn("Không tìm thấy MainGui!") end
+local starterFrame = mainGui:FindFirstChild("StarterFrame")
+if not starterFrame then return warn("Không tìm thấy StarterFrame!") end
+local legacyPoseFrame = starterFrame:FindFirstChild("LegacyPoseFrame")
+if not legacyPoseFrame then return warn("Không tìm thấy LegacyPoseFrame!") end
+local secondSeaFrame = legacyPoseFrame:FindFirstChild("SecondSea")
+if not secondSeaFrame then return warn("Không tìm thấy SecondSea Frame!") end
+local serverBrowserFrame = starterFrame:FindFirstChild("ServerBrowserFrame")
+if not serverBrowserFrame then return warn("Không tìm thấy ServerBrowserFrame!") end
+
+local SKTimeLabel = secondSeaFrame:FindFirstChild("SKTimeLabel") -- Hydra/Sea King
+local GSTimeLabel = secondSeaFrame:FindFirstChild("GSTimeLabel") -- Ghost Ship
+local serverTimeLabel = serverBrowserFrame:FindFirstChild("ServerTime") -- Thời gian server
+
+if not SKTimeLabel or not GSTimeLabel or not serverTimeLabel then
+    return warn("Không tìm thấy một hoặc nhiều Label thời gian!")
+end
+
+
+
+-- Kiểm tra Hydra
+local hasHydra = secondSeaFrame:FindFirstChild("HDImage") and secondSeaFrame.HDImage.Visible
+local skTime = hasHydra and SKTimeLabel.Text ~= "" and SKTimeLabel.Text or nil
+local gsTime = GSTimeLabel.Text
+local serverTimeText = serverTimeLabel.Text
+
+-- Hàm chuyển đổi giây thành định dạng HH:MM:SS
+local function formatTime(seconds)
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = seconds % 60
+    return string.format("%02d:%02d:%02d", h, m, s)
+end
+
+-- Xử lý thời gian Ghost Ship (nếu dưới 3 phút)
+local ghostShipCountdown = nil
+if gsTime then
+    local h, m, s = gsTime:match("(%d+):(%d+):(%d+)")
+    if h and m and s then
+        local gsSeconds = (tonumber(h) * 3600) + (tonumber(m) * 60) + tonumber(s)
+        if gsSeconds <= 200 then
+            ghostShipCountdown = formatTime(gsSeconds)
         end
     end
-end)
+end
 
--- ════════════════════════════════════════════════
--- THÔNG BÁO KHỞI ĐỘNG + IN CONSOLE
--- ════════════════════════════════════════════════
-task.delay(1, function()
-    Notify("✅ KAITUN KING HOP loaded!\nSửa CONFIG ở đầu script để đổi tính năng.", 5)
-end)
 
-local function B(v) return v and "ON " or "OFF" end
-print("=== KAITUN KING HOP - CONFIG ===")
+-- Nếu không có gì để gửi, thoát
+if not skTime and not ghostShipCountdown and not bigMomCountdown then return end
+
+-- Tạo nội dung webhook
+local fields = {}
+local playerCount2 = game.Players.NumPlayers
+if skTime then
+    table.insert(fields, {
+        ["name"] = "```🌊Hydra Spawn Sau | "..skTime.." | Tại Server: "..serverName.." | "..playerCount2.."/12```",
+        ["value"] = "",
+        ["inline"] = false
+    })
+end
+
+if ghostShipCountdown then
+    table.insert(fields, {
+        ["name"] = "```⛵GhostShip Spawn Sau | "..ghostShipCountdown.." | Tại Server: "..serverName.." | "..playerCount2.."/12```",
+        ["value"] = "",
+        ["inline"] = false
+    })
+end
+
+
+local payload = HttpService:JSONEncode({
+    ["content"] = "",
+    ["embeds"] = {{
+        ["title"] = game.Players.LocalPlayer.Name .. " | Executor: " .. executor,
+["color"] = tonumber(0xFFC0CB),
+        ["fields"] = fields,
+        ["footer"] = {
+            ["text"] = "DuyHub | Thông báo tự động",
+            ["icon_url"] = "https://i.imgur.com/gtePhRZ.jpeg"
+        },
+        ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", os.time())
+    }}
+})
+
+-- Gửi webhook
+httprequest({
+    Url = Webhook_SpawnInfo,
+    Method = 'POST',
+    Headers = { ['Content-Type'] = 'application/json' },
+    Body = payload
+})
+OrionLib:Init()
