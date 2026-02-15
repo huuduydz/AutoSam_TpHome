@@ -795,7 +795,7 @@ sTab:AddToggle({
             local IsHopping = false
 
             while getgenv().SeaKinghop do
-                task.wait(0.1) -- Giảm xuống 0.1 giây để kiểm tra nhanh hơn
+                task.wait(0.6) -- Giảm xuống 0.1 giây để kiểm tra nhanh hơn
 
                 if IsHopping then 
                     -- Nếu đang đợi hop, thì cứ đợi thôi, không làm gì cả
