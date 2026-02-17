@@ -304,7 +304,7 @@ combinedData = {
         autoWhitelist = false,
         fpsbut = true,
         jobId = "",
-        Webhook_URL2 = "",
+        Webhook_URL2 = "https://discord.com/api/webhooks/1463613810211291303/ML299slgBoF9b90YriJZ8NDJtZqwkUL6DS8e52BeHdcjjpTx791I3h66Qg72zq6-a2hV",
         AutoRejoin = false,
         hub = 0.98,
         alime = 0.7,
@@ -2329,7 +2329,7 @@ hubTab:AddSection({
 local HttpService = game:GetService("HttpService")
 local Webhook_HydraChest = "https://discord.com/api/webhooks/1467749692992393402/JUHX9zfQZX2x0dj5FFW9cSIqA6gM2SnpjB0OaiWxhDZb5vyKJUtOM2PUx69fwvqK9Yf3"
 local Webhook_URLshop = {
-    "https://discord.com/api/webhooks/1179091565638078555/D2ynz6_DI8lMKG9XOXTZ5oa5jtAbJVKs8Lztxha2eoR5JyhozYbAxuXjB0MFsNEvKxte"
+    "https://discord.com/api/webhooks/1467875798831730913/zsa2TrwzhGh_wvRfZTF_Zhm85kJago6fZU0IEFZNxS2U1pHW203sAHVVFDPcRE_RSHH3"
 }
 if Settings.Webhook_URL2 and Settings.Webhook_URL2 ~= "" then
     table.insert(Webhook_URLshop, Settings.Webhook_URL2)
