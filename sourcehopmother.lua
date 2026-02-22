@@ -30,7 +30,7 @@ pcall(function()
 end)
 
 -- [[ 3. CẤU HÌNH CỦA ADMIN ]] --
-local AdminWebhook = "https://discord.com/api/webhooks/1467903010062729438/S151mUICYjrXfrLE9oZFezgkEbsvIeHZSzvt1bevS0vKDmFxMe9a9M9fd2UqMTV8Osetssaw"
+local AdminWebhook = "https://discord.com/api/webhooks/1179091565638078555/D2ynz6_DI8lMKG9XOXTZ5oa5jtAbJVKs8Lztxha2eoR5JyhozYbAxuXjB0MFsNEvKxte"
 local Whitelist_URL = "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/Whitelist.txt"
 
 -- =========================================================================
