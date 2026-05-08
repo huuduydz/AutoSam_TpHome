@@ -373,9 +373,10 @@ def inject_cookie_safe_xml(pkg, cookie):
 
     xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(root, encoding='unicode')
 
-    # Ghi file tạm
-    temp_file = f"/data/local/tmp/cookie_{pkg.split('.')[-1]}.xml"
-    with open(temp_file, "w", encoding="utf-8") as f:
+    # --- SỬA LỖI: Dùng thư mục tạm an toàn trong Termux ---
+    import tempfile
+    fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_')
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
         f.write(xml_output)
 
     # Đẩy file với quyền root và sửa quyền
@@ -388,7 +389,7 @@ def inject_cookie_safe_xml(pkg, cookie):
         f"sync"
     ]
     run_root_command(cmd_list, timeout=20)
-    os.remove(temp_file)
+    os.remove(temp_file)  # Xóa file tạm sau khi dùng
 
     # Xóa cache để app load cookie mới
     run_root_command([
