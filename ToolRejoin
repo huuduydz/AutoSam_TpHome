@@ -2,6 +2,7 @@ import os
 import time
 import subprocess
 import glob
+import re
 from datetime import datetime
 
 # --- MÃ MÀU GIAO DIỆN ---
@@ -12,8 +13,8 @@ R = '\033[91m'  # Red
 M = '\033[95m'  # Magenta
 RESET = '\033[0m'
 
-# Biến lưu package Roblox đang chọn
-selected_package = None
+# Biến lưu danh sách package Roblox đang chọn (Hỗ trợ Multi-Roblox)
+selected_packages = []
 
 def clear_screen():
     os.system('clear')
@@ -28,9 +29,15 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Method: {Y}Heartbeat Monitor (JSON) + Cookie Injector{RESET}")
-    pkg_display = selected_package if selected_package else "Chưa chọn (None)"
-    print(f"{G}Target Package: {Y}{pkg_display}{RESET}")
+    print(f"{G}Method: {Y}Multi-Rejoin Monitor (JSON) + Cookie Injector{RESET}")
+    
+    # Hiển thị danh sách các app đã chọn
+    if selected_packages:
+        print(f"{G}Target Packages ({len(selected_packages)}):{RESET}")
+        for p in selected_packages:
+            print(f"  - {Y}{p}{RESET}")
+    else:
+        print(f"{G}Target Packages: {Y}Chưa chọn (None){RESET}")
     print("-" * 50)
 
 def scan_packages():
@@ -65,7 +72,7 @@ def scan_packages():
     return cleaned_packages
 
 def select_package_menu():
-    global selected_package
+    global selected_packages
     packages = scan_packages()
     
     if not packages:
@@ -80,24 +87,32 @@ def select_package_menu():
     try:
         # Chốt chặn an toàn lần 2 đảm bảo bàn phím không bị liệt
         os.system("stty sane") 
-        choice = input(f"\n{M}Chọn số thứ tự Package muốn chạy: {RESET}")
+        print(f"\n{C}💡 Mẹo: Nhập nhiều số cách nhau bởi dấu phẩy hoặc khoảng trắng (VD: 1 3 5 hoặc 1,2,3){RESET}")
+        choice_str = input(f"{M}Chọn số thứ tự Package muốn chạy: {RESET}")
         
-        choice = int(choice.strip())
-        if 1 <= choice <= len(packages):
-            selected_package = packages[choice - 1]
-            print(f"{G}[+] Đã chọn: {selected_package}{RESET}")
-            time.sleep(1)
+        # Dùng Regex để bắt tất cả các số người dùng nhập vào
+        choices = [int(x) for x in re.findall(r'\d+', choice_str)]
+        selected_packages.clear()
+        
+        for choice in set(choices):
+            if 1 <= choice <= len(packages):
+                selected_packages.append(packages[choice - 1])
+        
+        if selected_packages:
+            print(f"\n{G}[+] Đã chọn {len(selected_packages)} Package thành công!{RESET}")
+            time.sleep(2)
         else:
-            print(f"{R}[!] Lựa chọn không hợp lệ!{RESET}")
+            print(f"{R}[!] Không có lựa chọn nào hợp lệ!{RESET}")
             time.sleep(1)
-    except ValueError:
-        print(f"{R}[!] Vui lòng nhập số!{RESET}")
+            
+    except Exception as e:
+        print(f"{R}[!] Lỗi thao tác: {e}{RESET}")
         time.sleep(1)
 
 def login_via_cookie():
-    """Ép đăng nhập Roblox bằng Cookie (Yêu Cầu Root)"""
-    global selected_package
-    if not selected_package:
+    """Ép đăng nhập Roblox bằng Cookie (Hỗ trợ Multi-Package)"""
+    global selected_packages
+    if not selected_packages:
         print(f"{R}[!] Bạn phải chọn Package ở mục [1] trước!{RESET}")
         time.sleep(2)
         return
@@ -112,13 +127,11 @@ def login_via_cookie():
         return
 
     print(f"{C}[*] Đang tạo cấu hình XML...{RESET}")
-    # Định dạng chuẩn của file lưu cookie Roblox trên Android
     xml_content = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
     <string name="ROBLOSECURITY">{cookie}</string>
 </map>"""
 
-    # Ghi ra thẻ nhớ trước khi dùng root đẩy vào hệ thống
     temp_file = "/sdcard/Download/temp_roblox_cookie.xml"
     try:
         with open(temp_file, "w", encoding="utf-8") as f:
@@ -128,33 +141,26 @@ def login_via_cookie():
         time.sleep(2)
         return
 
-    print(f"{Y}[*] Đang Inject Cookie vào {selected_package}... (Vui lòng bấm Cho Phép Root nếu hiện bảng){RESET}")
+    # Lặp qua tất cả các app đã chọn để nhét Cookie
+    for pkg in selected_packages:
+        print(f"{Y}[*] Đang Inject Cookie vào {pkg}...{RESET}")
+        root_cmd = f"""su -c "
+        am force-stop {pkg}
+        mkdir -p /data/data/{pkg}/shared_prefs/
+        cp {temp_file} /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
+        chmod 660 /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
+        PKG_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | cut -d'=' -f2 | cut -d' ' -f1)
+        chown \\$PKG_UID:\\$PKG_UID /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
+        " """
+        
+        os.system(root_cmd)
+        print(f"{G}[+] Inject {pkg} hoàn tất!{RESET}")
+        os.system(f"su -c 'am start -n {pkg}/com.roblox.client.Activity > /dev/null 2>&1'")
+        time.sleep(1.5)
 
-    # Chuỗi lệnh bash chạy dưới quyền ROOT (su -c)
-    # Không dùng "pm clear" để giữ lại quyền Storage và setting của Executor
-    root_cmd = f"""su -c "
-    am force-stop {selected_package}
-    
-    # Tạo thư mục nếu chưa có và copy file cấu hình vào
-    mkdir -p /data/data/{selected_package}/shared_prefs/
-    cp {temp_file} /data/data/{selected_package}/shared_prefs/com.roblox.client_preferences.xml
-    
-    # Set quyền đọc ghi chuẩn xác
-    chmod 660 /data/data/{selected_package}/shared_prefs/com.roblox.client_preferences.xml
-    
-    # Lấy UID của App và cấp quyền sở hữu (chown) để Roblox không bị crash khi đọc file
-    PKG_UID=\\$(dumpsys package {selected_package} | grep userId= | head -n 1 | cut -d'=' -f2 | cut -d' ' -f1)
-    chown \\$PKG_UID:\\$PKG_UID /data/data/{selected_package}/shared_prefs/com.roblox.client_preferences.xml
-    
     # Dọn dẹp rác
-    rm {temp_file}
-    " """
-
-    # Thực thi Inject
-    os.system(root_cmd)
-    
-    print(f"{G}[+] Inject Cookie hoàn tất! Đang mở lại game để kiểm tra...{RESET}")
-    os.system(f"su -c 'am start -n {selected_package}/com.roblox.client.Activity > /dev/null 2>&1'")
+    os.system(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
+    print(f"\n{G}[+] Đã hoàn thành Inject cho {len(selected_packages)} package!{RESET}")
     time.sleep(3)
 
 def check_heartbeat():
@@ -183,19 +189,24 @@ def check_heartbeat():
     return True, f"Hoạt động ổn định (Heartbeat cách đây {int(diff)}s)"
 
 def start_auto_rejoin():
-    global selected_package
-    if not selected_package:
+    global selected_packages
+    if not selected_packages:
         print(f"{R}[!] Bạn phải chọn Package ở mục [1] trước!{RESET}")
         time.sleep(2)
         return
 
-    print(f"\n{Y}[*] Khởi động HuDy Auto Rejoin...{RESET}")
+    print(f"\n{Y}[*] Khởi động HuDy Auto Rejoin cho {len(selected_packages)} Package...{RESET}")
     print(f"{C}[*] Bấm Ctrl + C để dừng.{RESET}")
     
-    print(f"{G}[+] Đang khởi động Roblox...{RESET}")
-    os.system(f"am force-stop {selected_package} > /dev/null 2>&1")
+    print(f"{G}[+] Đang dọn dẹp các app Roblox...{RESET}")
+    for pkg in selected_packages:
+        os.system(f"am force-stop {pkg} > /dev/null 2>&1")
     time.sleep(2)
-    os.system(f"am start -n {selected_package}/com.roblox.client.Activity > /dev/null 2>&1")
+    
+    print(f"{G}[+] Đang khởi động hàng loạt...{RESET}")
+    for pkg in selected_packages:
+        os.system(f"am start -n {pkg}/com.roblox.client.Activity > /dev/null 2>&1")
+        time.sleep(1)
     
     while True:
         try:
@@ -207,13 +218,17 @@ def start_auto_rejoin():
                 print(f"[{current_time_str}] {G}{msg}{RESET}")
             else:
                 print(f"[{current_time_str}] {R}{msg}{RESET}")
-                print(f"[{current_time_str}] {Y}[*] Đang tiến hành Rejoin...{RESET}")
+                print(f"[{current_time_str}] {Y}[*] Đang tiến hành Rejoin hàng loạt...{RESET}")
                 
-                os.system(f"am force-stop {selected_package} > /dev/null 2>&1")
+                for pkg in selected_packages:
+                    os.system(f"am force-stop {pkg} > /dev/null 2>&1")
                 time.sleep(3) 
-                os.system(f"am start -n {selected_package}/com.roblox.client.Activity > /dev/null 2>&1")
                 
-                print(f"[{current_time_str}] {C}[*] Đã mở lại. Đang chờ 60s để game load...{RESET}")
+                for pkg in selected_packages:
+                    os.system(f"am start -n {pkg}/com.roblox.client.Activity > /dev/null 2>&1")
+                    time.sleep(1)
+                
+                print(f"[{current_time_str}] {C}[*] Đã mở lại xong. Đang chờ 60s để các game load...{RESET}")
                 time.sleep(60)
 
         except KeyboardInterrupt:
@@ -234,7 +249,7 @@ def main():
         print(f"[{C}3{RESET}] Login via Cookie {Y}(Cần Root){RESET}")
         print(f"[{C}4{RESET}] Thoát")
         
-        choice = input(f"\n{M}HuDy > {RESET}")
+        choice = input(f"\n{M}HuDy > {RESET}").strip()
         
         if choice == '1':
             select_package_menu()
