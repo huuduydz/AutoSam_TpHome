@@ -91,7 +91,7 @@ def select_package_menu():
         pass
 
 def login_via_cookie():
-    """Ép đăng nhập Roblox bằng Cookie (Hỗ trợ Global, VNG, Clone và Fix SELinux)"""
+    """Ép đăng nhập Roblox bằng Cookie (Bản Fix Lỗi Quyền Sở Hữu Thư Mục)"""
     global selected_packages
     if not selected_packages:
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
@@ -108,13 +108,11 @@ def login_via_cookie():
         return
 
     print(f"{C}[*] Đang tạo cấu hình XML...{RESET}")
-    # Định dạng chuẩn của file lưu cookie Roblox
     xml_content = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
     <string name="ROBLOSECURITY">{cookie}</string>
 </map>"""
 
-    # Ghi ra bộ nhớ tạm
     temp_file = "/sdcard/Download/temp_roblox_cookie.xml"
     try:
         with open(temp_file, "w", encoding="utf-8") as f:
@@ -124,28 +122,37 @@ def login_via_cookie():
         time.sleep(2)
         return
 
-    # Lặp qua tất cả acc để tiêm Cookie
     for pkg in selected_packages:
         print(f"{Y}[*] Đang Inject Cookie vào {pkg}...{RESET}")
         
-        # [BẢN VÁ TỐI THƯỢNG]: Tiêm 3 file cùng lúc và Fix SELinux
+        # CHUỖI LỆNH ROOT ĐƯỢC TỐI ƯU HÓA HOÀN TOÀN
         root_cmd = f"""su -c "
         am force-stop {pkg}
+        
+        # 1. Tạo thư mục nếu chưa có
         mkdir -p /data/data/{pkg}/shared_prefs/
         
-        # Rải thảm 3 file cấu hình để chống trượt (Global, VNG, Clone)
+        # 2. Xóa các file backup ngầm và thư mục nhớ tạm của Roblox để ép nhận Cookie mới
+        rm -f /data/data/{pkg}/shared_prefs/*.bak
+        rm -rf /data/data/{pkg}/app_v2
+        rm -rf /data/data/{pkg}/cache
+        
+        # 3. Rải thảm file XML cấu hình
         cp {temp_file} /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
         cp {temp_file} /data/data/{pkg}/shared_prefs/com.vng.robloxclient_preferences.xml
         cp {temp_file} /data/data/{pkg}/shared_prefs/{pkg}_preferences.xml
         
-        # Cấp quyền đọc ghi
+        # 4. Lấy UID thực tế của Clone
+        PKG_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | cut -d'=' -f2 | cut -d' ' -f1)
+        
+        # 5. [BƯỚC QUAN TRỌNG NHẤT]: Bàn giao quyền sở hữu CẢ THƯ MỤC cho App
+        chown -R \\$PKG_UID:\\$PKG_UID /data/data/{pkg}/shared_prefs/
+        
+        # 6. Set quyền truy cập chuẩn Android (771 cho Thư mục, 660 cho File)
+        chmod 771 /data/data/{pkg}/shared_prefs/
         chmod 660 /data/data/{pkg}/shared_prefs/*.xml
         
-        # Đồng bộ UID để app nhận diện file là của chính nó
-        PKG_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | cut -d'=' -f2 | cut -d' ' -f1)
-        chown \\$PKG_UID:\\$PKG_UID /data/data/{pkg}/shared_prefs/*.xml
-        
-        # Sửa lỗi bảo mật SELinux trên Cloud Phone / Android 11+
+        # 7. Đồng bộ lại SELinux Context
         restorecon -R /data/data/{pkg}/shared_prefs/ 2>/dev/null
         " """
         
@@ -154,7 +161,6 @@ def login_via_cookie():
         os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
         time.sleep(2)
 
-    # Dọn dẹp rác
     os.system(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
     print(f"\n{G}[+] Đã hoàn thành Inject cho {len(selected_packages)} package!{RESET}")
     time.sleep(3)
