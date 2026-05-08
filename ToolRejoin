@@ -55,7 +55,7 @@ R = '\033[91m'
 M = '\033[95m'  
 RESET = '\033[0m'
 
-selected_packages = [] # Định dạng mới: [{"pkg": "com.xxx", "name": "IngameName"}, ...]
+selected_packages = [] 
 target_place_id = ""  
 kill_all_time = 0     
 json_path_cache = {}
@@ -70,7 +70,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Universal Lua + Auto-Bind (Fix Collision){RESET}")
+    print(f"{G}Core: {Y}Strict 150s Grace Period + Safe DeepLink{RESET}")
     
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
@@ -159,7 +159,6 @@ def select_package_menu():
             if 1 <= choice <= len(packages):
                 pkg_name = packages[choice - 1]
                 fix_tty()
-                # CẢI TIẾN: Cho phép nhập tay tên giống hudy_manager.py để độ chuẩn xác là tuyệt đối
                 acc_name = input(f"\n{C}[?] Nhập Tên In-game cho app {Y}{pkg_name}{C} (Bỏ trống để Tool tự bắt file): {RESET}").strip()
                 selected_packages.append({"pkg": pkg_name, "name": acc_name})
         
@@ -170,7 +169,6 @@ def select_package_menu():
         pass
 
 def inject_universal_lua():
-    """Bơm 1 script duy nhất, dùng Tên Nhân Vật làm file Json để chống trùng lặp chéo"""
     lua_code = """task.wait(5)
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
@@ -201,7 +199,6 @@ task.spawn(function()
     end 
 end)"""
     
-    # Dọn dẹp SẠCH SẼ các file lua gây lỗi cũ
     safe_root("su -c \"find /sdcard/ -maxdepth 4 -type f -name '*checkhudyhub.lua' -delete 2>/dev/null\"")
     
     temp_lua = "/sdcard/Download/universal_checkhudyhub.lua"
@@ -218,7 +215,6 @@ end)"""
     safe_root(root_cmd)
 
 def discover_unbound_account(claimed_names):
-    """Tìm file Json mới nhất chưa thuộc về Package nào để Auto-Bind"""
     search_paths = [
         "/sdcard/Android/media/*/*/workspace/rj_*_checkhudyhub.json",
         "/sdcard/Android/data/*/files/workspace/rj_*_checkhudyhub.json",
@@ -231,7 +227,6 @@ def discover_unbound_account(claimed_names):
     for f in sorted(files, key=os.path.getmtime, reverse=True):
         try:
             mtime = os.path.getmtime(f)
-            # Chỉ bắt những file mới được cập nhật trong 150s đổ lại
             if (time.time() - mtime) < 150:
                 with open(f, 'r', encoding='utf-8') as file:
                     data = json.load(file)
@@ -242,7 +237,6 @@ def discover_unbound_account(claimed_names):
     return None
 
 def get_heartbeat_data(acc_name):
-    """Đọc nhịp tim đích danh tên tài khoản"""
     global json_path_cache
     
     if acc_name in json_path_cache and os.path.exists(json_path_cache[acc_name]):
@@ -285,6 +279,7 @@ def force_restart_app(pkg, states, current_time, reason_text, color_code):
     time.sleep(0.5)
     trigger_boot_step_1(pkg)
     
+    # Bắt đầu vòng đời mới
     states[pkg]['boot_phase'] = 1 if target_place_id else 0
     states[pkg]['boot_timer'] = current_time
     states[pkg]['rejoin_time'] = current_time
@@ -320,28 +315,27 @@ def start_auto_rejoin():
             
             for item in selected_packages:
                 pkg = item['pkg']
+                uptime_seconds = current_time - states[pkg]['rejoin_time']
                 
-                # --- PHASE 1: CHỜ BẮN DEEPLINK ---
+                # --- PHASE 1: CHỜ BẮN DEEPLINK (TĂNG LÊN 15s CHỐNG SỐC APP) ---
                 if states[pkg]['boot_phase'] == 1:
                     elapsed_boot = current_time - states[pkg]['boot_timer']
-                    if elapsed_boot >= 10:
+                    if elapsed_boot >= 15:
                         trigger_boot_step_2(pkg)
                         states[pkg]['boot_phase'] = 0 
-                        states[pkg]['rejoin_time'] = current_time 
+                        # Không reset rejoin_time ở đây để bảo toàn quy tắc 150s
                     else:
-                        states[pkg]['text'] = f"Đang Nạp Game ({int(10 - elapsed_boot)}s)"
+                        states[pkg]['text'] = f"Đang Nạp Game ({int(15 - elapsed_boot)}s)"
                         states[pkg]['color'] = M
                     continue 
                 
                 # --- PHASE 0: THEO DÕI VÀ AUTO-BIND ---
-                uptime_seconds = current_time - states[pkg]['rejoin_time']
                 uptime_minutes = uptime_seconds / 60
 
                 if kill_all_time > 0 and uptime_minutes >= kill_all_time:
                     force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
                     continue
 
-                # Kỹ thuật Auto-Bind: Tìm file JSON mới nổi lên để kết duyên với Package
                 if not states[pkg]['bound_name']:
                     claimed = [s['bound_name'] for s in states.values() if s['bound_name']]
                     found_name = discover_unbound_account(claimed)
@@ -351,20 +345,21 @@ def start_auto_rejoin():
                 
                 bound_name = states[pkg]['bound_name']
 
-                # Nới lỏng thời gian chờ Load / Chờ Bind thành 150s theo yêu cầu
+                # --- QUY TẮC MIỄN TỬ: 150 GIÂY ĐẦU TIÊN (GRACE PERIOD) ---
+                is_in_grace_period = (uptime_seconds < 150)
+
                 if not bound_name:
-                    if uptime_seconds < 150:
+                    if is_in_grace_period:
                         states[pkg]['text'] = f"Đang Load ({int(150 - uptime_seconds)}s)"
                         states[pkg]['color'] = Y
                     else:
                         force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
                     continue
 
-                # Đã có tên In-game, bắt đầu đo nhịp tim
                 last_ping = get_heartbeat_data(bound_name)
 
                 if last_ping == -1:
-                    if uptime_seconds < 150: 
+                    if is_in_grace_period: 
                         states[pkg]['text'] = f"Đang Nạp Data ({int(150 - uptime_seconds)}s)"
                         states[pkg]['color'] = Y
                     else:
@@ -372,7 +367,13 @@ def start_auto_rejoin():
                 else:
                     diff = current_time - last_ping
                     if diff > 45: 
-                        force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                        if is_in_grace_period:
+                            # DU DI BỎ QUA: Vẫn trong 150s đầu tiên, File Json có thể là rác hoặc game đang giật lag
+                            states[pkg]['text'] = f"Vào Server... ({int(150 - uptime_seconds)}s)"
+                            states[pkg]['color'] = Y
+                        else:
+                            # Hết 150s mà diff vẫn > 45 -> Đích thị là Văng Game thật!
+                            force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
                     else:
                         states[pkg]['text'] = f"Đang Farm ({int(diff)}s trước)"
                         states[pkg]['color'] = G
