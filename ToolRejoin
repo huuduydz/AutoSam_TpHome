@@ -70,7 +70,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Native Bash Injector (Fix 100% Crash/Sập Game){RESET}")
+    print(f"{G}Core: {Y}Python Safe Extraction (Fix 100% Sập Game){RESET}")
     
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
@@ -288,10 +288,7 @@ def force_restart_app(pkg, states, current_time, reason_text, color_code):
     states[pkg]['rejoin_time'] = current_time
 
 # =====================================================================
-# HÀM MỚI: BƠM COOKIE BẰNG NATIVE BASH (CHỐNG SẬP GAME 100%)
-# =====================================================================
-# =====================================================================
-# HÀM MỚI: BƠM COOKIE ĐA THỂ THỨC (ALL-IN-ONE INJECTOR)
+# HÀM MỚI: BƠM COOKIE BẰNG PYTHON SAFE EXTRACTION (CHỐNG RÁCH FILE XML)
 # =====================================================================
 def login_via_cookie():
     global selected_packages
@@ -300,9 +297,8 @@ def login_via_cookie():
         time.sleep(2)
         return
 
-    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (MULTI-METHOD) ---{RESET}")
-    print(f"{Y}Lưu ý 1: Máy BẮT BUỘC ĐÃ ROOT.{RESET}")
-    print(f"{M}Lưu ý 2: Nếu IP lấy Cookie KHÁC IP mạng của máy ảo, tài khoản sẽ bị văng!{RESET}")
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (SAFE EXTRACTION) ---{RESET}")
+    print(f"{Y}Lưu ý: Máy BẮT BUỘC ĐÃ ROOT.{RESET}")
     
     fix_tty()
     cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
@@ -312,14 +308,11 @@ def login_via_cookie():
         print(f"{R}[!] Cookie không hợp lệ!{RESET}")
         time.sleep(2)
         return
-        
-    # Xử lý ký tự đặc biệt cực mạnh để an toàn cho Bash
-    cookie_safe = cookie.replace('"', '\\"').replace('$', '\\$').replace('#', '\\#')
 
     for item in selected_packages:
         pkg = item['pkg']
         
-        # --- BƯỚC 1: WARM UP ---
+        # --- BƯỚC 1: WARM UP ĐỂ TẠO CẤU TRÚC ZIN ---
         print(f"{Y}[*] Đang làm ấm {pkg} (Khởi tạo mã bảo mật VNG)...{RESET}")
         safe_root(f"su -c 'am force-stop {pkg}'")
         trigger_boot_step_1(pkg)
@@ -330,61 +323,83 @@ def login_via_cookie():
             time.sleep(1)
         print()
         
-        # --- BƯỚC 2: KÍCH HOẠT LIÊN HOÀN 5 METHOD ---
-        print(f"{Y}[*] Đang nã 5 Method Inject vào {pkg}...{RESET}")
+        safe_root(f"su -c 'am force-stop {pkg}'")
+        time.sleep(1)
         
+        # --- BƯỚC 2: TRÍCH XUẤT NỘI DUNG ZIN BẰNG ROOT CAT ---
+        print(f"{Y}[*] Đang trích xuất cấu hình bảo mật...{RESET}")
+        xml_content = ""
+        
+        for pref_name in ["com.vng.robloxclient_preferences.xml", "com.roblox.client_preferences.xml", f"{pkg}_preferences.xml"]:
+            try:
+                # Ép đọc file từ trong vùng kín của hệ thống
+                out = subprocess.check_output(
+                    f"su -c 'cat /data/data/{pkg}/shared_prefs/{pref_name} 2>/dev/null'", 
+                    shell=True, text=True, stderr=subprocess.DEVNULL
+                )
+                if "<map>" in out and "</map>" in out:
+                    xml_content = out
+                    break
+            except Exception:
+                pass
+                
+        # Nếu app chưa kịp tạo file, tự động đúc một cái khung chuẩn
+        if not xml_content:
+            xml_content = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n</map>"
+
+        # --- BƯỚC 3: PHẪU THUẬT XML BẰNG PYTHON (AN TOÀN TUYỆT ĐỐI) ---
+        # 1. Gỡ bỏ Cookie cũ nếu có
+        xml_content = re.sub(r'<string name="ROBLOSECURITY">.*?</string>', '', xml_content, flags=re.DOTALL)
+        
+        # 2. Bơm Cookie mới vào sát thẻ đóng
+        cookie_xml = f'    <string name="ROBLOSECURITY">{cookie}</string>\n</map>'
+        xml_content = xml_content.replace('</map>', cookie_xml)
+        
+        # 3. Quét sạch khoảng trắng thừa thãi để file mượt mà
+        xml_content = re.sub(r'\n\s*\n', '\n', xml_content)
+
+        # Lưu thành file tạm trên ổ cứng chung
+        temp_file = "/sdcard/Download/temp_roblox_cookie.xml"
+        try:
+            with open(temp_file, "w", encoding="utf-8") as f:
+                f.write(xml_content)
+        except Exception as e:
+            print(f"{R}[!] Lỗi ghi file tạm: {e}{RESET}")
+            continue
+
+        # --- BƯỚC 4: ĐẨY NGƯỢC VÀO HỆ THỐNG VÀ KHÓA QUYỀN ---
+        print(f"{Y}[*] Đang tiêm cấu hình vào hệ thống...{RESET}")
         root_cmd = f"""su -c "
-        # Dừng app triệt để
-        am force-stop {pkg} > /dev/null 2>&1
-        sleep 1
-        
         PREFS_DIR='/data/data/{pkg}/shared_prefs'
         mkdir -p \\$PREFS_DIR
         
-        # METHOD 1: XÓA SẠCH RAM CACHE CỦA APP
+        # Dọn rác cache để chống sập RAM
         rm -rf /data/data/{pkg}/cache/*
         rm -rf /data/data/{pkg}/code_cache/*
-        rm -rf /data/data/{pkg}/app_webview/*
         
-        APP_UID=\\$(stat -c '%u' /data/data/{pkg} 2>/dev/null)
+        # Bắt lấy UID chủ nhân
+        APP_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | awk -F'=' '{{print \\$2}}' | awk '{{print \\$1}}')
+        if [ -z \\"\\$APP_UID\\" ]; then
+            APP_UID=\\$(stat -c '%u' /data/data/{pkg} 2>/dev/null)
+        fi
         
-        for FILE in 'com.roblox.client_preferences.xml' 'com.vng.robloxclient_preferences.xml' '{pkg}_preferences.xml'; do
-            PATH_FILE=\\"\\$PREFS_DIR/\\$FILE\\"
-            
-            # METHOD 2: KIỂM TRA FILE ZIN VÀ TẠO FALLBACK (METHOD 3)
-            if [ ! -f \\"\\$PATH_FILE\\" ] || ! grep -q '<map>' \\"\\$PATH_FILE\\"; then
-                echo \\"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\\" > \\"\\$PATH_FILE\\"
-                echo \\"<map>\\" >> \\"\\$PATH_FILE\\"
-                echo \\"</map>\\" >> \\"\\$PATH_FILE\\"
-            fi
-            
-            # METHOD 4: MỔ XẺ VÀ TIÊM BẰNG SED (AN TOÀN TUYỆT ĐỐI)
-            # Xóa dòng Cookie cũ (nếu có)
-            sed -i '/name=\\"ROBLOSECURITY\\"/d' \\"\\$PATH_FILE\\"
-            
-            # Tiêm Cookie mới ngay trước thẻ đóng </map>
-            sed -i 's|</map>|    <string name=\\"ROBLOSECURITY\\">{cookie_safe}</string>\\n</map>|g' \\"\\$PATH_FILE\\"
-            
-            # KIỂM TRA LẠI: Nếu tiêm xịt, dùng Echo đè thẳng vào (Dự phòng)
-            if ! grep -q 'ROBLOSECURITY' \\"\\$PATH_FILE\\"; then
-                echo \\"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\\" > \\"\\$PATH_FILE\\"
-                echo \\"<map>\\" >> \\"\\$PATH_FILE\\"
-                echo \\"    <string name='ROBLOSECURITY'>{cookie_safe}</string>\\" >> \\"\\$PATH_FILE\\"
-                echo \\"</map>\\" >> \\"\\$PATH_FILE\\"
-            fi
-        done
+        # Phủ sóng toàn bộ các tên file khả thi
+        cp '{temp_file}' \\$PREFS_DIR/com.roblox.client_preferences.xml
+        cp '{temp_file}' \\$PREFS_DIR/com.vng.robloxclient_preferences.xml
+        cp '{temp_file}' \\$PREFS_DIR/{pkg}_preferences.xml
         
-        # METHOD 5: ÉP QUYỀN VÀ ĐỒNG BỘ Ổ CỨNG (SYNC)
+        # Chốt quyền sở hữu và bảo mật SELinux
         chown -R \\$APP_UID:\\$APP_UID \\$PREFS_DIR
         chmod 771 \\$PREFS_DIR
         chmod 660 \\$PREFS_DIR/*.xml
         restorecon -R \\$PREFS_DIR > /dev/null 2>&1
         
-        # Ép Android ghi dữ liệu từ RAM xuống thẳng ổ cứng ngay lập tức
         sync
         " """
         
-        os.system(root_cmd) 
+        os.system(root_cmd)
+        safe_root(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
+        
         print(f"{G}[+] Inject {pkg} thành công! Đang khởi động App...{RESET}")
         trigger_boot_step_1(pkg)
         time.sleep(2)
