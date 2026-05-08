@@ -89,7 +89,6 @@ def settings_menu():
     print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
     
     fix_tty()
-    # Thay đổi hướng dẫn nhập ID để phù hợp với ID mặc định
     p_id_raw = input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}").strip()
     
     if p_id_raw == "":
@@ -285,10 +284,79 @@ def force_restart_app(pkg, states, current_time, reason_text, color_code):
     time.sleep(0.5)
     trigger_boot_step_1(pkg)
     
-    # Bắt đầu vòng đời mới
     states[pkg]['boot_phase'] = 1 if target_place_id else 0
     states[pkg]['boot_timer'] = current_time
     states[pkg]['rejoin_time'] = current_time
+
+def login_via_cookie():
+    """Ép đăng nhập Roblox bằng Cookie (Nhập trực tiếp trên Termux)"""
+    global selected_packages
+    if not selected_packages:
+        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
+        time.sleep(2)
+        return
+
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (NHẬP TRỰC TIẾP) ---{RESET}")
+    print(f"{Y}Lưu ý 1: Máy BẮT BUỘC ĐÃ ROOT.{RESET}")
+    print(f"{Y}Lưu ý 2: Nếu Cloud Phone khác IP mạng lúc lấy Cookie, Cookie có thể chết ngay lập tức!{RESET}")
+    
+    fix_tty()
+    cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+
+    if not cookie.startswith("_|WARNING"):
+        print(f"{R}[!] Cookie không hợp lệ! (Phải bắt đầu bằng _|WARNING){RESET}")
+        time.sleep(2)
+        return
+
+    print(f"{C}[*] Đang tạo cấu hình XML...{RESET}")
+    xml_content = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="ROBLOSECURITY">{cookie}</string>
+</map>"""
+
+    temp_file = "/sdcard/Download/temp_roblox_cookie.xml"
+    try:
+        with open(temp_file, "w", encoding="utf-8") as f:
+            f.write(xml_content)
+    except Exception as e:
+        print(f"{R}[!] Lỗi tạo file tạm: {e}{RESET}")
+        time.sleep(2)
+        return
+
+    for item in selected_packages:
+        pkg = item['pkg']
+        print(f"{Y}[*] Đang Inject Cookie vào {pkg}...{RESET}")
+        
+        root_cmd = f"""su -c "
+        am force-stop {pkg}
+        
+        mkdir -p /data/data/{pkg}/shared_prefs/
+        
+        APP_OWNER=\\$(stat -c '%u:%g' /data/data/{pkg})
+        
+        rm -f /data/data/{pkg}/shared_prefs/*.bak
+        rm -rf /data/data/{pkg}/app_v2
+        rm -rf /data/data/{pkg}/cache
+        
+        cp {temp_file} /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
+        cp {temp_file} /data/data/{pkg}/shared_prefs/com.vng.robloxclient_preferences.xml
+        cp {temp_file} /data/data/{pkg}/shared_prefs/{pkg}_preferences.xml
+        
+        chown -R \\$APP_OWNER /data/data/{pkg}/shared_prefs/
+        chmod 771 /data/data/{pkg}/shared_prefs/
+        chmod 660 /data/data/{pkg}/shared_prefs/*.xml
+        
+        restorecon -R /data/data/{pkg}/shared_prefs/ 2>/dev/null
+        " """
+        
+        safe_root(root_cmd)
+        print(f"{G}[+] Inject {pkg} hoàn tất! Đang khởi động App...{RESET}")
+        trigger_boot_step_1(pkg)
+        time.sleep(2)
+
+    safe_root(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
+    print(f"\n{G}[+] Đã hoàn thành Inject!{RESET}")
+    time.sleep(4)
 
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache
@@ -323,13 +391,12 @@ def start_auto_rejoin():
                 pkg = item['pkg']
                 uptime_seconds = current_time - states[pkg]['rejoin_time']
                 
-                # --- PHASE 1: CHỜ BẮN DEEPLINK (TĂNG LÊN 30s THEO YÊU CẦU) ---
+                # --- PHASE 1: CHỜ BẮN DEEPLINK (30s) ---
                 if states[pkg]['boot_phase'] == 1:
                     elapsed_boot = current_time - states[pkg]['boot_timer']
                     if elapsed_boot >= 30:
                         trigger_boot_step_2(pkg)
                         states[pkg]['boot_phase'] = 0 
-                        # Không reset rejoin_time ở đây để bảo toàn quy tắc 150s
                     else:
                         states[pkg]['text'] = f"Đang Nạp Game ({int(30 - elapsed_boot)}s)"
                         states[pkg]['color'] = M
@@ -374,11 +441,9 @@ def start_auto_rejoin():
                     diff = current_time - last_ping
                     if diff > 45: 
                         if is_in_grace_period:
-                            # DU DI BỎ QUA: Vẫn trong 150s đầu tiên, File Json có thể là rác hoặc game đang giật lag
                             states[pkg]['text'] = f"Vào Server... ({int(150 - uptime_seconds)}s)"
                             states[pkg]['color'] = Y
                         else:
-                            # Hết 150s mà diff vẫn > 45 -> Đích thị là Văng Game thật!
                             force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
                     else:
                         states[pkg]['text'] = f"Đang Farm ({int(diff)}s trước)"
@@ -422,7 +487,8 @@ def main():
         print(f"[{C}1{RESET}] Quét và Chọn Package Roblox (Fix Trùng Lặp)")
         print(f"[{C}2{RESET}] Cài đặt Game ID (PlaceID) & Time Kill All")
         print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
-        print(f"[{C}4{RESET}] Thoát")
+        print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
+        print(f"[{C}5{RESET}] Thoát")
         
         try:
             fix_tty()
@@ -434,7 +500,8 @@ def main():
         if choice == '1': select_package_menu()
         elif choice == '2': settings_menu()
         elif choice == '3': start_auto_rejoin()
-        elif choice == '4': 
+        elif choice == '4': login_via_cookie()
+        elif choice == '5': 
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
             fix_tty()
