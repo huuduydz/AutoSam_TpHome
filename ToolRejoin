@@ -91,37 +91,73 @@ def select_package_menu():
         pass
 
 def login_via_cookie():
+    """Ép đăng nhập Roblox bằng Cookie (Hỗ trợ Global, VNG, Clone và Fix SELinux)"""
     global selected_packages
     if not selected_packages:
-        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}"); time.sleep(2); return
+        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
+        time.sleep(2)
+        return
 
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE ---{RESET}")
+    print(f"{Y}Lưu ý: Tính năng này yêu cầu máy ĐÃ ROOT (Magisk/KernelSU).{RESET}")
     cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+
     if not cookie.startswith("_|WARNING"):
-        print(f"{R}[!] Cookie không hợp lệ!{RESET}"); time.sleep(2); return
+        print(f"{R}[!] Cookie không hợp lệ! (Phải bắt đầu bằng _|WARNING){RESET}")
+        time.sleep(2)
+        return
 
-    xml_content = f"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n    <string name=\"ROBLOSECURITY\">{cookie}</string>\n</map>"
+    print(f"{C}[*] Đang tạo cấu hình XML...{RESET}")
+    # Định dạng chuẩn của file lưu cookie Roblox
+    xml_content = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="ROBLOSECURITY">{cookie}</string>
+</map>"""
+
+    # Ghi ra bộ nhớ tạm
     temp_file = "/sdcard/Download/temp_roblox_cookie.xml"
-    with open(temp_file, "w", encoding="utf-8") as f:
-        f.write(xml_content)
+    try:
+        with open(temp_file, "w", encoding="utf-8") as f:
+            f.write(xml_content)
+    except Exception as e:
+        print(f"{R}[!] Lỗi tạo file tạm: {e}{RESET}")
+        time.sleep(2)
+        return
 
+    # Lặp qua tất cả acc để tiêm Cookie
     for pkg in selected_packages:
-        print(f"{Y}[*] Injecting Cookie -> {pkg}...{RESET}")
+        print(f"{Y}[*] Đang Inject Cookie vào {pkg}...{RESET}")
+        
+        # [BẢN VÁ TỐI THƯỢNG]: Tiêm 3 file cùng lúc và Fix SELinux
         root_cmd = f"""su -c "
         am force-stop {pkg}
         mkdir -p /data/data/{pkg}/shared_prefs/
+        
+        # Rải thảm 3 file cấu hình để chống trượt (Global, VNG, Clone)
         cp {temp_file} /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
-        chmod 660 /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
+        cp {temp_file} /data/data/{pkg}/shared_prefs/com.vng.robloxclient_preferences.xml
+        cp {temp_file} /data/data/{pkg}/shared_prefs/{pkg}_preferences.xml
+        
+        # Cấp quyền đọc ghi
+        chmod 660 /data/data/{pkg}/shared_prefs/*.xml
+        
+        # Đồng bộ UID để app nhận diện file là của chính nó
         PKG_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | cut -d'=' -f2 | cut -d' ' -f1)
-        chown \\$PKG_UID:\\$PKG_UID /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
+        chown \\$PKG_UID:\\$PKG_UID /data/data/{pkg}/shared_prefs/*.xml
+        
+        # Sửa lỗi bảo mật SELinux trên Cloud Phone / Android 11+
+        restorecon -R /data/data/{pkg}/shared_prefs/ 2>/dev/null
         " """
+        
         os.system(root_cmd)
-        # Sử dụng monkey để ép mở app clone an toàn
+        print(f"{G}[+] Inject {pkg} hoàn tất! Đang khởi động lại game...{RESET}")
         os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
-        time.sleep(1)
+        time.sleep(2)
 
+    # Dọn dẹp rác
     os.system(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
-    print(f"{G}[+] Hoàn thành Inject cho {len(selected_packages)} acc!{RESET}")
-    time.sleep(2)
+    print(f"\n{G}[+] Đã hoàn thành Inject cho {len(selected_packages)} package!{RESET}")
+    time.sleep(3)
 
 # =========================================================================
 # TÍNH NĂNG 1: AUTO INJECT LUA VÀO AUTOEXEC CỦA MỌI EXECUTOR
