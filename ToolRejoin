@@ -476,7 +476,7 @@ def start_auto_rejoin():
                         trigger_boot_step_2(pkg)
                         states[pkg]['boot_phase'] = 0 
                     else:
-                        states[pkg]['text'] = f"Đang Nạp Game ({int(30 - elapsed_boot)}s)"
+                        states[pkg]['text'] = f"Đang Nạp Game ({int(15 - elapsed_boot)}s)"
                         states[pkg]['color'] = M
                     continue 
                 
