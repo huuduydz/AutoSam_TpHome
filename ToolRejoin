@@ -15,7 +15,7 @@ M = '\033[95m'  # Magenta
 RESET = '\033[0m'
 
 selected_packages = []
-target_place_id = ""  # ID Game muốn vào thẳng
+target_place_id = "4520749081"  # ID Game muốn vào thẳng
 kill_all_time = 0     # Thời gian tự động Rejoin (Phút)
 
 def clear_screen():
