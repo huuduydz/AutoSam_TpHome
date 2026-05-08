@@ -246,14 +246,24 @@ def get_heartbeat_data(pkg):
     return os.path.getmtime(latest_file), player_name
 
 def launch_app_root(pkg):
-    """Mở App tích hợp tính năng DeepLink xuyên thẳng vào PlaceID"""
+    """Mở App tích hợp tính năng DeepLink xuyên thẳng vào PlaceID (Bypass Lỗi Clone)"""
     if target_place_id:
-        # Cơ chế Android Intent gọi thẳng vào server game
-        cmd = f"su -c 'am start -n {pkg}/com.roblox.client.Activity -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" > /dev/null 2>&1'"
+        # Lệnh Root thần thánh: Tự mò tên cổng chính (Activity) của Clone để bắn DeepLink
+        root_cmd = f"""su -c "
+        MAIN_ACT=\\$(dumpsys package {pkg} | grep -A 2 'android.intent.action.MAIN' | grep {pkg} | head -n 1 | awk '{{print \\$2}}')
+        
+        if [ -z \\"\\$MAIN_ACT\\" ]; then
+            # Nếu không tìm thấy, ép mở bằng Monkey (vào sảnh)
+            monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1
+        else
+            # Bắn DeepLink thẳng vào Activity gốc đã tìm được
+            am start -n \\$MAIN_ACT -a android.intent.action.VIEW -d \\"roblox://placeId={target_place_id}\\" > /dev/null 2>&1
+        fi
+        " """
+        os.system(root_cmd)
     else:
         # Cơ chế Monkey mở bình thường vào sảnh
-        cmd = f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'"
-    os.system(cmd)
+        os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
 
 def start_auto_rejoin():
     global selected_packages, kill_all_time
