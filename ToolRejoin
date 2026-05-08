@@ -34,14 +34,41 @@ def print_banner():
     print("-" * 50)
 
 def scan_packages():
-    """Quét tất cả các package Roblox đã cài đặt trên Android"""
+    """Quét tất cả các package Roblox đã cài đặt trên Android (Có bypass Root cho Cloud Phone)"""
     print(f"\n{C}[*] Đang quét hệ thống tìm Package Roblox...{RESET}")
+    packages = []
+    
+    # CÁCH 1: Quét bằng lệnh pm thông thường
     try:
-        output = subprocess.check_output("pm list packages | grep -i roblox", shell=True, text=True)
-        packages = [line.replace("package:", "").strip() for line in output.splitlines() if line.strip()]
-        return packages
-    except subprocess.CalledProcessError:
-        return []
+        output = subprocess.check_output("pm list packages", shell=True, text=True, stderr=subprocess.DEVNULL)
+        for line in output.splitlines():
+            if "roblox" in line.lower():
+                packages.append(line.replace("package:", "").strip())
+    except Exception:
+        pass
+        
+    # CÁCH 2: Ép dùng quyền Root (Bypass Android 11+ Package Visibility)
+    if not packages:
+        try:
+            output = subprocess.check_output("su -c 'pm list packages'", shell=True, text=True, stderr=subprocess.DEVNULL)
+            for line in output.splitlines():
+                if "roblox" in line.lower():
+                    packages.append(line.replace("package:", "").strip())
+        except Exception:
+            pass
+            
+    # CÁCH 3: Quét trực tiếp thư mục gốc (Dành cho các bản mod/clone cố tình giấu tên)
+    if not packages:
+        try:
+            output = subprocess.check_output("su -c 'ls /data/data/'", shell=True, text=True, stderr=subprocess.DEVNULL)
+            for line in output.splitlines():
+                if "roblox" in line.lower():
+                    packages.append(line.strip())
+        except Exception:
+            pass
+
+    # Lọc bỏ các kết quả bị trùng lặp và trả về danh sách
+    return list(set(packages))
 
 def select_package_menu():
     global selected_package
