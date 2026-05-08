@@ -11,7 +11,6 @@ from datetime import datetime
 # =====================================================================
 # BẢN VÁ TỐI THƯỢNG: CHỐNG VỠ KHUNG BẬC THANG & CHỐNG LIỆT PHÍM
 # =====================================================================
-# 1. Ép Python luôn dùng \r\n để chống vỡ khung (Staircase Effect)
 _original_print = builtins.print
 def safe_print(*args, **kwargs):
     if 'end' not in kwargs:
@@ -19,7 +18,6 @@ def safe_print(*args, **kwargs):
     _original_print(*args, **kwargs)
 builtins.print = safe_print
 
-# 2. Lưu trạng thái bàn phím chuẩn để khôi phục khi bị Root cướp quyền
 try:
     import termios
     OLD_TTY = termios.tcgetattr(sys.stdin.fileno())
@@ -27,7 +25,6 @@ except Exception:
     OLD_TTY = None
 
 def fix_tty():
-    """Hàm "Thần chú" giải cứu bàn phím bị đơ và khôi phục hiển thị"""
     try:
         if OLD_TTY:
             import termios
@@ -38,7 +35,6 @@ def fix_tty():
         pass
 
 def safe_root(cmd):
-    """Cách ly lệnh Root trong lồng kính, cấm chạm vào giao diện Termux"""
     try:
         subprocess.run(
             cmd, 
@@ -50,13 +46,12 @@ def safe_root(cmd):
     except:
         pass
     finally:
-        fix_tty() # Khôi phục bàn phím ngay lập tức
+        fix_tty()
 
 def clear_screen():
     fix_tty()
     sys.stdout.write('\033[2J\033[H\r')
     sys.stdout.flush()
-# =====================================================================
 
 # --- MÃ MÀU GIAO DIỆN ---
 C = '\033[96m'  
@@ -81,7 +76,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Async Boot + Termios Anti-Freeze (Siêu Mượt){RESET}")
+    print(f"{G}Core: {Y}Async Boot + Cache Clean (Fix Boot Loop){RESET}")
     
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
@@ -128,19 +123,10 @@ def settings_menu():
 def scan_packages():
     packages = []
     try:
-        # Ưu tiên quét không cần Root để tránh làm loạn Termux
-        output = subprocess.check_output(
-            "pm list packages -3", 
-            shell=True, 
-            text=True, 
-            stderr=subprocess.DEVNULL
-        )
+        output = subprocess.check_output("pm list packages -3", shell=True, text=True, stderr=subprocess.DEVNULL)
     except Exception:
         try:
-            output = subprocess.check_output(
-                "su -c 'pm list packages -3'", 
-                shell=True, text=True, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL
-            )
+            output = subprocess.check_output("su -c 'pm list packages -3'", shell=True, text=True, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
         except:
             output = ""
 
@@ -266,6 +252,32 @@ def trigger_boot_step_1(pkg):
 def trigger_boot_step_2(pkg):
     safe_root(f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\"'")
 
+# =====================================================================
+# HÀM MỚI: XÓA SẠCH TÀN DƯ & KHỞI ĐỘNG LẠI APP CHUẨN MỰC
+# =====================================================================
+def force_restart_app(pkg, states, current_time, reason_text, color_code):
+    global json_path_cache
+    states[pkg]['text'] = reason_text
+    states[pkg]['color'] = color_code
+    
+    # Ép đóng App
+    safe_root(f"su -c 'am force-stop {pkg}'")
+    
+    # [FIX LỖI BẬT TẮT]: Quét và xóa vĩnh viễn file JSON nhịp tim cũ của App này
+    safe_root(f"su -c 'find /sdcard -type f -name \"{pkg}_checkhudyhub.json\" -delete 2>/dev/null'")
+    if pkg in json_path_cache:
+        del json_path_cache[pkg]
+        
+    time.sleep(0.5)
+    trigger_boot_step_1(pkg)
+    
+    # Reset toàn bộ đồng hồ theo dõi về 0
+    states[pkg]['boot_phase'] = 1 if target_place_id else 0
+    states[pkg]['boot_timer'] = current_time
+    states[pkg]['rejoin_time'] = current_time
+    states[pkg]['name'] = 'Chờ Load/Login...'
+
+
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache
     if not selected_packages:
@@ -274,26 +286,21 @@ def start_auto_rejoin():
     print(f"\n{Y}[*] Đang setup Autoexec cho {len(selected_packages)} Package...{RESET}")
     
     states = {}
+    current_time = time.time()
     for pkg in selected_packages:
         inject_lua_autoexec(pkg)
-        safe_root(f"su -c 'am force-stop {pkg}'")
-        time.sleep(0.3)
-        trigger_boot_step_1(pkg)
-        
-        states[pkg] = {
-            'text': 'Đang Mở Sảnh...',
-            'color': Y,
-            'boot_phase': 1 if target_place_id else 0, 
-            'boot_timer': time.time(),
-            'rejoin_time': time.time(),
-            'name': 'Chờ Load/Login...'
-        }
+        # Sử dụng hàm chuẩn để khởi tạo lần đầu sạch sẽ
+        states[pkg] = {}
+        force_restart_app(pkg, states, current_time, 'Đang Mở Sảnh...', Y)
+
+    os.system("stty sane < /dev/tty > /dev/null 2>&1")
 
     while True:
         try:
             current_time = time.time()
             
             for pkg in selected_packages:
+                # PHASE 1: Đợi 10s để nã DeepLink
                 if states[pkg]['boot_phase'] == 1:
                     elapsed_boot = current_time - states[pkg]['boot_timer']
                     if elapsed_boot >= 10:
@@ -305,19 +312,16 @@ def start_auto_rejoin():
                         states[pkg]['color'] = M
                     continue 
                 
+                # PHASE 0: Giám sát sinh tử
                 uptime_seconds = current_time - states[pkg]['rejoin_time']
                 uptime_minutes = uptime_seconds / 60
 
+                # 1. Check Thời Gian Bóp Cổ (Kill All)
                 if kill_all_time > 0 and uptime_minutes >= kill_all_time:
-                    states[pkg]['text'] = f"Auto Restart ({kill_all_time}m)"
-                    states[pkg]['color'] = M
-                    safe_root(f"su -c 'am force-stop {pkg}'")
-                    time.sleep(0.5)
-                    trigger_boot_step_1(pkg)
-                    states[pkg]['boot_phase'] = 1 if target_place_id else 0
-                    states[pkg]['boot_timer'] = current_time
+                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
                     continue
 
+                # 2. Ân hạn 60s cho game load
                 if uptime_seconds < 60:
                     states[pkg]['text'] = f"Đang Load ({int(60 - uptime_seconds)}s)"
                     states[pkg]['color'] = Y
@@ -325,35 +329,27 @@ def start_auto_rejoin():
                     if p_name != "Chờ Load/Login...": states[pkg]['name'] = p_name
                     continue
 
+                # 3. Phân tích Nhịp tim
                 last_ping, player_name = get_heartbeat_data(pkg)
                 if player_name != "Chờ Load/Login...": states[pkg]['name'] = player_name
 
                 if last_ping == -1:
+                    # Hết 3 phút chưa login được -> Treo màn hình
                     if uptime_seconds > 180: 
-                        states[pkg]['text'] = f"Treo Màn/Chưa Login!"
-                        states[pkg]['color'] = R
-                        safe_root(f"su -c 'am force-stop {pkg}'")
-                        time.sleep(0.5)
-                        trigger_boot_step_1(pkg)
-                        states[pkg]['boot_phase'] = 1 if target_place_id else 0
-                        states[pkg]['boot_timer'] = current_time
+                        force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Login!", R)
                     else:
                         states[pkg]['text'] = "Chờ file JSON..."
                         states[pkg]['color'] = C
                 else:
                     diff = current_time - last_ping
+                    # File đã có nhưng bị đứng quá 45 giây -> Văng game
                     if diff > 45: 
-                        states[pkg]['text'] = f"Văng Game ({int(diff)}s)"
-                        states[pkg]['color'] = R
-                        safe_root(f"su -c 'am force-stop {pkg}'")
-                        time.sleep(0.5)
-                        trigger_boot_step_1(pkg)
-                        states[pkg]['boot_phase'] = 1 if target_place_id else 0
-                        states[pkg]['boot_timer'] = current_time
+                        force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
                     else:
                         states[pkg]['text'] = f"Đang Farm ({int(diff)}s trước)"
                         states[pkg]['color'] = G
 
+            # --- VẼ KHUNG DASHBOARD ---
             clear_screen()
             print_banner()
             print(f"{C}{'INGAME NAME':<15} | {'PACKAGE INFO':<15} | {'TÌNH TRẠNG HIỆN TẠI':<25}{RESET}")
@@ -405,7 +401,9 @@ def main():
         elif choice == '4': 
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
+            fix_tty()
             break
 
 if __name__ == "__main__":
+    fix_tty()
     main()
