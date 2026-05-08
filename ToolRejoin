@@ -8,21 +8,23 @@ import sys
 from datetime import datetime
 
 # --- MÃ MÀU GIAO DIỆN ---
-C = '\033[96m'  # Cyan
-G = '\033[92m'  # Green
-Y = '\033[93m'  # Yellow
-R = '\033[91m'  # Red
-M = '\033[95m'  # Magenta
+C = '\033[96m'  
+G = '\033[92m'  
+Y = '\033[93m'  
+R = '\033[91m'  
+M = '\033[95m'  
 RESET = '\033[0m'
 
 selected_packages = []
-target_place_id = ""  # ID Game muốn vào thẳng
-kill_all_time = 0     # Thời gian tự động Rejoin (Phút)
+target_place_id = ""  
+kill_all_time = 0     
+
+# --- BỘ NHỚ ĐỆM (CACHE) TỐI ƯU TỐC ĐỘ ĐỌC FILE ---
+json_path_cache = {}
 
 def clear_screen():
-    # BẢN VÁ LAG TERMUX TỐI THƯỢNG: Khôi phục Terminal và dùng ANSI Code để xóa mượt
-    os.system("stty sane > /dev/null 2>&1")
-    sys.stdout.write('\033[H\033[2J')
+    # TỐI ƯU 1: Loại bỏ hoàn toàn os.system. Dùng sys.stdout để vẽ lại khung hình không tốn CPU.
+    sys.stdout.write('\033[2J\033[H')
     sys.stdout.flush()
 
 def print_banner():
@@ -35,7 +37,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Method: {Y}Live Dashboard + DeepLink ID (Manual Login){RESET}")
+    print(f"{G}Core: {Y}Asynchronous Boot + I/O Cache (Siêu Mượt){RESET}")
     
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
@@ -87,7 +89,6 @@ def scan_packages():
     except Exception:
         pass
 
-    os.system("stty sane > /dev/null 2>&1")
     cleaned_packages = []
     for p in list(set(packages)):
         clean_p = p.replace('\r', '').replace('\n', '').strip()
@@ -107,7 +108,6 @@ def select_package_menu():
         print(f"[{i}] {pkg}")
     
     try:
-        os.system("stty sane > /dev/null 2>&1") 
         print(f"\n{C}💡 Nhập nhiều số cách nhau bởi khoảng trắng (VD: 1 3 5){RESET}")
         choice_str = input(f"{M}Chọn số thứ tự Package: {RESET}")
         
@@ -170,20 +170,26 @@ end)"""
     os.system(root_cmd)
 
 def get_heartbeat_data(pkg):
-    search_paths = [
-        f"/sdcard/Android/media/{pkg}/*/workspace/{pkg}_checkhudyhub.json",
-        f"/sdcard/Android/data/{pkg}/*/workspace/{pkg}_checkhudyhub.json",
-        f"/sdcard/Android/data/{pkg}/files/workspace/{pkg}_checkhudyhub.json",
-        f"/sdcard/Download/{pkg}_checkhudyhub.json",
-        f"/sdcard/*/Workspace/{pkg}_checkhudyhub.json", 
-        f"/sdcard/*/workspace/{pkg}_checkhudyhub.json"
-    ]
+    global json_path_cache
     
-    files = []
-    for path in search_paths: files.extend(glob.glob(path))
+    # TỐI ƯU 2: Sử dụng Cache đường dẫn. Nếu đã tìm thấy 1 lần, những lần sau bốc thẳng ra đọc, không dùng glob quét ổ cứng nữa.
+    if pkg in json_path_cache and os.path.exists(json_path_cache[pkg]):
+        latest_file = json_path_cache[pkg]
+    else:
+        search_paths = [
+            f"/sdcard/Android/media/{pkg}/*/workspace/{pkg}_checkhudyhub.json",
+            f"/sdcard/Android/data/{pkg}/*/workspace/{pkg}_checkhudyhub.json",
+            f"/sdcard/Android/data/{pkg}/files/workspace/{pkg}_checkhudyhub.json",
+            f"/sdcard/Download/{pkg}_checkhudyhub.json",
+            f"/sdcard/*/Workspace/{pkg}_checkhudyhub.json", 
+            f"/sdcard/*/workspace/{pkg}_checkhudyhub.json"
+        ]
+        files = []
+        for path in search_paths: files.extend(glob.glob(path))
+        if not files: return -1, "Chờ Load/Login..."
         
-    if not files: return -1, "Chờ Load/Login..."
-    latest_file = max(files, key=os.path.getmtime)
+        latest_file = max(files, key=os.path.getmtime)
+        json_path_cache[pkg] = latest_file  # Lưu vào Cache
     
     player_name = "Chưa load"
     try:
@@ -194,40 +200,58 @@ def get_heartbeat_data(pkg):
         
     return os.path.getmtime(latest_file), player_name
 
-def launch_app_root(pkg):
-    """Quy trình mở Kép: Gọi App -> Chờ 10s -> Bắn DeepLink chuẩn experiences/start"""
-    
-    # Bước 1: Mở app ra màn hình sảnh chờ (Đánh thức App)
+def trigger_boot_step_1(pkg):
+    """Khởi động bộ khung App (Sảnh)"""
     os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
-    
-    # Bước 2: Bắn link ép Join nếu có thiết lập ID Game
-    if target_place_id:
-        # Ngủ 10 giây để App vừa đủ thời gian lên nguồn và load xong giao diện
-        time.sleep(10)
-        
-        # Bắn link ép Join chuẩn của Roblox (Sử dụng URL experiences/start)
-        intent_cmd = f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\" > /dev/null 2>&1'"
-        os.system(intent_cmd)
+
+def trigger_boot_step_2(pkg):
+    """Bắn DeepLink (Xuyên thẳng vào Map)"""
+    intent_cmd = f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\" > /dev/null 2>&1'"
+    os.system(intent_cmd)
 
 def start_auto_rejoin():
-    global selected_packages, kill_all_time
+    global selected_packages, kill_all_time, json_path_cache
     if not selected_packages:
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}"); time.sleep(2); return
 
     print(f"\n{Y}[*] Đang setup Autoexec cho {len(selected_packages)} Package...{RESET}")
+    
+    # Cấu trúc States lưu trạng thái khởi động không đồng bộ
+    states = {}
     for pkg in selected_packages:
         inject_lua_autoexec(pkg)
         os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
-        time.sleep(0.5)
-        launch_app_root(pkg)
-    
-    states = {pkg: {'text': 'Đang Mở Game...', 'color': Y, 'rejoin_time': time.time(), 'name': 'Chờ Load/Login...'} for pkg in selected_packages}
+        time.sleep(0.3)
+        trigger_boot_step_1(pkg)
+        
+        states[pkg] = {
+            'text': 'Đang Mở Sảnh...',
+            'color': Y,
+            'boot_phase': 1 if target_place_id else 0, # Phase 1: Đang chờ bắn Link | Phase 0: Giám sát bình thường
+            'boot_timer': time.time(),
+            'rejoin_time': time.time(),
+            'name': 'Chờ Load/Login...'
+        }
 
     while True:
         try:
             current_time = time.time()
             
             for pkg in selected_packages:
+                # TỐI ƯU 3: CƠ CHẾ XỬ LÝ THEO TỪNG NHỊP (STATE MACHINE) CHỐNG ĐÓNG BĂNG TOOL
+                if states[pkg]['boot_phase'] == 1:
+                    # Nếu đang ở Phase 1 (Đợi 10s để bắn DeepLink)
+                    elapsed_boot = current_time - states[pkg]['boot_timer']
+                    if elapsed_boot >= 10:
+                        trigger_boot_step_2(pkg)
+                        states[pkg]['boot_phase'] = 0 # Hoàn thành khởi động, chuyển về chế độ theo dõi
+                        states[pkg]['rejoin_time'] = current_time # Reset thời gian farm
+                    else:
+                        states[pkg]['text'] = f"Đang Nạp Game ({int(10 - elapsed_boot)}s)"
+                        states[pkg]['color'] = M
+                    continue # Bỏ qua việc check Nhịp tim trong lúc đang boot để tránh lag
+                
+                # ---- XỬ LÝ THEO DÕI BÌNH THƯỜNG (PHASE 0) ----
                 uptime_seconds = current_time - states[pkg]['rejoin_time']
                 uptime_minutes = uptime_seconds / 60
 
@@ -235,9 +259,10 @@ def start_auto_rejoin():
                     states[pkg]['text'] = f"Auto Restart ({kill_all_time}m)"
                     states[pkg]['color'] = M
                     os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
-                    time.sleep(1)
-                    launch_app_root(pkg)
-                    states[pkg]['rejoin_time'] = current_time
+                    time.sleep(0.5)
+                    trigger_boot_step_1(pkg)
+                    states[pkg]['boot_phase'] = 1 if target_place_id else 0
+                    states[pkg]['boot_timer'] = current_time
                     continue
 
                 if uptime_seconds < 60:
@@ -251,14 +276,14 @@ def start_auto_rejoin():
                 if player_name != "Chờ Load/Login...": states[pkg]['name'] = player_name
 
                 if last_ping == -1:
-                    # Nới thời gian chờ lên 180s cho các app cần Login tay
                     if uptime_seconds > 180: 
                         states[pkg]['text'] = f"Treo Màn/Chưa Login!"
                         states[pkg]['color'] = R
                         os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
-                        time.sleep(1)
-                        launch_app_root(pkg)
-                        states[pkg]['rejoin_time'] = current_time
+                        time.sleep(0.5)
+                        trigger_boot_step_1(pkg)
+                        states[pkg]['boot_phase'] = 1 if target_place_id else 0
+                        states[pkg]['boot_timer'] = current_time
                     else:
                         states[pkg]['text'] = "Chờ file JSON..."
                         states[pkg]['color'] = C
@@ -268,14 +293,15 @@ def start_auto_rejoin():
                         states[pkg]['text'] = f"Văng Game ({int(diff)}s)"
                         states[pkg]['color'] = R
                         os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
-                        time.sleep(1)
-                        launch_app_root(pkg)
-                        states[pkg]['rejoin_time'] = current_time
+                        time.sleep(0.5)
+                        trigger_boot_step_1(pkg)
+                        states[pkg]['boot_phase'] = 1 if target_place_id else 0
+                        states[pkg]['boot_timer'] = current_time
                     else:
                         states[pkg]['text'] = f"Đang Farm ({int(diff)}s trước)"
                         states[pkg]['color'] = G
 
-            # --- VẼ KHUNG DASHBOARD CỰC MƯỢT ---
+            # --- VẼ KHUNG DASHBOARD ---
             clear_screen()
             print_banner()
             print(f"{C}{'INGAME NAME':<15} | {'PACKAGE INFO':<15} | {'TÌNH TRẠNG HIỆN TẠI':<25}{RESET}")
@@ -293,7 +319,9 @@ def start_auto_rejoin():
             
             print("-" * 65)
             print(f"{C} Đang chạy Live... (Bấm Ctrl + C để dừng){RESET}")
-            time.sleep(5)
+            
+            # Giảm thời gian trễ vòng lặp xuống 3 giây để Bảng ĐH cập nhật mượt hơn
+            time.sleep(3)
 
         except KeyboardInterrupt:
             print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
