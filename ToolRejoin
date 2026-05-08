@@ -15,6 +15,8 @@ M = '\033[95m'  # Magenta
 RESET = '\033[0m'
 
 selected_packages = []
+target_place_id = ""  # ID Game muốn vào thẳng
+kill_all_time = 0     # Thời gian tự động Rejoin (Phút)
 
 def clear_screen():
     os.system('clear')
@@ -29,12 +31,46 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Method: {Y}Multi-Dashboard + Auto Inject Autoexec{RESET}")
+    print(f"{G}Method: {Y}Live Dashboard + DeepLink ID + Time Kill All{RESET}")
+    
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
     else:
         print(f"{G}Target Packages: {Y}Chưa chọn (None){RESET}")
+        
+    # Hiện thông tin cấu hình mới
+    place_str = target_place_id if target_place_id else "Mặc định (Vào Sảnh)"
+    kill_str = f"{kill_all_time} phút" if kill_all_time > 0 else "Tắt"
+    print(f"{C}Game ID (Place): {Y}{place_str}{RESET}")
+    print(f"{C}Time Kill All  : {Y}{kill_str}{RESET}")
     print("-" * 65)
+
+def settings_menu():
+    """Menu cài đặt ID Game và Thời gian Restart"""
+    global target_place_id, kill_all_time
+    print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
+    
+    p_id = input(f"{M}Nhập Place ID (VD Blox Fruits: 2753915549) [Bỏ trống để vào sảnh]: {RESET}").strip()
+    if p_id.isdigit():
+        target_place_id = p_id
+        print(f"{G}[+] Đã lưu cấu hình vào thẳng Game ID: {target_place_id}{RESET}")
+    elif p_id == "":
+        target_place_id = ""
+        print(f"{Y}[*] Đã xóa Place ID, App sẽ mở vào màn hình chính.{RESET}")
+    else:
+        print(f"{R}[!] ID không hợp lệ, giữ nguyên cấu hình cũ.{RESET}")
+
+    k_time = input(f"{M}Nhập thời gian Auto Restart (Tính bằng Phút, nhập 0 để Tắt): {RESET}").strip()
+    if k_time.isdigit():
+        kill_all_time = int(k_time)
+        if kill_all_time > 0:
+            print(f"{G}[+] Tool sẽ tự động Kill và Rejoin mỗi {kill_all_time} phút.{RESET}")
+        else:
+            print(f"{Y}[*] Đã TẮT tính năng Auto Restart (Chỉ Rejoin khi văng).{RESET}")
+    else:
+        print(f"{R}[!] Số phút không hợp lệ.{RESET}")
+    
+    time.sleep(2)
 
 def scan_packages():
     packages = []
@@ -44,13 +80,7 @@ def scan_packages():
             if "package:" in line:
                 packages.append(line.replace("package:", "").strip())
     except Exception:
-        try:
-            output = subprocess.check_output("pm list packages -3", shell=True, text=True, stderr=subprocess.DEVNULL)
-            for line in output.splitlines():
-                if "package:" in line:
-                    packages.append(line.replace("package:", "").strip())
-        except Exception:
-            pass
+        pass
 
     os.system("stty sane")
     cleaned_packages = []
@@ -65,7 +95,7 @@ def select_package_menu():
     packages = scan_packages()
     
     if not packages:
-        print(f"{R}[!] Không tìm thấy bất kỳ app nào!{RESET}"); time.sleep(2); return
+        print(f"{R}[!] Không tìm thấy app nào!{RESET}"); time.sleep(2); return
 
     print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
     for i, pkg in enumerate(packages, 1):
@@ -86,74 +116,34 @@ def select_package_menu():
         if selected_packages:
             print(f"\n{G}[+] Đã chọn {len(selected_packages)} Package thành công!{RESET}")
             time.sleep(1)
-            
-    except Exception as e:
+    except Exception:
         pass
 
 def login_via_cookie():
-    """Ép đăng nhập Roblox bằng danh sách Cookie từ file cookie.txt (Đã fix đường dẫn tuyệt đối)"""
     global selected_packages
     if not selected_packages:
-        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
-        time.sleep(2)
-        return
+        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}"); time.sleep(2); return
 
-    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (ĐỌC TỪ FILE) ---{RESET}")
-    print(f"{Y}Lưu ý: Tính năng này yêu cầu máy ĐÃ ROOT (Magisk/KernelSU).{RESET}")
-    
-    # [BẢN VÁ QUAN TRỌNG]: Ép thẳng đường dẫn ra ngoài thư mục Download của điện thoại
-    cookie_file_path = "/sdcard/Download/HuDy_Tool/cookie.txt"
-    
-    # Kiểm tra xem thư mục HuDy_Tool có tồn tại chưa, chưa có thì tạo
-    os.system("mkdir -p /sdcard/Download/HuDy_Tool")
-
-    if not os.path.exists(cookie_file_path):
-        print(f"{R}[!] Không tìm thấy file 'cookie.txt' ở /sdcard/Download/HuDy_Tool/ !{RESET}")
-        print(f"{Y}[*] Tool đã tự tạo file này. Hãy mở MT Manager dán Cookie vào đó rồi chạy lại nhé!{RESET}")
-        with open(cookie_file_path, "w", encoding="utf-8") as f:
-            f.write("")
-        time.sleep(4)
-        return
-
-    # Đọc Cookie từ file
-    with open(cookie_file_path, "r", encoding="utf-8") as f:
-        cookies = [line.strip() for line in f if line.strip()]
-        
-    if not cookies:
-        print(f"{R}[!] File 'cookie.txt' đang trống! Vui lòng mở MT Manager và dán Cookie vào.{RESET}")
-        time.sleep(3)
-        return
-        
-    cookie = cookies[0] 
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (NHẬP TRỰC TIẾP) ---{RESET}")
+    print(f"{Y}Lưu ý: Máy BẮT BUỘC ĐÃ ROOT.{RESET}")
+    cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
 
     if not cookie.startswith("_|WARNING"):
-        print(f"{R}[!] Cookie trong file không hợp lệ! (Phải bắt đầu bằng _|WARNING){RESET}")
-        time.sleep(2)
-        return
+        print(f"{R}[!] Cookie không hợp lệ!{RESET}"); time.sleep(2); return
 
-    print(f"{G}[+] Đã đọc thành công Cookie từ /sdcard/Download/HuDy_Tool/cookie.txt!{RESET}")
-    print(f"{C}[*] Đang tạo cấu hình XML...{RESET}")
-    
-    xml_content = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<map>
-    <string name="ROBLOSECURITY">{cookie}</string>
-</map>"""
-
+    xml_content = f"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n    <string name=\"ROBLOSECURITY\">{cookie}</string>\n</map>"
     temp_file = "/sdcard/Download/temp_roblox_cookie.xml"
-    try:
-        with open(temp_file, "w", encoding="utf-8") as f:
-            f.write(xml_content)
-    except Exception as e:
-        print(f"{R}[!] Lỗi tạo file tạm: {e}{RESET}")
-        time.sleep(2)
-        return
+    
+    with open(temp_file, "w", encoding="utf-8") as f:
+        f.write(xml_content)
 
     for pkg in selected_packages:
         print(f"{Y}[*] Đang Inject Cookie vào {pkg}...{RESET}")
-        
         root_cmd = f"""su -c "
         am force-stop {pkg}
         mkdir -p /data/data/{pkg}/shared_prefs/
+        
+        APP_OWNER=\\$(stat -c '%u:%g' /data/data/{pkg})
         rm -f /data/data/{pkg}/shared_prefs/*.bak
         rm -rf /data/data/{pkg}/app_v2
         rm -rf /data/data/{pkg}/cache
@@ -162,30 +152,20 @@ def login_via_cookie():
         cp {temp_file} /data/data/{pkg}/shared_prefs/com.vng.robloxclient_preferences.xml
         cp {temp_file} /data/data/{pkg}/shared_prefs/{pkg}_preferences.xml
         
-        APP_OWNER=\\$(stat -c '%u:%g' /data/data/{pkg})
         chown -R \\$APP_OWNER /data/data/{pkg}/shared_prefs/
-        
         chmod 771 /data/data/{pkg}/shared_prefs/
         chmod 660 /data/data/{pkg}/shared_prefs/*.xml
         restorecon -R /data/data/{pkg}/shared_prefs/ 2>/dev/null
         " """
-        
         os.system(root_cmd)
-        print(f"{G}[+] Inject {pkg} hoàn tất! Đang khởi động lại game...{RESET}")
-        os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
+        print(f"{G}[+] Inject {pkg} hoàn tất!{RESET}")
+        launch_app_root(pkg)
         time.sleep(2)
 
     os.system(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
-    print(f"\n{G}[+] Đã hoàn thành Inject! Xóa trắng file cookie.txt để bảo mật...{RESET}")
-    
-    with open(cookie_file_path, "w", encoding="utf-8") as f:
-        f.write("")
-        
+    print(f"\n{G}[+] Đã hoàn thành Inject!{RESET}")
     time.sleep(3)
 
-# =========================================================================
-# TÍNH NĂNG 1: AUTO INJECT LUA VÀO AUTOEXEC CỦA MỌI EXECUTOR
-# =========================================================================
 def inject_lua_autoexec(pkg):
     lua_code = f"""task.wait(5)
 local Players = game:GetService("Players")
@@ -217,17 +197,12 @@ task.spawn(function()
     end 
 end)"""
     
-    # Tạo file Lua tạm thời
     temp_lua = f"/sdcard/Download/temp_lua_{pkg}.lua"
-    with open(temp_lua, "w", encoding="utf-8") as f:
-        f.write(lua_code)
+    with open(temp_lua, "w", encoding="utf-8") as f: f.write(lua_code)
         
-    # [BẢN VÁ]: Dùng Root quét diện rộng toàn bộ gốc thẻ nhớ (Sâu tối đa 3 lớp)
-    # Tự động bắt được /sdcard/Delta/Autoexecute hoặc /sdcard/Fluxus/autoexec
     root_cmd = f"""su -c "
     DIRS1=\\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null)
     DIRS2=\\$(find /sdcard/Android/media/{pkg} /sdcard/Android/data/{pkg} -type d -iname '*autoexec*' 2>/dev/null)
-    
     for dir in \\$DIRS1 \\$DIRS2; do
         cp {temp_lua} \\"\\$dir/{pkg}_checkhudyhub.lua\\"
         chmod 777 \\"\\$dir/{pkg}_checkhudyhub.lua\\"
@@ -236,17 +211,12 @@ end)"""
     " """
     os.system(root_cmd)
 
-# =========================================================================
-# TÍNH NĂNG ĐỌC HEARTBEAT TỪ MỌI LOẠI WORKSPACE
-# =========================================================================
 def get_heartbeat_data(pkg):
-    """Đọc file JSON, trả về (Thời gian cập nhật, Tên Nhân Vật)"""
     search_paths = [
         f"/sdcard/Android/media/{pkg}/*/workspace/{pkg}_checkhudyhub.json",
         f"/sdcard/Android/data/{pkg}/*/workspace/{pkg}_checkhudyhub.json",
         f"/sdcard/Android/data/{pkg}/files/workspace/{pkg}_checkhudyhub.json",
         f"/sdcard/Download/{pkg}_checkhudyhub.json",
-        # Thêm đường dẫn bao quát cho Delta và các Executor khác ở gốc
         f"/sdcard/*/Workspace/{pkg}_checkhudyhub.json", 
         f"/sdcard/*/workspace/{pkg}_checkhudyhub.json"
     ]
@@ -256,28 +226,29 @@ def get_heartbeat_data(pkg):
         files.extend(glob.glob(path))
         
     if not files: return -1, "Chờ Login..."
-    
     latest_file = max(files, key=os.path.getmtime)
-    mod_time = os.path.getmtime(latest_file)
     
-    # Ép đọc file JSON để bóc tên nhân vật
     player_name = "Chưa load"
     try:
         with open(latest_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            if "playerName" in data:
-                player_name = data["playerName"]
-    except Exception:
-        pass
+            if "playerName" in data: player_name = data["playerName"]
+    except Exception: pass
         
-    return mod_time, player_name
+    return os.path.getmtime(latest_file), player_name
 
 def launch_app_root(pkg):
-    """Hàm khởi động app clone an toàn qua Root + Monkey"""
-    os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
+    """Mở App tích hợp tính năng DeepLink xuyên thẳng vào PlaceID"""
+    if target_place_id:
+        # Cơ chế Android Intent gọi thẳng vào server game
+        cmd = f"su -c 'am start -n {pkg}/com.roblox.client.Activity -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" > /dev/null 2>&1'"
+    else:
+        # Cơ chế Monkey mở bình thường vào sảnh
+        cmd = f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'"
+    os.system(cmd)
 
 def start_auto_rejoin():
-    global selected_packages
+    global selected_packages, kill_all_time
     if not selected_packages:
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}"); time.sleep(2); return
 
@@ -295,24 +266,32 @@ def start_auto_rejoin():
             current_time = time.time()
             
             for pkg in selected_packages:
-                if current_time - states[pkg]['rejoin_time'] < 60:
-                    states[pkg]['text'] = f"Đang Load ({int(60 - (current_time - states[pkg]['rejoin_time']))}s)"
+                uptime_seconds = current_time - states[pkg]['rejoin_time']
+                uptime_minutes = uptime_seconds / 60
+
+                # 1. TÍNH NĂNG TIME KILL ALL
+                if kill_all_time > 0 and uptime_minutes >= kill_all_time:
+                    states[pkg]['text'] = f"Auto Restart ({kill_all_time}m)"
+                    states[pkg]['color'] = M
+                    os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
+                    time.sleep(1)
+                    launch_app_root(pkg)
+                    states[pkg]['rejoin_time'] = current_time
+                    continue
+
+                # 2. XỬ LÝ HEARTBEAT NHƯ BÌNH THƯỜNG
+                if uptime_seconds < 60:
+                    states[pkg]['text'] = f"Đang Load ({int(60 - uptime_seconds)}s)"
                     states[pkg]['color'] = Y
-                    
-                    # Vẫn thử lấy tên acc nếu nó load nhanh hơn 60s
                     _, p_name = get_heartbeat_data(pkg)
                     if p_name != "Chờ Login...": states[pkg]['name'] = p_name
                     continue
 
                 last_ping, player_name = get_heartbeat_data(pkg)
-                
-                # Cập nhật tên acc nếu lấy được
-                if player_name != "Chờ Login...":
-                    states[pkg]['name'] = player_name
+                if player_name != "Chờ Login...": states[pkg]['name'] = player_name
 
                 if last_ping == -1:
-                    diff = current_time - states[pkg]['rejoin_time']
-                    if diff > 150: 
+                    if uptime_seconds > 150: 
                         states[pkg]['text'] = f"Lỗi Load / Treo Màn!"
                         states[pkg]['color'] = R
                         os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
@@ -335,18 +314,15 @@ def start_auto_rejoin():
                         states[pkg]['text'] = f"Đang Farm ({int(diff)}s trước)"
                         states[pkg]['color'] = G
 
-            # --- VẼ KHUNG DASHBOARD 3 CỘT ---
+            # --- VẼ KHUNG DASHBOARD ---
             clear_screen()
             print_banner()
-            # Căn chỉnh kích thước cột: Tên(15) | Package(15) | Tình trạng(25)
             print(f"{C}{'INGAME NAME':<15} | {'PACKAGE INFO':<15} | {'TÌNH TRẠNG HIỆN TẠI':<25}{RESET}")
             print("-" * 65)
             
             for pkg in selected_packages:
-                # Xử lý cắt chuỗi nếu tên quá dài để bảng không bị vỡ form
                 s_name = states[pkg]['name']
                 if len(s_name) > 14: s_name = s_name[:11] + "..."
-                
                 s_pkg = pkg.split('.')[-1]
                 if len(s_pkg) > 14: s_pkg = s_pkg[:11] + "..."
                 
@@ -370,16 +346,18 @@ def main():
         print_banner()
         
         print(f"[{C}1{RESET}] Quét và Chọn Package Roblox")
-        print(f"[{C}2{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
-        print(f"[{C}3{RESET}] Login via Cookie {Y}(Cần Root){RESET}")
-        print(f"[{C}4{RESET}] Thoát")
+        print(f"[{C}2{RESET}] Cài đặt Game ID (PlaceID) & Time Kill All")
+        print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
+        print(f"[{C}4{RESET}] Login via Cookie (Nhập trực tiếp)")
+        print(f"[{C}5{RESET}] Thoát")
         
         choice = input(f"\n{M}HuDy > {RESET}").strip()
         
         if choice == '1': select_package_menu()
-        elif choice == '2': start_auto_rejoin()
-        elif choice == '3': login_via_cookie()
-        elif choice == '4': clear_screen(); break
+        elif choice == '2': settings_menu()
+        elif choice == '3': start_auto_rejoin()
+        elif choice == '4': login_via_cookie()
+        elif choice == '5': clear_screen(); break
 
 if __name__ == "__main__":
     main()
