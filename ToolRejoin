@@ -34,40 +34,28 @@ def print_banner():
     print("-" * 50)
 
 def scan_packages():
-    """Quét tất cả các package Roblox đã cài đặt trên Android (Có bypass Root cho Cloud Phone)"""
-    print(f"\n{C}[*] Đang quét hệ thống tìm Package Roblox...{RESET}")
+    """Quét TẤT CẢ các ứng dụng do người dùng cài (Bỏ qua app hệ thống)"""
+    print(f"\n{C}[*] Đang quét toàn bộ ứng dụng trên máy...{RESET}")
     packages = []
     
-    # CÁCH 1: Quét bằng lệnh pm thông thường
+    # Lệnh 'pm list packages -3' sẽ CHỈ liệt kê các app bạn tự tải về/cài đặt.
+    # Ưu tiên dùng quyền Root (su) cho Cloud Phone
     try:
-        output = subprocess.check_output("pm list packages", shell=True, text=True, stderr=subprocess.DEVNULL)
+        output = subprocess.check_output("su -c 'pm list packages -3'", shell=True, text=True, stderr=subprocess.DEVNULL)
         for line in output.splitlines():
-            if "roblox" in line.lower():
+            if "package:" in line:
                 packages.append(line.replace("package:", "").strip())
     except Exception:
-        pass
-        
-    # CÁCH 2: Ép dùng quyền Root (Bypass Android 11+ Package Visibility)
-    if not packages:
+        # Nếu Root lỗi thì thử chạy lệnh thường
         try:
-            output = subprocess.check_output("su -c 'pm list packages'", shell=True, text=True, stderr=subprocess.DEVNULL)
+            output = subprocess.check_output("pm list packages -3", shell=True, text=True, stderr=subprocess.DEVNULL)
             for line in output.splitlines():
-                if "roblox" in line.lower():
+                if "package:" in line:
                     packages.append(line.replace("package:", "").strip())
         except Exception:
             pass
-            
-    # CÁCH 3: Quét trực tiếp thư mục gốc (Dành cho các bản mod/clone cố tình giấu tên)
-    if not packages:
-        try:
-            output = subprocess.check_output("su -c 'ls /data/data/'", shell=True, text=True, stderr=subprocess.DEVNULL)
-            for line in output.splitlines():
-                if "roblox" in line.lower():
-                    packages.append(line.strip())
-        except Exception:
-            pass
 
-    # Lọc bỏ các kết quả bị trùng lặp và trả về danh sách
+    # Trả về danh sách đã được làm sạch
     return list(set(packages))
 
 def select_package_menu():
