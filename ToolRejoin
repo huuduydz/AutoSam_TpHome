@@ -195,26 +195,28 @@ def get_heartbeat_data(pkg):
     return os.path.getmtime(latest_file), player_name
 
 def launch_app_root(pkg):
-    """Mở App trực tiếp, loại bỏ delay chờ Cookie"""
-    main_act = ""
-    try:
-        out = subprocess.check_output(f"su -c 'cmd package resolve-activity --brief {pkg}'", shell=True, text=True, stderr=subprocess.DEVNULL)
-        lines = out.strip().split('\n')
-        if len(lines) > 0 and '/' in lines[-1]:
-            main_act = lines[-1].strip()
-    except Exception:
-        pass
-        
+    """Khởi động App và dùng chiến thuật 'rải thảm' để ép DeepLink xuyên thẳng vào Map"""
+    
+    # 1. Gọi App khởi động lên sảnh trước bằng Monkey (Đảm bảo app luôn mở được)
+    os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
+    
+    # 2. Bắn DeepLink nếu bạn có cài đặt Game ID
     if target_place_id:
-        if main_act:
-            os.system(f"su -c 'am start -n {main_act} -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" > /dev/null 2>&1'")
-        else:
-            os.system(f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" > /dev/null 2>&1'")
-    else:
-        if main_act:
-            os.system(f"su -c 'am start -n {main_act} > /dev/null 2>&1'")
-        else:
-            os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
+        # Tăng thời gian chờ lên 7 giây để Sảnh load xong hoàn toàn (Cloud Phone xử lý nhiều clone sẽ hơi chậm)
+        time.sleep(7) 
+        
+        # --- CHIẾN THUẬT RẢI THẢM 3 LỆNH CHỐNG TRƯỢT ---
+        
+        # Kiểu 1: Cờ -p chuẩn mực của Android
+        os.system(f"su -c 'am start -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" -p {pkg} > /dev/null 2>&1'")
+        time.sleep(1.5)
+        
+        # Kiểu 2: Cờ package truyền thống (Phù hợp với các bản Clone dị)
+        os.system(f"su -c 'am start -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" {pkg} > /dev/null 2>&1'")
+        time.sleep(1.5)
+        
+        # Kiểu 3: Dùng sơ đồ robloxmobile:// (Chuyên trị bản VNG gốc)
+        os.system(f"su -c 'am start -a android.intent.action.VIEW -d \"robloxmobile://placeId={target_place_id}\" -p {pkg} > /dev/null 2>&1'")
 
 def start_auto_rejoin():
     global selected_packages, kill_all_time
