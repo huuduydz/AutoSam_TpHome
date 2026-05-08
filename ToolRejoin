@@ -56,7 +56,6 @@ M = '\033[95m'
 RESET = '\033[0m'
 
 selected_packages = [] 
-# GÁN MẶC ĐỊNH ID GAME THEO YÊU CẦU ĐỂ TỐI ƯU SETUP
 target_place_id = "4520749081"  
 kill_all_time = 0     
 json_path_cache = {}
@@ -71,7 +70,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Merge Injector (Fix Logout VNG){RESET}")
+    print(f"{G}Core: {Y}Native Bash Injector (Fix 100% Crash/Sập Game){RESET}")
     
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
@@ -289,7 +288,7 @@ def force_restart_app(pkg, states, current_time, reason_text, color_code):
     states[pkg]['rejoin_time'] = current_time
 
 # =====================================================================
-# HÀM MỚI: BƠM COOKIE BẰNG PYTHON SCRIPT (GIỮ NGUYÊN BẢO MẬT VNG)
+# HÀM MỚI: BƠM COOKIE BẰNG NATIVE BASH (CHỐNG SẬP GAME 100%)
 # =====================================================================
 def login_via_cookie():
     global selected_packages
@@ -298,7 +297,7 @@ def login_via_cookie():
         time.sleep(2)
         return
 
-    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (PYTHON MERGE) ---{RESET}")
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (NATIVE BASH INJECTOR) ---{RESET}")
     print(f"{Y}Lưu ý 1: Máy BẮT BUỘC ĐÃ ROOT.{RESET}")
     print(f"{M}Lưu ý 2: Nếu IP lấy Cookie KHÁC IP mạng của máy ảo, tài khoản vẫn sẽ bị văng!{RESET}")
     
@@ -310,6 +309,9 @@ def login_via_cookie():
         print(f"{R}[!] Cookie không hợp lệ!{RESET}")
         time.sleep(2)
         return
+        
+    # Xử lý ký tự đặc biệt cho Bash an toàn tuyệt đối
+    cookie_safe = cookie.replace('"', '\\"').replace('$', '\\$')
 
     for item in selected_packages:
         pkg = item['pkg']
@@ -325,70 +327,53 @@ def login_via_cookie():
             time.sleep(1)
         print()
         
-        # BƯỚC 2: TẠO SCRIPT PYTHON INJECT ĐỂ HỢP NHẤT FILE XML
+        # BƯỚC 2: TIÊM COOKIE BẰNG LỆNH LÕI ANDROID (GREP & ECHO)
         print(f"{Y}[*] Đang tiêm Cookie vào {pkg}...{RESET}")
         
-        injector_code = f"""import os
-import re
-
-pkg = "{pkg}"
-cookie = "{cookie}"
-prefs_dir = f"/data/data/{{pkg}}/shared_prefs"
-
-if not os.path.exists(prefs_dir):
-    os.makedirs(prefs_dir)
-
-target_files = ["com.roblox.client_preferences.xml", "com.vng.robloxclient_preferences.xml", f"{{pkg}}_preferences.xml"]
-
-for mf in target_files:
-    path = os.path.join(prefs_dir, mf)
-    content = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\\n<map>\\n</map>"
-    
-    if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            content = f.read()
-    
-    # Quét sạch Cookie cũ nếu có
-    content = re.sub(r'<string name="ROBLOSECURITY">.*?</string>', '', content)
-    
-    # Tiêm Cookie mới vào cuối file nhưng nằm TRONG thẻ <map>
-    insert_str = f'\\n    <string name="ROBLOSECURITY">{{cookie}}</string>\\n'
-    content = content.replace('</map>', insert_str + '</map>')
-    
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(content)
-
-# Trả lại quyền sở hữu (Ownership) cho App để chống lỗi SELinux
-try:
-    stat_info = os.stat(f"/data/data/{{pkg}}")
-    uid = stat_info.st_uid
-    gid = stat_info.st_gid
-    for root_dir, dirs, files in os.walk(prefs_dir):
-        os.chown(root_dir, uid, gid)
-        for d in dirs:
-            os.chown(os.path.join(root_dir, d), uid, gid)
-        for f in files:
-            os.chown(os.path.join(root_dir, f), uid, gid)
-            os.chmod(os.path.join(root_dir, f), 0o660)
-except Exception:
-    pass
-"""
-        # Lưu file Python trực tiếp vào Home của Termux (Bypass cấm quyền ổ cứng)
-        temp_py = os.path.expanduser("~/injector_hudy.py")
-        try:
-            with open(temp_py, "w", encoding="utf-8") as f:
-                f.write(injector_code)
-        except Exception as e:
-            print(f"{R}[!] Lỗi tạo file Injector: {e}{RESET}")
-            continue
-
-        # Chạy file Python bằng nhân Python của Termux thông qua quyền Root
         root_cmd = f"""su -c "
         am force-stop {pkg} > /dev/null 2>&1
         sleep 1
-        /data/data/com.termux/files/usr/bin/python {temp_py}
-        restorecon -R /data/data/{pkg}/shared_prefs > /dev/null 2>&1
-        rm -f {temp_py}
+        
+        PREFS_DIR='/data/data/{pkg}/shared_prefs'
+        mkdir -p \\$PREFS_DIR
+        
+        # Dọn rác bộ nhớ đệm (Chống lỗi Crash do WebCache)
+        rm -rf /data/data/{pkg}/cache/*
+        
+        # Tìm lại chính xác UID chủ nhân của App Clone
+        APP_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | awk -F'=' '{{print \\$2}}' | awk '{{print \\$1}}')
+        if [ -z \\"\\$APP_UID\\" ]; then
+            APP_UID=\\$(stat -c '%u' /data/data/{pkg} 2>/dev/null)
+        fi
+        
+        for FILE in 'com.roblox.client_preferences.xml' 'com.vng.robloxclient_preferences.xml' '{pkg}_preferences.xml'; do
+            PATH_FILE=\\"\\$PREFS_DIR/\\$FILE\\"
+            
+            # Tạo mới chuẩn chỉnh nếu file rỗng hoặc chưa có
+            if [ ! -s \\"\\$PATH_FILE\\" ]; then
+                echo \\"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\\" > \\"\\$PATH_FILE\\"
+                echo \\"<map>\\" >> \\"\\$PATH_FILE\\"
+                echo \\"</map>\\" >> \\"\\$PATH_FILE\\"
+            fi
+            
+            # Quét sạch Cookie cũ và Thẻ đóng </map> ra file tạm
+            grep -v 'name=\\"ROBLOSECURITY\\"' \\"\\$PATH_FILE\\" | grep -v '</map>' > \\"\\$PATH_FILE.tmp\\"
+            
+            # Nối Cookie mới vào
+            echo '    <string name=\\"ROBLOSECURITY\\">{cookie_safe}</string>' >> \\"\\$PATH_FILE.tmp\\"
+            
+            # Khóa thẻ đóng lại an toàn
+            echo \\"</map>\\" >> \\"\\$PATH_FILE.tmp\\"
+            
+            # Ghi đè file chính
+            mv \\"\\$PATH_FILE.tmp\\" \\"\\$PATH_FILE\\"
+        done
+        
+        # Trao lại chìa khóa cho App
+        chown -R \\$APP_UID:\\$APP_UID \\$PREFS_DIR
+        chmod 771 \\$PREFS_DIR
+        chmod 660 \\$PREFS_DIR/*.xml
+        restorecon -R \\$PREFS_DIR > /dev/null 2>&1
         " """
         
         os.system(root_cmd) 
