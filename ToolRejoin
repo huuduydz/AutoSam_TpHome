@@ -5,7 +5,58 @@ import glob
 import re
 import json
 import sys
+import builtins
 from datetime import datetime
+
+# =====================================================================
+# BẢN VÁ TỐI THƯỢNG: CHỐNG VỠ KHUNG BẬC THANG & CHỐNG LIỆT PHÍM
+# =====================================================================
+# 1. Ép Python luôn dùng \r\n để chống vỡ khung (Staircase Effect)
+_original_print = builtins.print
+def safe_print(*args, **kwargs):
+    if 'end' not in kwargs:
+        kwargs['end'] = '\r\n'
+    _original_print(*args, **kwargs)
+builtins.print = safe_print
+
+# 2. Lưu trạng thái bàn phím chuẩn để khôi phục khi bị Root cướp quyền
+try:
+    import termios
+    OLD_TTY = termios.tcgetattr(sys.stdin.fileno())
+except Exception:
+    OLD_TTY = None
+
+def fix_tty():
+    """Hàm "Thần chú" giải cứu bàn phím bị đơ và khôi phục hiển thị"""
+    try:
+        if OLD_TTY:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, OLD_TTY)
+        else:
+            os.system("stty sane 2>/dev/null")
+    except:
+        pass
+
+def safe_root(cmd):
+    """Cách ly lệnh Root trong lồng kính, cấm chạm vào giao diện Termux"""
+    try:
+        subprocess.run(
+            cmd, 
+            shell=True, 
+            stdin=subprocess.DEVNULL, 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL
+        )
+    except:
+        pass
+    finally:
+        fix_tty() # Khôi phục bàn phím ngay lập tức
+
+def clear_screen():
+    fix_tty()
+    sys.stdout.write('\033[2J\033[H\r')
+    sys.stdout.flush()
+# =====================================================================
 
 # --- MÃ MÀU GIAO DIỆN ---
 C = '\033[96m'  
@@ -18,27 +69,7 @@ RESET = '\033[0m'
 selected_packages = []
 target_place_id = ""  
 kill_all_time = 0     
-
-# --- BỘ NHỚ ĐỆM (CACHE) ---
 json_path_cache = {}
-
-def safe_root(cmd):
-    """HÀM QUAN TRỌNG: Cách ly hoàn toàn lệnh Root để chống liệt phím và vỡ UI bậc thang"""
-    try:
-        subprocess.run(
-            cmd, 
-            shell=True, 
-            stdin=subprocess.DEVNULL,  # Ngăn Root cướp bàn phím
-            stdout=subprocess.DEVNULL, # Ngăn Root in rác ra màn hình
-            stderr=subprocess.DEVNULL
-        )
-    except Exception:
-        pass
-
-def clear_screen():
-    # Xóa mượt + ép con trỏ về góc trái trên cùng để chống vỡ khung
-    sys.stdout.write('\033[2J\033[H\r')
-    sys.stdout.flush()
 
 def print_banner():
     banner = f"""{C}
@@ -50,7 +81,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Async Boot + I/O Cache + Safe Root TTY (Anti-Lag){RESET}")
+    print(f"{G}Core: {Y}Async Boot + Termios Anti-Freeze (Siêu Mượt){RESET}")
     
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
@@ -67,6 +98,7 @@ def settings_menu():
     global target_place_id, kill_all_time
     print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
     
+    fix_tty()
     p_id_raw = input(f"{M}Nhập Place ID (VD Blox Fruits: 2753915549) [Bỏ trống để vào sảnh]: {RESET}").strip()
     if p_id_raw == "":
         target_place_id = ""
@@ -79,6 +111,7 @@ def settings_menu():
         else:
             print(f"{R}[!] ID không hợp lệ, giữ nguyên cấu hình cũ.{RESET}")
 
+    fix_tty()
     k_time_raw = input(f"{M}Nhập thời gian Auto Restart (Tính bằng Phút, nhập 0 để Tắt): {RESET}").strip()
     if k_time_raw != "":
         numbers_time = re.findall(r'\d+', k_time_raw)
@@ -95,22 +128,26 @@ def settings_menu():
 def scan_packages():
     packages = []
     try:
-        # Chặn cổng stdin lúc quét app để không dính lỗi liệt phím ở Menu
+        # Ưu tiên quét không cần Root để tránh làm loạn Termux
         output = subprocess.check_output(
-            "su -c 'pm list packages -3'", 
+            "pm list packages -3", 
             shell=True, 
             text=True, 
-            stderr=subprocess.DEVNULL, 
-            stdin=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL
         )
-        for line in output.splitlines():
-            if "package:" in line:
-                packages.append(line.replace("package:", "").strip())
     except Exception:
-        pass
+        try:
+            output = subprocess.check_output(
+                "su -c 'pm list packages -3'", 
+                shell=True, text=True, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL
+            )
+        except:
+            output = ""
 
-    # Kéo terminal về trạng thái chuẩn an toàn
-    os.system("stty sane < /dev/tty > /dev/null 2>&1")
+    fix_tty()
+    for line in output.splitlines():
+        if "package:" in line:
+            packages.append(line.replace("package:", "").strip())
 
     cleaned_packages = []
     for p in list(set(packages)):
@@ -131,6 +168,7 @@ def select_package_menu():
         print(f"[{i}] {pkg}")
     
     try:
+        fix_tty()
         print(f"\n{C}💡 Nhập nhiều số cách nhau bởi khoảng trắng (VD: 1 3 5){RESET}")
         choice_str = input(f"{M}Chọn số thứ tự Package: {RESET}")
         
@@ -251,9 +289,6 @@ def start_auto_rejoin():
             'name': 'Chờ Load/Login...'
         }
 
-    # Sửa TTY lần cuối trước khi vào vòng lặp vô tận
-    os.system("stty sane < /dev/tty > /dev/null 2>&1")
-
     while True:
         try:
             current_time = time.time()
@@ -341,12 +376,13 @@ def start_auto_rejoin():
 
         except KeyboardInterrupt:
             print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
-            os.system("stty sane < /dev/tty > /dev/null 2>&1")
+            fix_tty()
             break
         except Exception as e:
             time.sleep(3)
 
 def main():
+    fix_tty()
     while True:
         clear_screen()
         print_banner()
@@ -356,11 +392,11 @@ def main():
         print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
         print(f"[{C}4{RESET}] Thoát")
         
-        # Bắt ngoại lệ để tránh lỗi EOF khi bàn phím bị kẹt nhẹ
         try:
+            fix_tty()
             choice = input(f"\n{M}HuDy > {RESET}").strip()
         except EOFError:
-            os.system("stty sane < /dev/tty > /dev/null 2>&1")
+            fix_tty()
             continue
         
         if choice == '1': select_package_menu()
@@ -369,10 +405,7 @@ def main():
         elif choice == '4': 
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
-            os.system("stty sane < /dev/tty > /dev/null 2>&1")
             break
 
 if __name__ == "__main__":
-    # Đảm bảo terminal được reset chuẩn ngay khi bắt đầu
-    os.system("stty sane < /dev/tty > /dev/null 2>&1")
     main()
