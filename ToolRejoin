@@ -246,24 +246,35 @@ def get_heartbeat_data(pkg):
     return os.path.getmtime(latest_file), player_name
 
 def launch_app_root(pkg):
-    """Mở App tích hợp tính năng DeepLink xuyên thẳng vào PlaceID (Bypass Lỗi Clone)"""
-    if target_place_id:
-        # Lệnh Root thần thánh: Tự mò tên cổng chính (Activity) của Clone để bắn DeepLink
-        root_cmd = f"""su -c "
-        MAIN_ACT=\\$(dumpsys package {pkg} | grep -A 2 'android.intent.action.MAIN' | grep {pkg} | head -n 1 | awk '{{print \\$2}}')
+    """Khởi động App qua 2 bước: Làm ấm (để nhận Cookie) -> Bắn DeepLink"""
+    
+    # Bước 1: Dùng Python thuần bới tìm cổng khởi động chính xác của Clone (Main Activity)
+    main_act = ""
+    try:
+        out = subprocess.check_output(f"su -c 'cmd package resolve-activity --brief {pkg}'", shell=True, text=True, stderr=subprocess.DEVNULL)
+        lines = out.strip().split('\n')
+        if len(lines) > 0 and '/' in lines[-1]:
+            main_act = lines[-1].strip()
+    except Exception:
+        pass
         
-        if [ -z \\"\\$MAIN_ACT\\" ]; then
-            # Nếu không tìm thấy, ép mở bằng Monkey (vào sảnh)
-            monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1
-        else
-            # Bắn DeepLink thẳng vào Activity gốc đã tìm được
-            am start -n \\$MAIN_ACT -a android.intent.action.VIEW -d \\"roblox://placeId={target_place_id}\\" > /dev/null 2>&1
-        fi
-        " """
-        os.system(root_cmd)
+    # Bước 2: Ép mở App lên sảnh trước để nó tiêu thụ Cookie (Cold Start)
+    if main_act:
+        os.system(f"su -c 'am start -n {main_act} > /dev/null 2>&1'")
     else:
-        # Cơ chế Monkey mở bình thường vào sảnh
         os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
+        
+    # Bước 3: Nếu có cài đặt ID Game, chờ App load Cookie xong mới bắn DeepLink xuyên thẳng vào Map
+    if target_place_id:
+        # Chờ 4 giây cho game kịp Login bằng Cookie vừa nhét
+        time.sleep(4) 
+        
+        if main_act:
+            # Bắn DeepLink đích danh vào cổng chính của bản Clone
+            os.system(f"su -c 'am start -n {main_act} -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" > /dev/null 2>&1'")
+        else:
+            # Dự phòng bằng cờ -p chuẩn của Android
+            os.system(f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" > /dev/null 2>&1'")
 
 def start_auto_rejoin():
     global selected_packages, kill_all_time
