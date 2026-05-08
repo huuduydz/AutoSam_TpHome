@@ -46,29 +46,37 @@ def print_banner():
     print("-" * 65)
 
 def settings_menu():
-    """Menu cài đặt ID Game và Thời gian Restart"""
+    """Menu cài đặt ID Game và Thời gian Restart (Đã fix lỗi gõ nhầm ký tự)"""
     global target_place_id, kill_all_time
     print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
     
-    p_id = input(f"{M}Nhập Place ID (VD Blox Fruits: 2753915549) [Bỏ trống để vào sảnh]: {RESET}").strip()
-    if p_id.isdigit():
-        target_place_id = p_id
-        print(f"{G}[+] Đã lưu cấu hình vào thẳng Game ID: {target_place_id}{RESET}")
-    elif p_id == "":
+    p_id_raw = input(f"{M}Nhập Place ID (VD Blox Fruits: 2753915549) [Bỏ trống để vào sảnh]: {RESET}").strip()
+    
+    if p_id_raw == "":
         target_place_id = ""
         print(f"{Y}[*] Đã xóa Place ID, App sẽ mở vào màn hình chính.{RESET}")
     else:
-        print(f"{R}[!] ID không hợp lệ, giữ nguyên cấu hình cũ.{RESET}")
-
-    k_time = input(f"{M}Nhập thời gian Auto Restart (Tính bằng Phút, nhập 0 để Tắt): {RESET}").strip()
-    if k_time.isdigit():
-        kill_all_time = int(k_time)
-        if kill_all_time > 0:
-            print(f"{G}[+] Tool sẽ tự động Kill và Rejoin mỗi {kill_all_time} phút.{RESET}")
+        # Dùng Regex lọc lấy toàn bộ các con số, mặc kệ ký tự rác như ^[
+        numbers = re.findall(r'\d+', p_id_raw)
+        if numbers:
+            target_place_id = numbers[0]
+            print(f"{G}[+] Đã lưu cấu hình vào thẳng Game ID: {target_place_id}{RESET}")
         else:
-            print(f"{Y}[*] Đã TẮT tính năng Auto Restart (Chỉ Rejoin khi văng).{RESET}")
+            print(f"{R}[!] ID không có chữ số nào, giữ nguyên cấu hình cũ.{RESET}")
+
+    k_time_raw = input(f"{M}Nhập thời gian Auto Restart (Tính bằng Phút, nhập 0 để Tắt): {RESET}").strip()
+    if k_time_raw == "":
+        pass # Bỏ qua nếu người dùng lỡ bấm Enter không nhập gì
     else:
-        print(f"{R}[!] Số phút không hợp lệ.{RESET}")
+        numbers_time = re.findall(r'\d+', k_time_raw)
+        if numbers_time:
+            kill_all_time = int(numbers_time[0])
+            if kill_all_time > 0:
+                print(f"{G}[+] Tool sẽ tự động Kill và Rejoin mỗi {kill_all_time} phút.{RESET}")
+            else:
+                print(f"{Y}[*] Đã TẮT tính năng Auto Restart (Chỉ Rejoin khi văng).{RESET}")
+        else:
+            print(f"{R}[!] Số phút không hợp lệ.{RESET}")
     
     time.sleep(2)
 
