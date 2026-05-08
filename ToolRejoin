@@ -91,7 +91,7 @@ def select_package_menu():
         pass
 
 def login_via_cookie():
-    """Ép đăng nhập Roblox bằng danh sách Cookie từ file cookie.txt"""
+    """Ép đăng nhập Roblox bằng danh sách Cookie từ file cookie.txt (Đã fix đường dẫn tuyệt đối)"""
     global selected_packages
     if not selected_packages:
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
@@ -101,38 +101,37 @@ def login_via_cookie():
     print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (ĐỌC TỪ FILE) ---{RESET}")
     print(f"{Y}Lưu ý: Tính năng này yêu cầu máy ĐÃ ROOT (Magisk/KernelSU).{RESET}")
     
-    # 1. Đọc file cookie.txt
-    # Lấy đường dẫn thư mục hiện tại chứa file hudy.py
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    cookie_file_path = os.path.join(current_dir, "cookie.txt")
+    # [BẢN VÁ QUAN TRỌNG]: Ép thẳng đường dẫn ra ngoài thư mục Download của điện thoại
+    cookie_file_path = "/sdcard/Download/HuDy_Tool/cookie.txt"
     
+    # Kiểm tra xem thư mục HuDy_Tool có tồn tại chưa, chưa có thì tạo
+    os.system("mkdir -p /sdcard/Download/HuDy_Tool")
+
     if not os.path.exists(cookie_file_path):
-        print(f"{R}[!] Không tìm thấy file 'cookie.txt' ở thư mục hiện tại!{RESET}")
-        print(f"{Y}[*] Tool đã tự động tạo file này. Hãy dán Cookie vào đó rồi chạy lại nhé!{RESET}")
-        # Tự tạo file nếu chưa có
+        print(f"{R}[!] Không tìm thấy file 'cookie.txt' ở /sdcard/Download/HuDy_Tool/ !{RESET}")
+        print(f"{Y}[*] Tool đã tự tạo file này. Hãy mở MT Manager dán Cookie vào đó rồi chạy lại nhé!{RESET}")
         with open(cookie_file_path, "w", encoding="utf-8") as f:
             f.write("")
-        time.sleep(3)
+        time.sleep(4)
         return
 
     # Đọc Cookie từ file
     with open(cookie_file_path, "r", encoding="utf-8") as f:
-        # Lấy dòng đầu tiên không trống
         cookies = [line.strip() for line in f if line.strip()]
         
     if not cookies:
-        print(f"{R}[!] File 'cookie.txt' đang trống! Vui lòng dán Cookie vào file.{RESET}")
+        print(f"{R}[!] File 'cookie.txt' đang trống! Vui lòng mở MT Manager và dán Cookie vào.{RESET}")
         time.sleep(3)
         return
         
-    cookie = cookies[0] # Tạm thời lấy Cookie đầu tiên để nhét cho các app (có thể nâng cấp nhét nhiều cookie sau)
+    cookie = cookies[0] 
 
     if not cookie.startswith("_|WARNING"):
         print(f"{R}[!] Cookie trong file không hợp lệ! (Phải bắt đầu bằng _|WARNING){RESET}")
         time.sleep(2)
         return
 
-    print(f"{G}[+] Đã đọc thành công Cookie từ file!{RESET}")
+    print(f"{G}[+] Đã đọc thành công Cookie từ /sdcard/Download/HuDy_Tool/cookie.txt!{RESET}")
     print(f"{C}[*] Đang tạo cấu hình XML...{RESET}")
     
     xml_content = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
@@ -179,7 +178,6 @@ def login_via_cookie():
     os.system(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
     print(f"\n{G}[+] Đã hoàn thành Inject! Xóa trắng file cookie.txt để bảo mật...{RESET}")
     
-    # Xóa nội dung file cookie sau khi dùng xong để tránh lộ lọt
     with open(cookie_file_path, "w", encoding="utf-8") as f:
         f.write("")
         
