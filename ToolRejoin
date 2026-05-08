@@ -71,7 +71,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Strict 150s Grace Period + 30s Safe DeepLink{RESET}")
+    print(f"{G}Core: {Y}Strict 150s Grace Period + SELinux Cookie Inject{RESET}")
     
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
@@ -288,8 +288,10 @@ def force_restart_app(pkg, states, current_time, reason_text, color_code):
     states[pkg]['boot_timer'] = current_time
     states[pkg]['rejoin_time'] = current_time
 
+# =====================================================================
+# HÀM MỚI: BƠM COOKIE HOÀN CHỈNH BẢO MẬT SELINUX & UID
+# =====================================================================
 def login_via_cookie():
-    """Ép đăng nhập Roblox bằng Cookie (Nhập trực tiếp trên Termux)"""
     global selected_packages
     if not selected_packages:
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
@@ -298,10 +300,13 @@ def login_via_cookie():
 
     print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (NHẬP TRỰC TIẾP) ---{RESET}")
     print(f"{Y}Lưu ý 1: Máy BẮT BUỘC ĐÃ ROOT.{RESET}")
-    print(f"{Y}Lưu ý 2: Nếu Cloud Phone khác IP mạng lúc lấy Cookie, Cookie có thể chết ngay lập tức!{RESET}")
+    print(f"{M}Lưu ý 2: Nếu IP lấy Cookie KHÁC IP mạng của máy ảo, tài khoản sẽ bị văng ra Login!{RESET}")
     
     fix_tty()
     cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+    
+    # [QUAN TRỌNG] Lọc rác CRLF khi dán từ bộ nhớ đệm
+    cookie = cookie.replace('\r', '').replace('\n', '').strip()
 
     if not cookie.startswith("_|WARNING"):
         print(f"{R}[!] Cookie không hợp lệ! (Phải bắt đầu bằng _|WARNING){RESET}")
@@ -309,12 +314,11 @@ def login_via_cookie():
         return
 
     print(f"{C}[*] Đang tạo cấu hình XML...{RESET}")
-    xml_content = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<map>
-    <string name="ROBLOSECURITY">{cookie}</string>
-</map>"""
+    
+    # Sinh file vào thư mục nội bộ của Termux để lách luật Storage Permission
+    temp_file = os.path.expanduser("~/temp_roblox_cookie.xml")
+    xml_content = f"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n    <string name=\"ROBLOSECURITY\">{cookie}</string>\n</map>"
 
-    temp_file = "/sdcard/Download/temp_roblox_cookie.xml"
     try:
         with open(temp_file, "w", encoding="utf-8") as f:
             f.write(xml_content)
@@ -327,29 +331,37 @@ def login_via_cookie():
         pkg = item['pkg']
         print(f"{Y}[*] Đang Inject Cookie vào {pkg}...{RESET}")
         
+        # Script Bash thần thánh: Fix toàn bộ lỗi Ownership + SELinux
         root_cmd = f"""su -c "
-        am force-stop {pkg}
+        am force-stop {pkg} > /dev/null 2>&1
         
-        mkdir -p /data/data/{pkg}/shared_prefs/
+        PREFS_DIR='/data/data/{pkg}/shared_prefs'
+        mkdir -p \\$PREFS_DIR
         
-        APP_OWNER=\\$(stat -c '%u:%g' /data/data/{pkg})
+        # Lấy chính xác Mã định danh (UID) của App
+        APP_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | awk -F'=' '{{print \\$2}}' | awk '{{print \\$1}}')
+        if [ -z \\"\\$APP_UID\\" ]; then
+            APP_UID=\\$(stat -c '%u' /data/data/{pkg} 2>/dev/null)
+        fi
         
-        rm -f /data/data/{pkg}/shared_prefs/*.bak
+        # Xóa Cache & Bản sao lưu tránh app dùng lại file cũ
         rm -rf /data/data/{pkg}/app_v2
         rm -rf /data/data/{pkg}/cache
+        rm -f \\$PREFS_DIR/*.bak
         
-        cp {temp_file} /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
-        cp {temp_file} /data/data/{pkg}/shared_prefs/com.vng.robloxclient_preferences.xml
-        cp {temp_file} /data/data/{pkg}/shared_prefs/{pkg}_preferences.xml
+        # Bơm file cấu hình
+        cp '{temp_file}' \\$PREFS_DIR/com.roblox.client_preferences.xml
+        cp '{temp_file}' \\$PREFS_DIR/com.vng.robloxclient_preferences.xml
+        cp '{temp_file}' \\$PREFS_DIR/{pkg}_preferences.xml
         
-        chown -R \\$APP_OWNER /data/data/{pkg}/shared_prefs/
-        chmod 771 /data/data/{pkg}/shared_prefs/
-        chmod 660 /data/data/{pkg}/shared_prefs/*.xml
-        
-        restorecon -R /data/data/{pkg}/shared_prefs/ 2>/dev/null
+        # Cứu hộ quyền SELinux + Ép quyền tuyệt đối
+        chown -R \\$APP_UID:\\$APP_UID \\$PREFS_DIR
+        chmod 771 \\$PREFS_DIR
+        chmod 660 \\$PREFS_DIR/*.xml
+        restorecon -R \\$PREFS_DIR > /dev/null 2>&1
         " """
         
-        safe_root(root_cmd)
+        os.system(root_cmd) # Dùng os.system để String truyền tải chuẩn không bị mất lệnh
         print(f"{G}[+] Inject {pkg} hoàn tất! Đang khởi động App...{RESET}")
         trigger_boot_step_1(pkg)
         time.sleep(2)
