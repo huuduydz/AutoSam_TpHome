@@ -33,56 +33,7 @@ def print_banner():
     print(f"{G}Target Package: {Y}{pkg_display}{RESET}")
     print("-" * 50)
 
-def scan_packages():
-    """Quét TẤT CẢ các ứng dụng do người dùng cài (Bỏ qua app hệ thống)"""
-    print(f"\n{C}[*] Đang quét toàn bộ ứng dụng trên máy...{RESET}")
-    packages = []
-    
-    # Lệnh 'pm list packages -3' sẽ CHỈ liệt kê các app bạn tự tải về/cài đặt.
-    # Ưu tiên dùng quyền Root (su) cho Cloud Phone
-    try:
-        output = subprocess.check_output("su -c 'pm list packages -3'", shell=True, text=True, stderr=subprocess.DEVNULL)
-        for line in output.splitlines():
-            if "package:" in line:
-                packages.append(line.replace("package:", "").strip())
-    except Exception:
-        # Nếu Root lỗi thì thử chạy lệnh thường
-        try:
-            output = subprocess.check_output("pm list packages -3", shell=True, text=True, stderr=subprocess.DEVNULL)
-            for line in output.splitlines():
-                if "package:" in line:
-                    packages.append(line.replace("package:", "").strip())
-        except Exception:
-            pass
 
-    # Trả về danh sách đã được làm sạch
-    return list(set(packages))
-
-def select_package_menu():
-    global selected_package
-    packages = scan_packages()
-    
-    if not packages:
-        print(f"{R}[!] Không tìm thấy bất kỳ app Roblox nào được cài đặt!{RESET}")
-        time.sleep(2)
-        return
-
-    print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
-    for i, pkg in enumerate(packages, 1):
-        print(f"[{i}] {pkg}")
-    
-    try:
-        choice = int(input(f"\n{M}Chọn số thứ tự Package muốn chạy: {RESET}"))
-        if 1 <= choice <= len(packages):
-            selected_package = packages[choice - 1]
-            print(f"{G}[+] Đã chọn: {selected_package}{RESET}")
-            time.sleep(1)
-        else:
-            print(f"{R}[!] Lựa chọn không hợp lệ!{RESET}")
-            time.sleep(1)
-    except ValueError:
-        print(f"{R}[!] Vui lòng nhập số!{RESET}")
-        time.sleep(1)
 
 def login_via_cookie():
     """Ép đăng nhập Roblox bằng Cookie (Yêu Cầu Root)"""
