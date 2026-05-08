@@ -91,23 +91,50 @@ def select_package_menu():
         pass
 
 def login_via_cookie():
-    """Ép đăng nhập Roblox bằng Cookie (Bản Fix Lỗi Quyền Sở Hữu Thư Mục)"""
+    """Ép đăng nhập Roblox bằng danh sách Cookie từ file cookie.txt"""
     global selected_packages
     if not selected_packages:
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
         time.sleep(2)
         return
 
-    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE ---{RESET}")
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (ĐỌC TỪ FILE) ---{RESET}")
     print(f"{Y}Lưu ý: Tính năng này yêu cầu máy ĐÃ ROOT (Magisk/KernelSU).{RESET}")
-    cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+    
+    # 1. Đọc file cookie.txt
+    # Lấy đường dẫn thư mục hiện tại chứa file hudy.py
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    cookie_file_path = os.path.join(current_dir, "cookie.txt")
+    
+    if not os.path.exists(cookie_file_path):
+        print(f"{R}[!] Không tìm thấy file 'cookie.txt' ở thư mục hiện tại!{RESET}")
+        print(f"{Y}[*] Tool đã tự động tạo file này. Hãy dán Cookie vào đó rồi chạy lại nhé!{RESET}")
+        # Tự tạo file nếu chưa có
+        with open(cookie_file_path, "w", encoding="utf-8") as f:
+            f.write("")
+        time.sleep(3)
+        return
+
+    # Đọc Cookie từ file
+    with open(cookie_file_path, "r", encoding="utf-8") as f:
+        # Lấy dòng đầu tiên không trống
+        cookies = [line.strip() for line in f if line.strip()]
+        
+    if not cookies:
+        print(f"{R}[!] File 'cookie.txt' đang trống! Vui lòng dán Cookie vào file.{RESET}")
+        time.sleep(3)
+        return
+        
+    cookie = cookies[0] # Tạm thời lấy Cookie đầu tiên để nhét cho các app (có thể nâng cấp nhét nhiều cookie sau)
 
     if not cookie.startswith("_|WARNING"):
-        print(f"{R}[!] Cookie không hợp lệ! (Phải bắt đầu bằng _|WARNING){RESET}")
+        print(f"{R}[!] Cookie trong file không hợp lệ! (Phải bắt đầu bằng _|WARNING){RESET}")
         time.sleep(2)
         return
 
+    print(f"{G}[+] Đã đọc thành công Cookie từ file!{RESET}")
     print(f"{C}[*] Đang tạo cấu hình XML...{RESET}")
+    
     xml_content = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
     <string name="ROBLOSECURITY">{cookie}</string>
@@ -125,34 +152,22 @@ def login_via_cookie():
     for pkg in selected_packages:
         print(f"{Y}[*] Đang Inject Cookie vào {pkg}...{RESET}")
         
-        # CHUỖI LỆNH ROOT ĐƯỢC TỐI ƯU HÓA HOÀN TOÀN
         root_cmd = f"""su -c "
         am force-stop {pkg}
-        
-        # 1. Tạo thư mục nếu chưa có
         mkdir -p /data/data/{pkg}/shared_prefs/
-        
-        # 2. Xóa các file backup ngầm và thư mục nhớ tạm của Roblox để ép nhận Cookie mới
         rm -f /data/data/{pkg}/shared_prefs/*.bak
         rm -rf /data/data/{pkg}/app_v2
         rm -rf /data/data/{pkg}/cache
         
-        # 3. Rải thảm file XML cấu hình
         cp {temp_file} /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
         cp {temp_file} /data/data/{pkg}/shared_prefs/com.vng.robloxclient_preferences.xml
         cp {temp_file} /data/data/{pkg}/shared_prefs/{pkg}_preferences.xml
         
-        # 4. Lấy UID thực tế của Clone
-        PKG_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | cut -d'=' -f2 | cut -d' ' -f1)
+        APP_OWNER=\\$(stat -c '%u:%g' /data/data/{pkg})
+        chown -R \\$APP_OWNER /data/data/{pkg}/shared_prefs/
         
-        # 5. [BƯỚC QUAN TRỌNG NHẤT]: Bàn giao quyền sở hữu CẢ THƯ MỤC cho App
-        chown -R \\$PKG_UID:\\$PKG_UID /data/data/{pkg}/shared_prefs/
-        
-        # 6. Set quyền truy cập chuẩn Android (771 cho Thư mục, 660 cho File)
         chmod 771 /data/data/{pkg}/shared_prefs/
         chmod 660 /data/data/{pkg}/shared_prefs/*.xml
-        
-        # 7. Đồng bộ lại SELinux Context
         restorecon -R /data/data/{pkg}/shared_prefs/ 2>/dev/null
         " """
         
@@ -162,7 +177,12 @@ def login_via_cookie():
         time.sleep(2)
 
     os.system(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
-    print(f"\n{G}[+] Đã hoàn thành Inject cho {len(selected_packages)} package!{RESET}")
+    print(f"\n{G}[+] Đã hoàn thành Inject! Xóa trắng file cookie.txt để bảo mật...{RESET}")
+    
+    # Xóa nội dung file cookie sau khi dùng xong để tránh lộ lọt
+    with open(cookie_file_path, "w", encoding="utf-8") as f:
+        f.write("")
+        
     time.sleep(3)
 
 # =========================================================================
