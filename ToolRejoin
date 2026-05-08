@@ -56,7 +56,8 @@ M = '\033[95m'
 RESET = '\033[0m'
 
 selected_packages = [] 
-target_place_id = ""  
+# GÁN MẶC ĐỊNH ID GAME THEO YÊU CẦU ĐỂ TỐI ƯU SETUP
+target_place_id = "4520749081"  
 kill_all_time = 0     
 json_path_cache = {}
 
@@ -70,7 +71,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Strict 150s Grace Period + Safe DeepLink{RESET}")
+    print(f"{G}Core: {Y}Strict 150s Grace Period + 30s Safe DeepLink{RESET}")
     
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
@@ -88,8 +89,13 @@ def settings_menu():
     print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
     
     fix_tty()
-    p_id_raw = input(f"{M}Nhập Place ID (VD Blox Fruits: 2753915549) [Bỏ trống để vào sảnh]: {RESET}").strip()
+    # Thay đổi hướng dẫn nhập ID để phù hợp với ID mặc định
+    p_id_raw = input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}").strip()
+    
     if p_id_raw == "":
+        target_place_id = "4520749081"
+        print(f"{Y}[*] Đã dùng Place ID mặc định: {target_place_id}{RESET}")
+    elif p_id_raw == "0":
         target_place_id = ""
         print(f"{Y}[*] Đã xóa Place ID, App sẽ mở vào màn hình chính.{RESET}")
     else:
@@ -317,15 +323,15 @@ def start_auto_rejoin():
                 pkg = item['pkg']
                 uptime_seconds = current_time - states[pkg]['rejoin_time']
                 
-                # --- PHASE 1: CHỜ BẮN DEEPLINK (TĂNG LÊN 15s CHỐNG SỐC APP) ---
+                # --- PHASE 1: CHỜ BẮN DEEPLINK (TĂNG LÊN 30s THEO YÊU CẦU) ---
                 if states[pkg]['boot_phase'] == 1:
                     elapsed_boot = current_time - states[pkg]['boot_timer']
-                    if elapsed_boot >= 15:
+                    if elapsed_boot >= 30:
                         trigger_boot_step_2(pkg)
                         states[pkg]['boot_phase'] = 0 
                         # Không reset rejoin_time ở đây để bảo toàn quy tắc 150s
                     else:
-                        states[pkg]['text'] = f"Đang Nạp Game ({int(15 - elapsed_boot)}s)"
+                        states[pkg]['text'] = f"Đang Nạp Game ({int(30 - elapsed_boot)}s)"
                         states[pkg]['color'] = M
                     continue 
                 
