@@ -195,28 +195,19 @@ def get_heartbeat_data(pkg):
     return os.path.getmtime(latest_file), player_name
 
 def launch_app_root(pkg):
-    """Khởi động App và dùng chiến thuật 'rải thảm' để ép DeepLink xuyên thẳng vào Map"""
+    """Quy trình mở Kép: Gọi App -> Chờ 10s -> Bắn DeepLink chuẩn experiences/start"""
     
-    # 1. Gọi App khởi động lên sảnh trước bằng Monkey (Đảm bảo app luôn mở được)
+    # Bước 1: Mở app ra màn hình sảnh chờ (Đánh thức App)
     os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
     
-    # 2. Bắn DeepLink nếu bạn có cài đặt Game ID
+    # Bước 2: Bắn link ép Join nếu có thiết lập ID Game
     if target_place_id:
-        # Tăng thời gian chờ lên 7 giây để Sảnh load xong hoàn toàn (Cloud Phone xử lý nhiều clone sẽ hơi chậm)
-        time.sleep(7) 
+        # Ngủ 10 giây để App vừa đủ thời gian lên nguồn và load xong giao diện
+        time.sleep(10)
         
-        # --- CHIẾN THUẬT RẢI THẢM 3 LỆNH CHỐNG TRƯỢT ---
-        
-        # Kiểu 1: Cờ -p chuẩn mực của Android
-        os.system(f"su -c 'am start -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" -p {pkg} > /dev/null 2>&1'")
-        time.sleep(1.5)
-        
-        # Kiểu 2: Cờ package truyền thống (Phù hợp với các bản Clone dị)
-        os.system(f"su -c 'am start -a android.intent.action.VIEW -d \"roblox://placeId={target_place_id}\" {pkg} > /dev/null 2>&1'")
-        time.sleep(1.5)
-        
-        # Kiểu 3: Dùng sơ đồ robloxmobile:// (Chuyên trị bản VNG gốc)
-        os.system(f"su -c 'am start -a android.intent.action.VIEW -d \"robloxmobile://placeId={target_place_id}\" -p {pkg} > /dev/null 2>&1'")
+        # Bắn link ép Join chuẩn của Roblox (Sử dụng URL experiences/start)
+        intent_cmd = f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\" > /dev/null 2>&1'"
+        os.system(intent_cmd)
 
 def start_auto_rejoin():
     global selected_packages, kill_all_time
