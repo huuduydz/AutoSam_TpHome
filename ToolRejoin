@@ -3,6 +3,7 @@ import time
 import subprocess
 import glob
 import re
+import json
 from datetime import datetime
 
 # --- MÃ MÀU GIAO DIỆN ---
@@ -13,7 +14,6 @@ R = '\033[91m'  # Red
 M = '\033[95m'  # Magenta
 RESET = '\033[0m'
 
-# Biến lưu danh sách package
 selected_packages = []
 
 def clear_screen():
@@ -65,9 +65,7 @@ def select_package_menu():
     packages = scan_packages()
     
     if not packages:
-        print(f"{R}[!] Không tìm thấy bất kỳ app nào!{RESET}")
-        time.sleep(2)
-        return
+        print(f"{R}[!] Không tìm thấy bất kỳ app nào!{RESET}"); time.sleep(2); return
 
     print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
     for i, pkg in enumerate(packages, 1):
@@ -95,8 +93,7 @@ def select_package_menu():
 def login_via_cookie():
     global selected_packages
     if not selected_packages:
-        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
-        time.sleep(2); return
+        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}"); time.sleep(2); return
 
     cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
     if not cookie.startswith("_|WARNING"):
@@ -118,7 +115,8 @@ def login_via_cookie():
         chown \\$PKG_UID:\\$PKG_UID /data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml
         " """
         os.system(root_cmd)
-        os.system(f"su -c 'am start -n {pkg}/com.roblox.client.Activity > /dev/null 2>&1'")
+        # Sử dụng monkey để ép mở app clone an toàn
+        os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
         time.sleep(1)
 
     os.system(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
@@ -126,10 +124,9 @@ def login_via_cookie():
     time.sleep(2)
 
 # =========================================================================
-# TÍNH NĂNG 1: AUTO INJECT LUA VÀO AUTOEXEC CỦA EXECUTOR
+# TÍNH NĂNG 1: AUTO INJECT LUA VÀO AUTOEXEC CỦA MỌI EXECUTOR
 # =========================================================================
 def inject_lua_autoexec(pkg):
-    # Mỗi package sẽ tạo ra một file JSON có tên riêng biệt để không bị đá chéo nhau
     lua_code = f"""task.wait(5)
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
@@ -160,40 +157,65 @@ task.spawn(function()
     end 
 end)"""
     
+    # Tạo file Lua tạm thời
     temp_lua = f"/sdcard/Download/temp_lua_{pkg}.lua"
     with open(temp_lua, "w", encoding="utf-8") as f:
         f.write(lua_code)
         
-    # Luồn sâu vào hệ thống tìm TẤT CẢ các thư mục có tên autoexec và nhét file vào
+    # [BẢN VÁ]: Dùng Root quét diện rộng toàn bộ gốc thẻ nhớ (Sâu tối đa 3 lớp)
+    # Tự động bắt được /sdcard/Delta/Autoexecute hoặc /sdcard/Fluxus/autoexec
     root_cmd = f"""su -c "
-    DIRS=\\$(find /sdcard/Android/media/{pkg} /sdcard/Android/data/{pkg} -type d 2>/dev/null | grep -i 'autoexec')
-    for dir in \\$DIRS; do
-        cp {temp_lua} \\"\\$dir/checkhudyhub.lua\\"
+    DIRS1=\\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null)
+    DIRS2=\\$(find /sdcard/Android/media/{pkg} /sdcard/Android/data/{pkg} -type d -iname '*autoexec*' 2>/dev/null)
+    
+    for dir in \\$DIRS1 \\$DIRS2; do
+        cp {temp_lua} \\"\\$dir/{pkg}_checkhudyhub.lua\\"
+        chmod 777 \\"\\$dir/{pkg}_checkhudyhub.lua\\"
     done
     rm {temp_lua}
     " """
     os.system(root_cmd)
 
-def get_heartbeat(pkg):
-    # Tìm kiếm đích danh file JSON của đúng Package đó
+# =========================================================================
+# TÍNH NĂNG ĐỌC HEARTBEAT TỪ MỌI LOẠI WORKSPACE
+# =========================================================================
+def get_heartbeat_data(pkg):
+    """Đọc file JSON, trả về (Thời gian cập nhật, Tên Nhân Vật)"""
     search_paths = [
         f"/sdcard/Android/media/{pkg}/*/workspace/{pkg}_checkhudyhub.json",
         f"/sdcard/Android/data/{pkg}/*/workspace/{pkg}_checkhudyhub.json",
         f"/sdcard/Android/data/{pkg}/files/workspace/{pkg}_checkhudyhub.json",
-        f"/sdcard/Download/{pkg}_checkhudyhub.json"
+        f"/sdcard/Download/{pkg}_checkhudyhub.json",
+        # Thêm đường dẫn bao quát cho Delta và các Executor khác ở gốc
+        f"/sdcard/*/Workspace/{pkg}_checkhudyhub.json", 
+        f"/sdcard/*/workspace/{pkg}_checkhudyhub.json"
     ]
     
     files = []
     for path in search_paths:
         files.extend(glob.glob(path))
         
-    if not files: return -1
+    if not files: return -1, "Chờ Login..."
+    
     latest_file = max(files, key=os.path.getmtime)
-    return os.path.getmtime(latest_file)
+    mod_time = os.path.getmtime(latest_file)
+    
+    # Ép đọc file JSON để bóc tên nhân vật
+    player_name = "Chưa load"
+    try:
+        with open(latest_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if "playerName" in data:
+                player_name = data["playerName"]
+    except Exception:
+        pass
+        
+    return mod_time, player_name
 
-# =========================================================================
-# TÍNH NĂNG 2: BẢNG THEO DÕI LIVE DASHBOARD
-# =========================================================================
+def launch_app_root(pkg):
+    """Hàm khởi động app clone an toàn qua Root + Monkey"""
+    os.system(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1'")
+
 def start_auto_rejoin():
     global selected_packages
     if not selected_packages:
@@ -202,78 +224,82 @@ def start_auto_rejoin():
     print(f"\n{Y}[*] Đang setup Autoexec cho {len(selected_packages)} Package...{RESET}")
     for pkg in selected_packages:
         inject_lua_autoexec(pkg)
-        os.system(f"am force-stop {pkg} > /dev/null 2>&1")
+        os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
         time.sleep(0.5)
-        os.system(f"am start -n {pkg}/com.roblox.client.Activity > /dev/null 2>&1")
+        launch_app_root(pkg)
     
-    # Khởi tạo bộ nhớ tạm để ghi chú tình trạng từng app
-    states = {pkg: {'text': 'Đang Mở Game...', 'color': Y, 'rejoin_time': time.time()} for pkg in selected_packages}
+    states = {pkg: {'text': 'Đang Mở Game...', 'color': Y, 'rejoin_time': time.time(), 'name': 'Chờ Login...'} for pkg in selected_packages}
 
-    # Bắt đầu vòng lặp Live Dashboard
     while True:
         try:
             current_time = time.time()
             
             for pkg in selected_packages:
-                # Nếu vừa mới mở game xong, cho nó 60 giây ân hạn để load UI
                 if current_time - states[pkg]['rejoin_time'] < 60:
                     states[pkg]['text'] = f"Đang Load ({int(60 - (current_time - states[pkg]['rejoin_time']))}s)"
                     states[pkg]['color'] = Y
+                    
+                    # Vẫn thử lấy tên acc nếu nó load nhanh hơn 60s
+                    _, p_name = get_heartbeat_data(pkg)
+                    if p_name != "Chờ Login...": states[pkg]['name'] = p_name
                     continue
 
-                last_ping = get_heartbeat(pkg)
+                last_ping, player_name = get_heartbeat_data(pkg)
+                
+                # Cập nhật tên acc nếu lấy được
+                if player_name != "Chờ Login...":
+                    states[pkg]['name'] = player_name
 
                 if last_ping == -1:
                     diff = current_time - states[pkg]['rejoin_time']
-                    if diff > 150: # Quá 2.5 phút mà chưa thấy file -> Lỗi load/Stuck ở màn hình đen
+                    if diff > 150: 
                         states[pkg]['text'] = f"Lỗi Load / Treo Màn!"
                         states[pkg]['color'] = R
-                        os.system(f"am force-stop {pkg} > /dev/null 2>&1")
+                        os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
                         time.sleep(1)
-                        os.system(f"am start -n {pkg}/com.roblox.client.Activity > /dev/null 2>&1")
+                        launch_app_root(pkg)
                         states[pkg]['rejoin_time'] = current_time
                     else:
                         states[pkg]['text'] = "Chờ file JSON..."
                         states[pkg]['color'] = C
                 else:
                     diff = current_time - last_ping
-                    if diff > 45: # Mất nhịp tim quá 45 giây -> Văng Game
+                    if diff > 45: 
                         states[pkg]['text'] = f"Văng Game ({int(diff)}s)"
                         states[pkg]['color'] = R
-                        os.system(f"am force-stop {pkg} > /dev/null 2>&1")
+                        os.system(f"su -c 'am force-stop {pkg} > /dev/null 2>&1'")
                         time.sleep(1)
-                        os.system(f"am start -n {pkg}/com.roblox.client.Activity > /dev/null 2>&1")
+                        launch_app_root(pkg)
                         states[pkg]['rejoin_time'] = current_time
                     else:
                         states[pkg]['text'] = f"Đang Farm ({int(diff)}s trước)"
                         states[pkg]['color'] = G
 
-            # --- VẼ KHUNG DASHBOARD ---
+            # --- VẼ KHUNG DASHBOARD 3 CỘT ---
             clear_screen()
             print_banner()
-            # In Header của Bảng
-            print(f"{C}{'TÊN BẢN ROBLOX':<25} | {'TÌNH TRẠNG HIỆN TẠI':<25}{RESET}")
+            # Căn chỉnh kích thước cột: Tên(15) | Package(15) | Tình trạng(25)
+            print(f"{C}{'INGAME NAME':<15} | {'PACKAGE INFO':<15} | {'TÌNH TRẠNG HIỆN TẠI':<25}{RESET}")
             print("-" * 65)
             
-            # In từng dòng trạng thái
             for pkg in selected_packages:
-                # Cắt ngắn tên package nếu quá dài để khung không bị méo
-                short_pkg = pkg.split('.')[-1]
-                if len(short_pkg) < 5: short_pkg = pkg[-20:] 
+                # Xử lý cắt chuỗi nếu tên quá dài để bảng không bị vỡ form
+                s_name = states[pkg]['name']
+                if len(s_name) > 14: s_name = s_name[:11] + "..."
+                
+                s_pkg = pkg.split('.')[-1]
+                if len(s_pkg) > 14: s_pkg = s_pkg[:11] + "..."
                 
                 txt = states[pkg]['text']
                 col = states[pkg]['color']
-                print(f"{short_pkg:<25} | {col}{txt:<25}{RESET}")
+                print(f"{s_name:<15} | {s_pkg:<15} | {col}{txt:<25}{RESET}")
             
             print("-" * 65)
             print(f"{C} Đang chạy Live... (Bấm Ctrl + C để dừng){RESET}")
-            
-            # Làm mới bảng mỗi 5 giây
             time.sleep(5)
 
         except KeyboardInterrupt:
             print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
-            time.sleep(1)
             break
         except Exception as e:
             time.sleep(3)
