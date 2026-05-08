@@ -33,7 +33,66 @@ def print_banner():
     print(f"{G}Target Package: {Y}{pkg_display}{RESET}")
     print("-" * 50)
 
+def scan_packages():
+    """Quét TẤT CẢ các ứng dụng do người dùng cài (Bỏ qua app hệ thống)"""
+    print(f"\n{C}[*] Đang quét toàn bộ ứng dụng trên máy...{RESET}")
+    packages = []
+    
+    try:
+        output = subprocess.check_output("su -c 'pm list packages -3'", shell=True, text=True, stderr=subprocess.DEVNULL)
+        for line in output.splitlines():
+            if "package:" in line:
+                packages.append(line.replace("package:", "").strip())
+    except Exception:
+        try:
+            output = subprocess.check_output("pm list packages -3", shell=True, text=True, stderr=subprocess.DEVNULL)
+            for line in output.splitlines():
+                if "package:" in line:
+                    packages.append(line.replace("package:", "").strip())
+        except Exception:
+            pass
 
+    # [BẢN VÁ LỖI ĐƠ]: Khôi phục lại trạng thái Terminal sau khi bị lệnh su làm hỏng
+    os.system("stty sane")
+
+    # Làm sạch các ký tự rác (\r, \n) để chống in bậc thang
+    cleaned_packages = []
+    for p in list(set(packages)):
+        clean_p = p.replace('\r', '').replace('\n', '').strip()
+        if clean_p:
+            cleaned_packages.append(clean_p)
+            
+    return cleaned_packages
+
+def select_package_menu():
+    global selected_package
+    packages = scan_packages()
+    
+    if not packages:
+        print(f"{R}[!] Không tìm thấy bất kỳ app nào!{RESET}")
+        time.sleep(2)
+        return
+
+    print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
+    for i, pkg in enumerate(packages, 1):
+        print(f"[{i}] {pkg}")
+    
+    try:
+        # Chốt chặn an toàn lần 2 đảm bảo bàn phím không bị liệt
+        os.system("stty sane") 
+        choice = input(f"\n{M}Chọn số thứ tự Package muốn chạy: {RESET}")
+        
+        choice = int(choice.strip())
+        if 1 <= choice <= len(packages):
+            selected_package = packages[choice - 1]
+            print(f"{G}[+] Đã chọn: {selected_package}{RESET}")
+            time.sleep(1)
+        else:
+            print(f"{R}[!] Lựa chọn không hợp lệ!{RESET}")
+            time.sleep(1)
+    except ValueError:
+        print(f"{R}[!] Vui lòng nhập số!{RESET}")
+        time.sleep(1)
 
 def login_via_cookie():
     """Ép đăng nhập Roblox bằng Cookie (Yêu Cầu Root)"""
