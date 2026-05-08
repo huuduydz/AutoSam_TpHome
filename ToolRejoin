@@ -288,7 +288,7 @@ def force_restart_app(pkg, states, current_time, reason_text, color_code):
     states[pkg]['rejoin_time'] = current_time
 
 # =====================================================================
-# HÀM MỚI: BƠM COOKIE BẰNG PYTHON SAFE EXTRACTION (CHỐNG RÁCH FILE XML)
+# FIX: BƠM COOKIE BẰNG PYTHON SAFE EXTRACTION (TERMUX COMPATIBLE)
 # =====================================================================
 def login_via_cookie():
     global selected_packages
@@ -298,27 +298,56 @@ def login_via_cookie():
         return
 
     print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (SAFE EXTRACTION) ---{RESET}")
-    print(f"{Y}Lưu ý: Máy BẮT BUỘC ĐÃ ROOT.{RESET}")
+    print(f"{Y}Lưu ý: Máy BẮT BUỘC ĐÃ ROOT và cấp quyền SU cho Termux.{RESET}")
+    
+    # Test root access
+    try:
+        test_root = subprocess.check_output("su -c 'echo test' 2>/dev/null", shell=True, text=True, timeout=5)
+        if "test" not in test_root:
+            print(f"{R}[!] Không có quyền ROOT! Vui lòng cấp quyền SU cho Termux.{RESET}")
+            time.sleep(3)
+            return
+    except Exception as e:
+        print(f"{R}[!] Lỗi kiểm tra ROOT: {e}{RESET}")
+        print(f"{Y}[*] Hãy đảm bảo đã cài Magisk/KernelSU và cấp quyền SU cho Termux!{RESET}")
+        time.sleep(3)
+        return
     
     fix_tty()
     cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
     cookie = cookie.replace('\r', '').replace('\n', '').strip()
 
     if not cookie.startswith("_|WARNING"):
-        print(f"{R}[!] Cookie không hợp lệ!{RESET}")
+        print(f"{R}[!] Cookie không hợp lệ! Cookie phải bắt đầu bằng '_|WARNING'{RESET}")
         time.sleep(2)
         return
 
-    for item in selected_packages:
+    print(f"\n{G}[+] Cookie hợp lệ! Bắt đầu inject vào {len(selected_packages)} app...{RESET}")
+    time.sleep(1)
+
+    for idx, item in enumerate(selected_packages, 1):
         pkg = item['pkg']
         
-        # --- BƯỚC 1: WARM UP ĐỂ TẠO CẤU TRÚC ZIN ---
-        print(f"{Y}[*] Đang làm ấm {pkg} (Khởi tạo mã bảo mật VNG)...{RESET}")
+        print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
+        print(f"{Y}[{idx}/{len(selected_packages)}] Đang xử lý: {pkg}{RESET}")
+        print(f"{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
+        
+        # --- BƯỚC 1: FORCE STOP VÀ DỌN DẸP ---
+        print(f"{Y}[1/6] Đang dọn dẹp app...{RESET}")
         safe_root(f"su -c 'am force-stop {pkg}'")
+        time.sleep(1)
+        
+        # Xóa cache cũ để tránh conflict
+        safe_root(f"su -c 'rm -rf /data/data/{pkg}/cache/* 2>/dev/null'")
+        safe_root(f"su -c 'rm -rf /data/data/{pkg}/code_cache/* 2>/dev/null'")
+        
+        # --- BƯỚC 2: WARM UP APP ĐỂ TẠO THƯ MỤC ---
+        print(f"{Y}[2/6] Đang khởi tạo cấu trúc app (Warm-up)...{RESET}")
         trigger_boot_step_1(pkg)
         
-        for i in range(12, 0, -1):
-            sys.stdout.write(f"\r{C}    Chờ App load xong bộ khung: {i}s...{RESET}")
+        # Đợi app tạo thư mục shared_prefs
+        for i in range(8, 0, -1):
+            sys.stdout.write(f"\r{C}    └─ Chờ app khởi tạo: {i}s...{RESET}")
             sys.stdout.flush()
             time.sleep(1)
         print()
@@ -326,86 +355,169 @@ def login_via_cookie():
         safe_root(f"su -c 'am force-stop {pkg}'")
         time.sleep(1)
         
-        # --- BƯỚC 2: TRÍCH XUẤT NỘI DUNG ZIN BẰNG ROOT CAT ---
-        print(f"{Y}[*] Đang trích xuất cấu hình bảo mật...{RESET}")
-        xml_content = ""
+        # --- BƯỚC 3: KIỂM TRA VÀ TẠO THƯ MỤC NẾU CHƯA CÓ ---
+        print(f"{Y}[3/6] Đang kiểm tra và tạo thư mục cấu hình...{RESET}")
         
-        for pref_name in ["com.vng.robloxclient_preferences.xml", "com.roblox.client_preferences.xml", f"{pkg}_preferences.xml"]:
+        create_dir_cmd = f"""su -c '
+        PREFS_DIR="/data/data/{pkg}/shared_prefs"
+        
+        if [ ! -d "$PREFS_DIR" ]; then
+            mkdir -p "$PREFS_DIR"
+            echo "Created: $PREFS_DIR"
+        fi
+        
+        # Lấy UID của app
+        APP_UID=$(dumpsys package {pkg} | grep userId= | head -n 1 | cut -d"=" -f2 | cut -d" " -f1)
+        if [ -z "$APP_UID" ]; then
+            APP_UID=$(stat -c "%u" /data/data/{pkg} 2>/dev/null)
+        fi
+        
+        # Set ownership
+        if [ ! -z "$APP_UID" ]; then
+            chown -R $APP_UID:$APP_UID "$PREFS_DIR"
+            chmod 771 "$PREFS_DIR"
+        fi
+        
+        echo "UID: $APP_UID"
+        ls -la "$PREFS_DIR" 2>/dev/null
+        '"""
+        
+        try:
+            result = subprocess.check_output(create_dir_cmd, shell=True, text=True, stderr=subprocess.STDOUT, timeout=10)
+            print(f"{G}    └─ Kết quả: {result.strip()[:80]}...{RESET}")
+        except Exception as e:
+            print(f"{R}    └─ Cảnh báo: {str(e)[:80]}...{RESET}")
+        
+        # --- BƯỚC 4: ĐỌC HOẶC TẠO FILE XML ---
+        print(f"{Y}[4/6] Đang đọc file cấu hình hiện tại...{RESET}")
+        
+        xml_content = ""
+        pref_files = [
+            f"/data/data/{pkg}/shared_prefs/com.roblox.client_preferences.xml",
+            f"/data/data/{pkg}/shared_prefs/com.vng.robloxclient_preferences.xml",
+            f"/data/data/{pkg}/shared_prefs/{pkg}_preferences.xml"
+        ]
+        
+        for pref_file in pref_files:
             try:
-                # Ép đọc file từ trong vùng kín của hệ thống
-                out = subprocess.check_output(
-                    f"su -c 'cat /data/data/{pkg}/shared_prefs/{pref_name} 2>/dev/null'", 
-                    shell=True, text=True, stderr=subprocess.DEVNULL
-                )
-                if "<map>" in out and "</map>" in out:
-                    xml_content = out
-                    break
-            except Exception:
-                pass
+                read_cmd = f"su -c 'cat {pref_file} 2>/dev/null'"
+                xml_data = subprocess.check_output(read_cmd, shell=True, text=True, timeout=5)
                 
-        # Nếu app chưa kịp tạo file, tự động đúc một cái khung chuẩn
+                if "<map>" in xml_data and "</map>" in xml_data:
+                    xml_content = xml_data
+                    print(f"{G}    └─ Đọc thành công: {os.path.basename(pref_file)}{RESET}")
+                    break
+            except:
+                pass
+        
         if not xml_content:
-            xml_content = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n</map>"
-
-        # --- BƯỚC 3: PHẪU THUẬT XML BẰNG PYTHON (AN TOÀN TUYỆT ĐỐI) ---
-        # 1. Gỡ bỏ Cookie cũ nếu có
+            print(f"{Y}    └─ Chưa có file, tạo mới...{RESET}")
+            xml_content = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n<map>\n</map>'
+        
+        # --- BƯỚC 5: PHẪU THUẬT XML (XÓA COOKIE CŨ + THÊM MỚI) ---
+        print(f"{Y}[5/6] Đang inject cookie vào cấu hình...{RESET}")
+        
+        # Escape cookie để tránh lỗi XML
+        safe_cookie = cookie.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;')
+        
+        # Xóa tất cả cookie cũ
         xml_content = re.sub(r'<string name="ROBLOSECURITY">.*?</string>', '', xml_content, flags=re.DOTALL)
         
-        # 2. Bơm Cookie mới vào sát thẻ đóng
-        cookie_xml = f'    <string name="ROBLOSECURITY">{cookie}</string>\n</map>'
-        xml_content = xml_content.replace('</map>', cookie_xml)
+        # Thêm cookie mới
+        cookie_line = f'    <string name="ROBLOSECURITY">{safe_cookie}</string>\n'
+        xml_content = xml_content.replace('</map>', cookie_line + '</map>')
         
-        # 3. Quét sạch khoảng trắng thừa thãi để file mượt mà
+        # Dọn dẹp khoảng trắng thừa
         xml_content = re.sub(r'\n\s*\n', '\n', xml_content)
-
-        # Lưu thành file tạm trên ổ cứng chung
-        temp_file = "/sdcard/Download/temp_roblox_cookie.xml"
+        xml_content = xml_content.strip()
+        
+        # --- BƯỚC 6: GHI FILE VÀO HỆ THỐNG ---
+        print(f"{Y}[6/6] Đang ghi cấu hình vào hệ thống...{RESET}")
+        
+        # Tạo file tạm trong Termux
+        temp_file = f"/data/data/com.termux/files/home/temp_cookie_{pkg.split('.')[-1]}.xml"
+        
         try:
             with open(temp_file, "w", encoding="utf-8") as f:
                 f.write(xml_content)
+            print(f"{G}    └─ Đã tạo file tạm: {temp_file}{RESET}")
         except Exception as e:
-            print(f"{R}[!] Lỗi ghi file tạm: {e}{RESET}")
+            print(f"{R}    └─ Lỗi ghi file tạm: {e}{RESET}")
             continue
-
-        # --- BƯỚC 4: ĐẨY NGƯỢC VÀO HỆ THỐNG VÀ KHÓA QUYỀN ---
-        print(f"{Y}[*] Đang tiêm cấu hình vào hệ thống...{RESET}")
-        root_cmd = f"""su -c "
-        PREFS_DIR='/data/data/{pkg}/shared_prefs'
-        mkdir -p \\$PREFS_DIR
         
-        # Dọn rác cache để chống sập RAM
-        rm -rf /data/data/{pkg}/cache/*
-        rm -rf /data/data/{pkg}/code_cache/*
+        # Copy vào hệ thống với quyền root
+        inject_cmd = f"""su -c '
+        PREFS_DIR="/data/data/{pkg}/shared_prefs"
+        TEMP_FILE="{temp_file}"
         
-        # Bắt lấy UID chủ nhân
-        APP_UID=\\$(dumpsys package {pkg} | grep userId= | head -n 1 | awk -F'=' '{{print \\$2}}' | awk '{{print \\$1}}')
-        if [ -z \\"\\$APP_UID\\" ]; then
-            APP_UID=\\$(stat -c '%u' /data/data/{pkg} 2>/dev/null)
+        # Tạo thư mục nếu chưa có
+        mkdir -p "$PREFS_DIR"
+        
+        # Lấy UID
+        APP_UID=$(dumpsys package {pkg} | grep userId= | head -n 1 | cut -d"=" -f2 | cut -d" " -f1)
+        if [ -z "$APP_UID" ]; then
+            APP_UID=$(stat -c "%u" /data/data/{pkg} 2>/dev/null)
         fi
+        [ -z "$APP_UID" ] && APP_UID=10000
         
-        # Phủ sóng toàn bộ các tên file khả thi
-        cp '{temp_file}' \\$PREFS_DIR/com.roblox.client_preferences.xml
-        cp '{temp_file}' \\$PREFS_DIR/com.vng.robloxclient_preferences.xml
-        cp '{temp_file}' \\$PREFS_DIR/{pkg}_preferences.xml
+        # Copy file vào tất cả các vị trí có thể
+        cp "$TEMP_FILE" "$PREFS_DIR/com.roblox.client_preferences.xml"
+        cp "$TEMP_FILE" "$PREFS_DIR/com.vng.robloxclient_preferences.xml"
+        cp "$TEMP_FILE" "$PREFS_DIR/{pkg}_preferences.xml"
         
-        # Chốt quyền sở hữu và bảo mật SELinux
-        chown -R \\$APP_UID:\\$APP_UID \\$PREFS_DIR
-        chmod 771 \\$PREFS_DIR
-        chmod 660 \\$PREFS_DIR/*.xml
-        restorecon -R \\$PREFS_DIR > /dev/null 2>&1
+        # Set quyền
+        chown -R $APP_UID:$APP_UID "$PREFS_DIR"
+        chmod 771 "$PREFS_DIR"
+        chmod 660 "$PREFS_DIR"/*.xml
         
+        # SELinux restore
+        restorecon -R "$PREFS_DIR" 2>/dev/null
+        
+        # Sync
         sync
-        " """
         
-        os.system(root_cmd)
-        safe_root(f"su -c 'rm {temp_file} > /dev/null 2>&1'")
+        # Verify
+        echo "=== VERIFY ==="
+        ls -la "$PREFS_DIR"/*.xml 2>/dev/null | head -n 3
+        echo "Cookie check:"
+        grep -c "ROBLOSECURITY" "$PREFS_DIR"/*.xml 2>/dev/null | head -n 1
+        '"""
         
-        print(f"{G}[+] Inject {pkg} thành công! Đang khởi động App...{RESET}")
+        try:
+            verify_result = subprocess.check_output(inject_cmd, shell=True, text=True, stderr=subprocess.STDOUT, timeout=15)
+            print(f"{G}    └─ Kết quả inject:{RESET}")
+            for line in verify_result.strip().split('\n')[-5:]:
+                print(f"       {line}")
+            
+            # Kiểm tra xem có cookie không
+            if "ROBLOSECURITY" in verify_result or "660" in verify_result:
+                print(f"{G}    └─ ✓ Cookie đã được inject thành công!{RESET}")
+            else:
+                print(f"{Y}    └─ ⚠ Inject hoàn tất nhưng chưa verify được cookie{RESET}")
+                
+        except subprocess.TimeoutExpired:
+            print(f"{R}    └─ Timeout! Lệnh mất quá 15s.{RESET}")
+        except Exception as e:
+            print(f"{R}    └─ Lỗi inject: {str(e)[:100]}...{RESET}")
+        
+        # Xóa file tạm
+        try:
+            os.remove(temp_file)
+        except:
+            pass
+        
+        # --- KHỞI ĐỘNG APP ---
+        print(f"{Y}[*] Đang khởi động app...{RESET}")
         trigger_boot_step_1(pkg)
         time.sleep(2)
+        
+        print(f"{G}[✓] Hoàn thành {pkg}!{RESET}")
 
-    print(f"\n{G}[+] Đã hoàn thành quy trình Inject Cookie Tối Thượng!{RESET}")
-    time.sleep(4)
+    print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
+    print(f"{G}[+] ĐÃ HOÀN TẤT INJECT COOKIE CHO TẤT CẢ APP!{RESET}")
+    print(f"{Y}[*] Hãy mở app và kiểm tra xem đã đăng nhập chưa.{RESET}")
+    print(f"{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
+    time.sleep(5)
 
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache
