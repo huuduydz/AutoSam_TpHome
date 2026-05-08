@@ -1,1 +1,177 @@
+import os
+import time
+import subprocess
+import glob
+from datetime import datetime
 
+# --- MÃ MÀU GIAO DIỆN ---
+C = '\033[96m'  # Cyan
+G = '\033[92m'  # Green
+Y = '\033[93m'  # Yellow
+R = '\033[91m'  # Red
+M = '\033[95m'  # Magenta
+RESET = '\033[0m'
+
+# Biến lưu package Roblox đang chọn
+selected_package = None
+
+def clear_screen():
+    os.system('clear')
+
+def print_banner():
+    banner = f"""{C}
+ ██░ ██  █    ██  ██▓███ ▓██   ██▓
+▓██░ ██▒ ██  ▓██▒▓██░  ██▒▒██  ██▒
+▒██▀▀██░▓██  ▒██░▓██░ ██▓▒ ▒██ ██░
+░▓█ ░██ ▓▓█  ░██░▒██▄█▓▒ ▒ ░ ▐██▓░
+░▓█▒░██▓▒▒█████▓ ▒██▒ ░  ░ ░ ██▒▓░
+{RESET}"""
+    print(banner)
+    print(f"{G}Developer: {Y}HuDy{RESET}")
+    print(f"{G}Method: {Y}Heartbeat Monitor (JSON){RESET}")
+    pkg_display = selected_package if selected_package else "Chưa chọn (None)"
+    print(f"{G}Target Package: {Y}{pkg_display}{RESET}")
+    print("-" * 50)
+
+def scan_packages():
+    """Quét tất cả các package Roblox đã cài đặt trên Android"""
+    print(f"\n{C}[*] Đang quét hệ thống tìm Package Roblox...{RESET}")
+    try:
+        # Chạy lệnh hệ thống Android để tìm package
+        output = subprocess.check_output("pm list packages | grep -i roblox", shell=True, text=True)
+        packages = [line.replace("package:", "").strip() for line in output.splitlines() if line.strip()]
+        return packages
+    except subprocess.CalledProcessError:
+        return []
+
+def select_package_menu():
+    global selected_package
+    packages = scan_packages()
+    
+    if not packages:
+        print(f"{R}[!] Không tìm thấy bất kỳ app Roblox nào được cài đặt!{RESET}")
+        time.sleep(2)
+        return
+
+    print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
+    for i, pkg in enumerate(packages, 1):
+        print(f"[{i}] {pkg}")
+    
+    try:
+        choice = int(input(f"\n{M}Chọn số thứ tự Package muốn chạy: {RESET}"))
+        if 1 <= choice <= len(packages):
+            selected_package = packages[choice - 1]
+            print(f"{G}[+] Đã chọn: {selected_package}{RESET}")
+            time.sleep(1)
+        else:
+            print(f"{R}[!] Lựa chọn không hợp lệ!{RESET}")
+            time.sleep(1)
+    except ValueError:
+        print(f"{R}[!] Vui lòng nhập số!{RESET}")
+        time.sleep(1)
+
+def check_heartbeat():
+    """Kiểm tra nhịp tim từ file Lua (checkhudyhub.json)"""
+    # Các đường dẫn phổ biến mà Executor Android hay lưu file workspace
+    search_paths = [
+        "/sdcard/Android/media/*/workspace/*_checkhudyhub.json",
+        "/sdcard/Android/data/*/files/workspace/*_checkhudyhub.json",
+        "/sdcard/Download/*_checkhudyhub.json"
+    ]
+    
+    files = []
+    for path in search_paths:
+        files.extend(glob.glob(path))
+        
+    if not files:
+        return False, "Không tìm thấy file Heartbeat (Bạn đã chạy script Lua trong game chưa?)"
+        
+    # Lấy file mới nhất
+    latest_file = max(files, key=os.path.getmtime)
+    last_mod_time = os.path.getmtime(latest_file)
+    current_time = time.time()
+    
+    # Tính thời gian trễ
+    diff = current_time - last_mod_time
+    
+    # Nếu file không được cập nhật quá 45 giây -> Roblox đã văng
+    if diff > 45:
+        return False, f"Game bị đứng hoặc văng! (Mất nhịp tim {int(diff)} giây trước)"
+    
+    return True, f"Hoạt động ổn định (Heartbeat cách đây {int(diff)}s)"
+
+def start_auto_rejoin():
+    global selected_package
+    if not selected_package:
+        print(f"{R}[!] Bạn phải chọn Package trước khi chạy Auto Rejoin!{RESET}")
+        time.sleep(2)
+        return
+
+    print(f"\n{Y}[*] Khởi động HuDy Auto Rejoin...{RESET}")
+    print(f"{C}[*] Bấm Ctrl + C để dừng.{RESET}")
+    
+    # Lần đầu chạy, ép mở game luôn
+    print(f"{G}[+] Đang khởi động Roblox...{RESET}")
+    os.system(f"am force-stop {selected_package} > /dev/null 2>&1")
+    time.sleep(2)
+    os.system(f"am start -n {selected_package}/com.roblox.client.Activity > /dev/null 2>&1")
+    
+    # Vòng lặp theo dõi
+    while True:
+        try:
+            # Chờ 15 giây mỗi lần quét để không làm nặng máy
+            time.sleep(15)
+            
+            is_alive, msg = check_heartbeat()
+            current_time_str = datetime.now().strftime("%H:%M:%S")
+            
+            if is_alive:
+                print(f"[{current_time_str}] {G}{msg}{RESET}")
+            else:
+                print(f"[{current_time_str}] {R}{msg}{RESET}")
+                print(f"[{current_time_str}] {Y}[*] Đang tiến hành Rejoin...{RESET}")
+                
+                # Tắt nóng ứng dụng
+                os.system(f"am force-stop {selected_package} > /dev/null 2>&1")
+                time.sleep(3) # Chờ RAM giải phóng
+                
+                # Mở lại ứng dụng
+                os.system(f"am start -n {selected_package}/com.roblox.client.Activity > /dev/null 2>&1")
+                
+                # Chờ 60 giây để game load vào server và Lua bắt đầu chạy lại trước khi soi Heartbeat tiếp
+                print(f"[{current_time_str}] {C}[*] Đã mở lại. Đang chờ 60s để game load...{RESET}")
+                time.sleep(60)
+
+        except KeyboardInterrupt:
+            print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
+            time.sleep(1)
+            break
+        except Exception as e:
+            print(f"{R}[!] Lỗi hệ thống: {e}{RESET}")
+            time.sleep(5)
+
+def main():
+    while True:
+        clear_screen()
+        print_banner()
+        
+        print(f"[{C}1{RESET}] Quét và Chọn Package Roblox")
+        print(f"[{C}2{RESET}] Bắt đầu Auto Rejoin (Heartbeat)")
+        print(f"[{C}3{RESET}] Thoát")
+        
+        choice = input(f"\n{M}HuDy > {RESET}")
+        
+        if choice == '1':
+            select_package_menu()
+        elif choice == '2':
+            start_auto_rejoin()
+        elif choice == '3':
+            clear_screen()
+            print(f"{G}Tạm biệt!{RESET}")
+            break
+        else:
+            print(f"{R}[!] Lựa chọn không hợp lệ!{RESET}")
+            time.sleep(1)
+
+if __name__ == "__main__":
+    main()
