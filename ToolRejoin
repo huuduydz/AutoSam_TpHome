@@ -1,18 +1,9 @@
-import os
-import time
-import subprocess
-import glob
-import re
-import json
-import sys
-import builtins
-import xml.etree.ElementTree as ET
-import sqlite3
-import tempfile
+import os, time, subprocess, glob, re, json, sys, builtins, sqlite3, tempfile
 from datetime import datetime
+import xml.etree.ElementTree as ET
 
 # =====================================================================
-# BẢN VÁ TỐI THƯỢNG: CHỐNG VỠ KHUNG & CHỐNG LIỆT PHÍM
+# ANTI-CRASH & FIX TERMINAL
 # =====================================================================
 _original_print = builtins.print
 def safe_print(*args, **kwargs):
@@ -24,7 +15,7 @@ builtins.print = safe_print
 try:
     import termios
     OLD_TTY = termios.tcgetattr(sys.stdin.fileno())
-except Exception:
+except:
     OLD_TTY = None
 
 def fix_tty():
@@ -34,35 +25,46 @@ def fix_tty():
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, OLD_TTY)
         else:
             os.system("stty sane 2>/dev/null")
-    except: pass
+    except:
+        pass
 
 def safe_root(cmd):
     try:
-        subprocess.run(
-            cmd, shell=True, stdin=subprocess.DEVNULL, 
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-    except: pass
-    finally: fix_tty()
+        subprocess.run(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+    finally:
+        fix_tty()
 
 def clear_screen():
     fix_tty()
     sys.stdout.write('\033[2J\033[H\r')
     sys.stdout.flush()
 
-# --- MÃ MÀU GIAO DIỆN ---
-C = '\033[96m'  
-G = '\033[92m'  
-Y = '\033[93m'  
-R = '\033[91m'  
-M = '\033[95m'  
+# =====================================================================
+# MÀU SẮC
+# =====================================================================
+C = '\033[96m'
+G = '\033[92m'
+Y = '\033[93m'
+R = '\033[91m'
+M = '\033[95m'
 RESET = '\033[0m'
 
-selected_packages = [] 
-target_place_id = "4520749081"  
-kill_all_time = 0     
-json_path_cache = {}
+# =====================================================================
+# BIẾN TOÀN CỤC
+# =====================================================================
+selected_packages = []
+target_place_id = "4520749081"
+kill_all_time = 0
+json_path_cache = {}          # {acc_name: (file_path, last_mtime)}
+heartbeat_last_check = {}    # {acc_name: last_check_time}
+heartbeat_scan_count = {}    # {acc_name: count}
+CLAIMED_NAMES = set()
 
+# =====================================================================
+# GIAO DIỆN
+# =====================================================================
 def print_banner():
     banner = f"""{C}
  ██░ ██  █    ██  ██▓███ ▓██   ██▓
@@ -74,12 +76,10 @@ def print_banner():
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
     print(f"{G}Core: {Y}Python Safe Extraction (Fix 100% Sập Game){RESET}")
-    
     if selected_packages:
         print(f"{G}Target Packages ({len(selected_packages)}): {Y}Đã nạp vào bộ nhớ!{RESET}")
     else:
         print(f"{G}Target Packages: {Y}Chưa chọn (None){RESET}")
-        
     place_str = target_place_id if target_place_id else "Mặc định (Vào Sảnh)"
     kill_str = f"{kill_all_time} phút" if kill_all_time > 0 else "Tắt"
     print(f"{C}Game ID (Place): {Y}{place_str}{RESET}")
@@ -89,34 +89,31 @@ def print_banner():
 def settings_menu():
     global target_place_id, kill_all_time
     print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
-    
     fix_tty()
     p_id_raw = input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}").strip()
-    
     if p_id_raw == "":
         target_place_id = "4520749081"
-        print(f"{Y}[*] Đã dùng Place ID mặc định: {target_place_id}{RESET}")
+        print(f"{Y}[*] Place ID mặc định: {target_place_id}{RESET}")
     elif p_id_raw == "0":
         target_place_id = ""
-        print(f"{Y}[*] Đã xóa Place ID, App sẽ mở vào màn hình chính.{RESET}")
+        print(f"{Y}[*] Đã xóa Place ID, app mở vào sảnh chính.{RESET}")
     else:
-        numbers = re.findall(r'\d+', p_id_raw)
-        if numbers:
-            target_place_id = numbers[0]
-            print(f"{G}[+] Đã lưu cấu hình vào thẳng Game ID: {target_place_id}{RESET}")
+        nums = re.findall(r'\d+', p_id_raw)
+        if nums:
+            target_place_id = nums[0]
+            print(f"{G}[+] Đã lưu Place ID: {target_place_id}{RESET}")
         else:
-            print(f"{R}[!] ID không hợp lệ, giữ nguyên cấu hình cũ.{RESET}")
-
+            print(f"{R}[!] ID không hợp lệ.{RESET}")
     fix_tty()
-    k_time_raw = input(f"{M}Nhập thời gian Auto Restart (Tính bằng Phút, nhập 0 để Tắt): {RESET}").strip()
+    k_time_raw = input(f"{M}Nhập thời gian Auto Restart (phút, 0 để tắt): {RESET}").strip()
     if k_time_raw != "":
-        numbers_time = re.findall(r'\d+', k_time_raw)
-        if numbers_time:
-            kill_all_time = int(numbers_time[0])
+        nums = re.findall(r'\d+', k_time_raw)
+        if nums:
+            kill_all_time = int(nums[0])
             if kill_all_time > 0:
-                print(f"{G}[+] Tool sẽ tự động Kill và Rejoin mỗi {kill_all_time} phút.{RESET}")
+                print(f"{G}[+] Auto Restart mỗi {kill_all_time} phút.{RESET}")
             else:
-                print(f"{Y}[*] Đã TẮT tính năng Auto Restart (Chỉ Rejoin khi văng).{RESET}")
+                print(f"{Y}[*] Đã tắt Auto Restart.{RESET}")
         else:
             print(f"{R}[!] Số phút không hợp lệ.{RESET}")
     time.sleep(2)
@@ -125,56 +122,48 @@ def scan_packages():
     packages = []
     try:
         output = subprocess.check_output("pm list packages -3", shell=True, text=True, stderr=subprocess.DEVNULL)
-    except Exception:
+    except:
         try:
             output = subprocess.check_output("su -c 'pm list packages -3'", shell=True, text=True, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
         except:
             output = ""
-
     fix_tty()
     for line in output.splitlines():
         if "package:" in line:
             packages.append(line.replace("package:", "").strip())
-
-    cleaned_packages = []
-    for p in list(set(packages)):
-        clean_p = p.replace('\r', '').replace('\n', '').strip()
-        if clean_p:
-            cleaned_packages.append(clean_p)
-    return cleaned_packages
+    return list(set(packages))
 
 def select_package_menu():
     global selected_packages
     packages = scan_packages()
-    
     if not packages:
-        print(f"{R}[!] Không tìm thấy app nào!{RESET}"); time.sleep(2); return
-
+        print(f"{R}[!] Không tìm thấy app nào!{RESET}")
+        time.sleep(2)
+        return
     print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
     for i, pkg in enumerate(packages, 1):
         print(f"[{i}] {pkg}")
-    
     try:
         fix_tty()
-        print(f"\n{C}💡 Nhập nhiều số cách nhau bởi khoảng trắng (VD: 1 3 5){RESET}")
-        choice_str = input(f"{M}Chọn số thứ tự Package: {RESET}")
-        
+        print(f"\n{C}💡 Nhập số thứ tự cách nhau khoảng trắng (VD: 1 3 5){RESET}")
+        choice_str = input(f"{M}Chọn số: {RESET}")
         choices = [int(x) for x in re.findall(r'\d+', choice_str)]
         selected_packages.clear()
-        
         for choice in set(choices):
             if 1 <= choice <= len(packages):
                 pkg_name = packages[choice - 1]
                 fix_tty()
-                acc_name = input(f"\n{C}[?] Nhập Tên In-game cho app {Y}{pkg_name}{C} (Bỏ trống để Tool tự bắt file): {RESET}").strip()
+                acc_name = input(f"\n{C}[?] Tên In-game cho {Y}{pkg_name}{C} (bỏ trống để auto): {RESET}").strip()
                 selected_packages.append({"pkg": pkg_name, "name": acc_name})
-        
         if selected_packages:
-            print(f"\n{G}[+] Đã chọn {len(selected_packages)} Package thành công!{RESET}")
+            print(f"\n{G}[+] Đã chọn {len(selected_packages)} package.{RESET}")
             time.sleep(1)
-    except Exception:
+    except:
         pass
 
+# =====================================================================
+# INJECT SCRIPT UNIVERSAL
+# =====================================================================
 def inject_universal_lua():
     lua_code = """task.wait(5)
 local Players = game:GetService("Players")
@@ -186,147 +175,166 @@ local LocalPlayer = Players.LocalPlayer
 local fileName = "rj_" .. LocalPlayer.Name .. "_checkhudyhub.json"
 local sWF = true
 task.spawn(function()
-    while sWF do 
+    while sWF do
         task.wait(3)
         pcall(function()
             local errorCode = GuiService:GetErrorCode().Value
-            if errorCode == 1 or errorCode == 773 or errorCode == 772 or errorCode == 769 or (errorCode >= DisconnectErrors and errorCode < PlaceLaunchOtherError) then 
-                sWF = false 
-            end 
+            if errorCode == 1 or errorCode == 773 or errorCode == 772 or errorCode == 769 or (errorCode >= DisconnectErrors and errorCode < PlaceLaunchOtherError) then
+                sWF = false
+            end
         end)
-        if sWF then 
+        if sWF then
             local pidOk, pid = pcall(function() return game.PlaceId end)
             local humOk, hum = pcall(function() return LocalPlayer.Character.Humanoid end)
-            if not (pidOk and pid == 0 and not (humOk and hum)) then 
+            if not (pidOk and pid == 0 and not (humOk and hum)) then
                 pcall(function()
                     writefile(fileName, string.format('{"playerName":"%s","time":"%s"}', LocalPlayer.Name, os.date("!%Y-%m-%dT%H:%M:%SZ", workspace:GetServerTimeNow())))
                 end)
-            end 
-        end 
-    end 
+            end
+        end
+    end
 end)"""
-    
-    safe_root("su -c \"find /sdcard/ -maxdepth 4 -type f -name '*checkhudyhub.lua' -delete 2>/dev/null\"")
-    
+    safe_root("su -c 'find /sdcard/ -maxdepth 4 -type f -name \"*checkhudyhub.lua\" -delete 2>/dev/null'")
     temp_lua = "/sdcard/Download/universal_checkhudyhub.lua"
-    with open(temp_lua, "w", encoding="utf-8") as f: f.write(lua_code)
-        
-    root_cmd = f"""su -c "
-    DIRS=\\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null)
-    for dir in \\$DIRS; do
-        cp {temp_lua} \\"\\$dir/universal_checkhudyhub.lua\\"
-        chmod 777 \\"\\$dir/universal_checkhudyhub.lua\\"
-    done
-    rm {temp_lua}
-    " """
+    with open(temp_lua, "w", encoding="utf-8") as f:
+        f.write(lua_code)
+    root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/universal_checkhudyhub.lua\\" && chmod 777 \\"\\$dir/universal_checkhudyhub.lua\\"; done; rm {temp_lua}" """
     safe_root(root_cmd)
 
-def discover_unbound_account(claimed_names):
+# =====================================================================
+# HEARTBEAT & ACCOUNT DISCOVERY (TỐI ƯU NHẸ)
+# =====================================================================
+def find_latest_json(acc_name):
+    # Chỉ tìm trong thư mục workspace của các bản Roblox thông dụng
     search_paths = [
+        f"/sdcard/Android/media/*/*/workspace/rj_{acc_name}_checkhudyhub.json",
+        f"/sdcard/Android/data/*/files/workspace/rj_{acc_name}_checkhudyhub.json",
+        f"/sdcard/*/workspace/rj_{acc_name}_checkhudyhub.json"   # cho bản mod
+    ]
+    best = None
+    best_mtime = 0
+    for path in search_paths:
+        for f in glob.glob(path):
+            try:
+                mtime = os.path.getmtime(f)
+                if mtime > best_mtime:
+                    best_mtime = mtime
+                    best = f
+            except:
+                pass
+    if best:
+        return best, best_mtime
+    return None, -1
+
+def get_heartbeat(acc_name):
+    global json_path_cache, heartbeat_last_check
+    now = time.time()
+    # Nếu đã có cache và file vẫn tồn tại, kiểm tra mỗi 15 giây
+    if acc_name in json_path_cache:
+        cached_path, cached_mtime = json_path_cache[acc_name]
+        if os.path.exists(cached_path):
+            if now - heartbeat_last_check.get(acc_name, 0) < 15:
+                return cached_mtime
+            try:
+                mtime = os.path.getmtime(cached_path)
+                json_path_cache[acc_name] = (cached_path, mtime)
+                heartbeat_last_check[acc_name] = now
+                return mtime
+            except:
+                pass
+        # File mất, xóa cache
+        del json_path_cache[acc_name]
+
+    # Tìm mới (chỉ khi không có cache hoặc file mất)
+    best_file, best_mtime = find_latest_json(acc_name)
+    if best_file:
+        json_path_cache[acc_name] = (best_file, best_mtime)
+        heartbeat_last_check[acc_name] = now
+        return best_mtime
+    return -1
+
+def discover_unbound_account():
+    # Duyệt qua tất cả file JSON mới (không quét lại nếu không cần)
+    global CLAIMED_NAMES
+    search_patterns = [
         "/sdcard/Android/media/*/*/workspace/rj_*_checkhudyhub.json",
         "/sdcard/Android/data/*/files/workspace/rj_*_checkhudyhub.json",
-        "/sdcard/*/Workspace/rj_*_checkhudyhub.json", 
         "/sdcard/*/workspace/rj_*_checkhudyhub.json"
     ]
-    files = []
-    for path in search_paths: files.extend(glob.glob(path))
-    
-    for f in sorted(files, key=os.path.getmtime, reverse=True):
-        try:
-            mtime = os.path.getmtime(f)
-            if (time.time() - mtime) < 150:
-                with open(f, 'r', encoding='utf-8') as file:
-                    data = json.load(file)
-                    pname = data.get("playerName")
-                    if pname and pname not in claimed_names:
-                        return pname
-        except Exception: pass
+    candidates = []
+    for pattern in search_patterns:
+        for f in glob.glob(pattern):
+            try:
+                mtime = os.path.getmtime(f)
+                if time.time() - mtime < 150:
+                    name = os.path.basename(f).split('_')[1]  # rj_NAME_checkhudyhub.json
+                    candidates.append((name, mtime, f))
+            except:
+                pass
+    # Lọc trùng, chọn mới nhất
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    seen = set()
+    for name, _, _ in candidates:
+        if name not in CLAIMED_NAMES and name not in seen:
+            CLAIMED_NAMES.add(name)
+            return name
     return None
 
-def get_heartbeat_data(acc_name):
-    global json_path_cache
-    
-    if acc_name in json_path_cache and os.path.exists(json_path_cache[acc_name]):
-        latest_file = json_path_cache[acc_name]
-    else:
-        search_paths = [
-            f"/sdcard/Android/media/*/*/workspace/rj_{acc_name}_checkhudyhub.json",
-            f"/sdcard/Android/data/*/files/workspace/rj_{acc_name}_checkhudyhub.json",
-            f"/sdcard/*/Workspace/rj_{acc_name}_checkhudyhub.json", 
-            f"/sdcard/*/workspace/rj_{acc_name}_checkhudyhub.json"
-        ]
-        files = []
-        for path in search_paths: files.extend(glob.glob(path))
-        if not files: return -1
-        
-        latest_file = max(files, key=os.path.getmtime)
-        json_path_cache[acc_name] = latest_file 
-    
-    return os.path.getmtime(latest_file)
-
+# =====================================================================
+# BOOT & RESTART
+# =====================================================================
 def trigger_boot_step_1(pkg):
     safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
 
 def trigger_boot_step_2(pkg):
     safe_root(f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\"'")
 
-def force_restart_app(pkg, states, current_time, reason_text, color_code):
-    global json_path_cache
-    states[pkg]['text'] = reason_text
-    states[pkg]['color'] = color_code
-    
+def force_restart_app(pkg, states, current_time, reason, color):
+    states[pkg]['text'] = reason
+    states[pkg]['color'] = color
     safe_root(f"su -c 'am force-stop {pkg}'")
-    
     bound_name = states[pkg].get('bound_name')
     if bound_name:
         safe_root(f"su -c 'find /sdcard -type f -name \"rj_{bound_name}_checkhudyhub.json\" -delete 2>/dev/null'")
         if bound_name in json_path_cache:
             del json_path_cache[bound_name]
-            
+        if bound_name in heartbeat_last_check:
+            del heartbeat_last_check[bound_name]
+        CLAIMED_NAMES.discard(bound_name)
     time.sleep(0.5)
     trigger_boot_step_1(pkg)
-    
     states[pkg]['boot_phase'] = 1 if target_place_id else 0
     states[pkg]['boot_timer'] = current_time
     states[pkg]['rejoin_time'] = current_time
 
 # =====================================================================
-# HÀM MỚI: BƠM COOKIE VÀO WEBVIEW DATABASE
+# COOKIE INJECTION (WEBVIEW + XML FALLBACK)
 # =====================================================================
 def inject_cookie_webview(pkg, cookie):
-    """Tự động bơm cookie vào WebView Cookies database của app."""
     webview_db = f"/data/data/{pkg}/app_webview/Default/Cookies"
-    
-    # Kiểm tra file tồn tại không
     try:
         subprocess.check_output(f"su -c 'test -f {webview_db} && echo exists'", shell=True, text=True, timeout=5)
     except:
-        return False  # Không tìm thấy file WebView Cookies
+        return False
 
-    # Tạo thư mục tạm và copy database về để xử lý (tránh khóa file)
     tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
     os.makedirs(tmp_dir, exist_ok=True)
     local_db = os.path.join(tmp_dir, f"cookies_{pkg.split('.')[-1]}.db")
 
-    # Copy database về local
     subprocess.run(f"su -c 'cp {webview_db} {local_db} && chmod 666 {local_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     try:
         conn = sqlite3.connect(local_db)
-        cursor = conn.cursor()
-
-        # Kiểm tra bảng cookies có tồn tại không
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
-        if not cursor.fetchone():
+        c = conn.cursor()
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+        if not c.fetchone():
             conn.close()
             os.remove(local_db)
             return False
 
-        # Lấy cấu trúc bảng để biết các cột
-        cursor.execute("PRAGMA table_info(cookies)")
-        columns = [col[1] for col in cursor.fetchall()]
+        c.execute("PRAGMA table_info(cookies)")
+        columns = [col[1] for col in c.fetchall()]
 
-        # Chuẩn bị dữ liệu cần chèn
         now = int(time.time())
         data = {
             'creation_utc': now,
@@ -344,26 +352,19 @@ def inject_cookie_webview(pkg, cookie):
             'source_port': -1,
             'is_same_party': 0
         }
-
-        # Lọc chỉ giữ các cột tồn tại trong bảng
         cols = [k for k in data if k in columns]
         values = [data[k] for k in cols]
-        placeholders = ', '.join(['?' for _ in cols])
+        placeholders = ','.join(['?' for _ in cols])
 
-        # Xóa cookie cũ nếu có
-        cursor.execute("DELETE FROM cookies WHERE host_key=? AND name=?", ('.roblox.com', '.ROBLOSECURITY'))
-        # Chèn cookie mới
-        sql = f"INSERT INTO cookies ({', '.join(cols)}) VALUES ({placeholders})"
-        cursor.execute(sql, values)
-
+        c.execute("DELETE FROM cookies WHERE host_key=? AND name=?", ('.roblox.com', '.ROBLOSECURITY'))
+        sql = f"INSERT INTO cookies ({','.join(cols)}) VALUES ({placeholders})"
+        c.execute(sql, values)
         conn.commit()
         conn.close()
 
-        # Copy database đã sửa trở lại vị trí gốc
         subprocess.run(f"su -c 'cp {local_db} {webview_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         os.remove(local_db)
         return True
-
     except Exception as e:
         try:
             conn.close()
@@ -373,8 +374,59 @@ def inject_cookie_webview(pkg, cookie):
             os.remove(local_db)
         except:
             pass
-        print(f"{R}    └─ Lỗi khi chèn cookie WebView: {str(e)[:100]}{RESET}")
+        print(f"{R}    └─ Lỗi WebView: {str(e)[:80]}{RESET}")
         return False
+
+def inject_cookie_safe_xml(pkg, cookie):
+    # Bơm vào tất cả file shared_prefs .xml có cấu trúc <map>
+    shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
+    try:
+        files_str = subprocess.check_output(f"su -c 'ls {shared_prefs_dir}/*.xml 2>/dev/null'", shell=True, text=True, timeout=5).strip()
+    except:
+        return False
+    if not files_str:
+        return False
+    xml_files = files_str.split('\n')
+    uid = "10000"
+    try:
+        uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
+    except:
+        pass
+
+    for xml_path in xml_files:
+        xml_path = xml_path.strip()
+        if not xml_path:
+            continue
+        try:
+            raw = subprocess.check_output(f"su -c 'cat {xml_path} 2>/dev/null'", shell=True, text=True, timeout=5)
+        except:
+            continue
+        if '<map>' not in raw:
+            continue
+        existing = {}
+        try:
+            root_el = ET.fromstring(raw)
+            for string_tag in root_el.findall('string'):
+                key = string_tag.get('name')
+                if key:
+                    existing[key] = string_tag.text
+        except:
+            pass
+        existing['ROBLOSECURITY'] = cookie
+        new_root = ET.Element('map')
+        for k, v in existing.items():
+            el = ET.SubElement(new_root, 'string', name=k)
+            el.text = v
+        xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(new_root, encoding='unicode')
+        tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+        fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(xml_output)
+        # Copy và set quyền
+        subprocess.run(f"su -c 'cp {temp_file} {xml_path} && chown {uid}:{uid} {xml_path} && chmod 660 {xml_path} && restorecon {xml_path} 2>/dev/null || true && touch {xml_path}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.remove(temp_file)
+    return True
 
 def login_via_cookie():
     global selected_packages
@@ -382,200 +434,225 @@ def login_via_cookie():
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
         time.sleep(2)
         return
-
-    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG PHÁT HIỆN DATABASE) ---{RESET}")
-    print(f"{Y}Tool sẽ thử bơm cookie vào WebView Cookies, nếu không có sẽ dùng XML.{RESET}")
-
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG PHÁT HIỆN DB) ---{RESET}")
+    print(f"{Y}Tool sẽ thử WebView, nếu không có sẽ dùng XML shared_prefs.{RESET}")
     try:
         test = subprocess.check_output("su -c 'echo testok'", shell=True, text=True, timeout=5)
         if "testok" not in test:
-            print(f"{R}[!] Không có quyền ROOT! Hãy cấp SU cho Termux.{RESET}")
+            print(f"{R}[!] Không có quyền ROOT!{RESET}")
             time.sleep(3)
             return
     except:
-        print(f"{R}[!] Lỗi kiểm tra SU – vui lòng kiểm tra lại root.{RESET}")
+        print(f"{R}[!] Lỗi kiểm tra SU.{RESET}")
         time.sleep(3)
         return
 
     fix_tty()
     cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip().replace('\r', '').replace('\n', '')
     if not cookie.startswith("_|WARNING"):
-        print(f"{R}[!] Cookie không hợp lệ! Cookie phải bắt đầu bằng '_|WARNING'{RESET}")
+        print(f"{R}[!] Cookie không hợp lệ!{RESET}")
         time.sleep(2)
         return
 
-    print(f"\n{G}[+] Cookie hợp lệ! Đang inject vào {len(selected_packages)} app...{RESET}")
+    print(f"\n{G}[+] Cookie hợp lệ! Đang inject...{RESET}")
     time.sleep(1)
 
     for idx, item in enumerate(selected_packages, 1):
         pkg = item['pkg']
         print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
-        print(f"{Y}[{idx}/{len(selected_packages)}] Đang xử lý: {pkg}{RESET}")
-
-        # Force stop
+        print(f"{Y}[{idx}/{len(selected_packages)}] {pkg}{RESET}")
         subprocess.run(f"su -c 'am force-stop {pkg}'", shell=True, stdout=subprocess.DEVNULL)
         time.sleep(1)
 
-        # Thử bơm vào WebView trước
-        if inject_cookie_webview(pkg, cookie):
-            print(f"{G}[✓] Đã bơm cookie vào WebView Database.{RESET}")
+        success = inject_cookie_webview(pkg, cookie)
+        if success:
+            print(f"{G}[✓] WebView Database thành công.{RESET}")
         else:
-            print(f"{Y}[*] Không tìm thấy WebView Database, thử dùng XML shared_prefs...{RESET}")
-            # Fallback: dùng XML shared_prefs (code cũ)
-            # ... (bạn có thể gọi hàm inject_cookie_safe_xml cũ ở đây nếu muốn)
-            print(f"{R}[✗] Chưa hỗ trợ XML fallback trong bản này.{RESET}")
+            print(f"{Y}[*] Thử XML shared_prefs...{RESET}")
+            if inject_cookie_safe_xml(pkg, cookie):
+                print(f"{G}[✓] XML shared_prefs thành công.{RESET}")
+            else:
+                print(f"{R}[✗] Không thể inject cookie.{RESET}")
 
-        # Xóa cache
-        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/*'", shell=True, stdout=subprocess.DEVNULL)
-        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
-
-        # Mở app
-        print(f"{Y}[*] Đang mở app...{RESET}")
+        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/*; rm -rf /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
+        print(f"{Y}[*] Mở app...{RESET}")
         subprocess.run(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'", shell=True, stdout=subprocess.DEVNULL)
         time.sleep(1)
-
-    print(f"\n{G}[+] HOÀN TẤT. App sẽ tự động đăng nhập nếu cookie đúng.{RESET}")
+    print(f"\n{G}[+] HOÀN TẤT.{RESET}")
     time.sleep(5)
 
+# =====================================================================
+# AUTO REJOIN (TỐI ƯU NHẸ)
+# =====================================================================
 def start_auto_rejoin():
-    global selected_packages, kill_all_time, json_path_cache
+    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES
     if not selected_packages:
-        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}"); time.sleep(2); return
+        print(f"{R}[!] Chọn package trước!{RESET}")
+        time.sleep(2)
+        return
 
-    print(f"\n{Y}[*] Đang Inject Universal Script cho các Package...{RESET}")
+    print(f"\n{Y}[*] Inject script universal...{RESET}")
     inject_universal_lua()
-    
+
     states = {}
-    current_time = time.time()
+    now = time.time()
     for item in selected_packages:
         pkg = item['pkg']
         states[pkg] = {
             'text': 'Đang Mở Sảnh...',
             'color': Y,
             'boot_phase': 0,
-            'boot_timer': current_time,
-            'rejoin_time': current_time,
+            'boot_timer': now,
+            'rejoin_time': now,
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...'
         }
-        force_restart_app(pkg, states, current_time, 'Đang Mở Sảnh...', Y)
+        force_restart_app(pkg, states, now, 'Đang Mở Sảnh...', Y)
 
     os.system("stty sane < /dev/tty > /dev/null 2>&1")
 
+    # Vòng lặp nhẹ
+    last_dashboard = 0
     while True:
         try:
             current_time = time.time()
-            
+            any_change = False
+
             for item in selected_packages:
                 pkg = item['pkg']
-                uptime_seconds = current_time - states[pkg]['rejoin_time']
-                
-                if states[pkg]['boot_phase'] == 1:
-                    elapsed_boot = current_time - states[pkg]['boot_timer']
-                    if elapsed_boot >= 30:
-                        trigger_boot_step_2(pkg)
-                        states[pkg]['boot_phase'] = 0 
-                    else:
-                        states[pkg]['text'] = f"Đang Nạp Game ({int(15 - elapsed_boot)}s)"
-                        states[pkg]['color'] = M
-                    continue 
-                
-                uptime_minutes = uptime_seconds / 60
+                state = states[pkg]
+                uptime_seconds = current_time - state['rejoin_time']
 
-                if kill_all_time > 0 and uptime_minutes >= kill_all_time:
-                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
+                # Phase 1: chờ bắn deep link
+                if state['boot_phase'] == 1:
+                    if current_time - state['boot_timer'] >= 30:
+                        trigger_boot_step_2(pkg)
+                        state['boot_phase'] = 0
+                        any_change = True
+                    else:
+                        new_text = f"Đang Nạp Game ({int(30 - (current_time - state['boot_timer']))}s)"
+                        if state['text'] != new_text:
+                            state['text'] = new_text
+                            state['color'] = M
+                            any_change = True
                     continue
 
-                if not states[pkg]['bound_name']:
-                    claimed = [s['bound_name'] for s in states.values() if s['bound_name']]
-                    found_name = discover_unbound_account(claimed)
-                    if found_name:
-                        states[pkg]['bound_name'] = found_name
-                        states[pkg]['display_name'] = found_name
-                
-                bound_name = states[pkg]['bound_name']
-                is_in_grace_period = (uptime_seconds < 150)
+                # Auto restart nếu kill_all_time > 0
+                if kill_all_time > 0 and uptime_seconds / 60 >= kill_all_time:
+                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
+                    any_change = True
+                    continue
 
-                if not bound_name:
-                    if is_in_grace_period:
-                        states[pkg]['text'] = f"Đang Load ({int(150 - uptime_seconds)}s)"
-                        states[pkg]['color'] = Y
+                # Bind tên ingame
+                if not state['bound_name']:
+                    found = discover_unbound_account()
+                    if found:
+                        state['bound_name'] = found
+                        state['display_name'] = found
+                        any_change = True
+
+                bound = state['bound_name']
+                is_grace = (uptime_seconds < 150)
+
+                if not bound:
+                    if is_grace:
+                        new_text = f"Đang Load ({int(150 - uptime_seconds)}s)"
+                        if state['text'] != new_text:
+                            state['text'] = new_text
+                            state['color'] = Y
+                            any_change = True
                     else:
                         force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
+                        any_change = True
                     continue
 
-                last_ping = get_heartbeat_data(bound_name)
-
+                # Kiểm tra heartbeat
+                last_ping = get_heartbeat(bound)
                 if last_ping == -1:
-                    if is_in_grace_period: 
-                        states[pkg]['text'] = f"Đang Nạp Data ({int(150 - uptime_seconds)}s)"
-                        states[pkg]['color'] = Y
+                    if is_grace:
+                        new_text = f"Đang Nạp Data ({int(150 - uptime_seconds)}s)"
+                        if state['text'] != new_text:
+                            state['text'] = new_text
+                            state['color'] = Y
+                            any_change = True
                     else:
                         force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
+                        any_change = True
                 else:
                     diff = current_time - last_ping
-                    if diff > 45: 
-                        if is_in_grace_period:
-                            states[pkg]['text'] = f"Vào Server... ({int(150 - uptime_seconds)}s)"
-                            states[pkg]['color'] = Y
+                    if diff > 45:
+                        if is_grace:
+                            new_text = f"Vào Server... ({int(150 - uptime_seconds)}s)"
+                            if state['text'] != new_text:
+                                state['text'] = new_text
+                                state['color'] = Y
+                                any_change = True
                         else:
                             force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                            any_change = True
                     else:
-                        states[pkg]['text'] = f"Đang Farm ({int(diff)}s trước)"
-                        states[pkg]['color'] = G
+                        new_text = f"Đang Farm ({int(diff)}s trước)"
+                        if state['text'] != new_text:
+                            state['text'] = new_text
+                            state['color'] = G
+                            any_change = True
 
-            clear_screen()
-            print_banner()
-            print(f"{C}{'INGAME NAME':<15} | {'PACKAGE INFO':<15} | {'TÌNH TRẠNG HIỆN TẠI':<25}{RESET}")
-            print("-" * 65)
-            
-            for item in selected_packages:
-                pkg = item['pkg']
-                s_name = states[pkg]['display_name']
-                if len(s_name) > 14: s_name = s_name[:11] + "..."
-                s_pkg = pkg.split('.')[-1]
-                if len(s_pkg) > 14: s_pkg = s_pkg[:11] + "..."
-                
-                txt = states[pkg]['text']
-                col = states[pkg]['color']
-                print(f"{s_name:<15} | {s_pkg:<15} | {col}{txt:<25}{RESET}")
-            
-            print("-" * 65)
-            print(f"{C} Đang chạy Live... (Bấm Ctrl + C để dừng){RESET}")
-            
-            time.sleep(3)
+            # Chỉ vẽ dashboard nếu có thay đổi hoặc sau 30 giây
+            if any_change or (current_time - last_dashboard > 30):
+                clear_screen()
+                print_banner()
+                print(f"{C}{'INGAME NAME':<15} | {'PACKAGE INFO':<15} | {'TÌNH TRẠNG HIỆN TẠI':<25}{RESET}")
+                print("-" * 65)
+                for item in selected_packages:
+                    pkg = item['pkg']
+                    s_name = states[pkg]['display_name']
+                    if len(s_name) > 14: s_name = s_name[:11] + "..."
+                    s_pkg = pkg.split('.')[-1]
+                    if len(s_pkg) > 14: s_pkg = s_pkg[:11] + "..."
+                    txt = states[pkg]['text']
+                    col = states[pkg]['color']
+                    print(f"{s_name:<15} | {s_pkg:<15} | {col}{txt:<25}{RESET}")
+                print("-" * 65)
+                print(f"{C} Đang chạy Live... (Ctrl+C để dừng){RESET}")
+                last_dashboard = current_time
+
+            time.sleep(10)  # Tăng lên 10 giây để giảm tải CPU
 
         except KeyboardInterrupt:
             print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
             fix_tty()
             break
         except Exception as e:
-            time.sleep(3)
+            time.sleep(5)
 
+# =====================================================================
+# MAIN
+# =====================================================================
 def main():
     fix_tty()
     while True:
         clear_screen()
         print_banner()
-        
-        print(f"[{C}1{RESET}] Quét và Chọn Package Roblox (Fix Trùng Lặp)")
-        print(f"[{C}2{RESET}] Cài đặt Game ID (PlaceID) & Time Kill All")
+        print(f"[{C}1{RESET}] Quét và Chọn Package Roblox")
+        print(f"[{C}2{RESET}] Cài đặt Game ID & Time Kill All")
         print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
         print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
         print(f"[{C}5{RESET}] Thoát")
-        
         try:
             fix_tty()
             choice = input(f"\n{M}HuDy > {RESET}").strip()
         except EOFError:
             fix_tty()
             continue
-        
-        if choice == '1': select_package_menu()
-        elif choice == '2': settings_menu()
-        elif choice == '3': start_auto_rejoin()
-        elif choice == '4': login_via_cookie()
-        elif choice == '5': 
+        if choice == '1':
+            select_package_menu()
+        elif choice == '2':
+            settings_menu()
+        elif choice == '3':
+            start_auto_rejoin()
+        elif choice == '4':
+            login_via_cookie()
+        elif choice == '5':
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
             fix_tty()
