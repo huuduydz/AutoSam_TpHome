@@ -1,4 +1,4 @@
-import os, time, subprocess, glob, re, json, sys, builtins, sqlite3, tempfile
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
@@ -68,11 +68,11 @@ CHANGE_ACCOUNTS_CUSTOM = "Disable"
 CHECK_UI_TIME = 180
 AUTO_BLOCK = "Disable"
 
-# Bộ nhớ thời gian restart gần nhất của từng package
+# Thời gian restart gần nhất của mỗi package
 last_restart_time = {}
 
 # =====================================================================
-# LẤY CPU & RAM (AN TOÀN)
+# LẤY CPU & RAM
 # =====================================================================
 def get_cpu_usage():
     try:
@@ -94,7 +94,7 @@ def get_memory_usage():
         for line in lines:
             if line.startswith("MemTotal:"):
                 total = int(line.split()[1])
-            elif line.startswith("MemAvailable:") or line.startswith("MemFree:"):
+            elif line.startswith("MemAvailable:"):
                 free = int(line.split()[1])
         if total > 0:
             used = total - free
@@ -143,7 +143,7 @@ def print_dashboard(states):
     print(f"{C} Đang chạy Live... (Bấm Ctrl+C để dừng){RESET}")
 
 # =====================================================================
-# CÀI ĐẶT (giữ nguyên)
+# CÀI ĐẶT
 # =====================================================================
 def settings_menu():
     global target_place_id, kill_all_time
@@ -221,7 +221,7 @@ def select_package_menu():
         pass
 
 # =====================================================================
-# INJECT SCRIPT UNIVERSAL (giữ nguyên)
+# INJECT SCRIPT UNIVERSAL
 # =====================================================================
 def inject_universal_lua():
     lua_code = """task.wait(5)
@@ -261,29 +261,28 @@ end)"""
     safe_root(root_cmd)
 
 # =====================================================================
-# HEARTBEAT & ACCOUNT DISCOVERY (QUÉT THEO PACKAGE)
+# HEARTBEAT & ACCOUNT DISCOVERY (DÙNG FIND NHANH)
 # =====================================================================
-def get_package_workspace_paths(pkg):
-    return [
-        f"/sdcard/Android/media/{pkg}/files/workspace",
-        f"/sdcard/Android/data/{pkg}/files/workspace",
-        f"/sdcard/{pkg}/workspace"
+def get_all_heartbeat_files_fast(pkg):
+    """Dùng find của hệ thống để tìm tất cả file JSON heartbeat trong workspace của pkg"""
+    # Tìm trong các thư mục workspace tiềm năng
+    dirs = [
+        f"/sdcard/Android/media/{pkg}",
+        f"/sdcard/Android/data/{pkg}",
+        f"/sdcard/{pkg}"
     ]
-
-def get_heartbeat_file_for_account(pkg, acc_name):
-    paths = get_package_workspace_paths(pkg)
-    best, best_mtime = None, 0
-    for ws in paths:
-        pattern = os.path.join(ws, f"rj_{acc_name}_checkhudyhub.json")
-        for f in glob.glob(pattern):
-            try:
-                mtime = os.path.getmtime(f)
-                if mtime > best_mtime:
-                    best_mtime = mtime
-                    best = f
-            except:
-                pass
-    return best, best_mtime if best else -1
+    results = []
+    for d in dirs:
+        try:
+            cmd = f"su -c 'find {d} -name \"rj_*_checkhudyhub.json\" -type f 2>/dev/null'"
+            out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
+            for line in out.splitlines():
+                line = line.strip()
+                if line:
+                    results.append(line)
+        except:
+            pass
+    return results
 
 def get_heartbeat(acc_name, pkg):
     global json_path_cache, heartbeat_last_check
@@ -297,7 +296,7 @@ def get_heartbeat(acc_name, pkg):
     if acc_name in cache:
         cached_path, cached_mtime = cache[acc_name]
         if os.path.exists(cached_path):
-            if now - last_check.get(acc_name, 0) < 30:  # 30 giây kiểm tra một lần
+            if now - last_check.get(acc_name, 0) < 25:  # 25 giây kiểm tra một lần
                 return cached_mtime
             try:
                 mtime = os.path.getmtime(cached_path)
@@ -308,7 +307,20 @@ def get_heartbeat(acc_name, pkg):
                 pass
         del cache[acc_name]
 
-    best_file, best_mtime = get_heartbeat_file_for_account(pkg, acc_name)
+    # Tìm mới bằng find nhanh
+    files = get_all_heartbeat_files_fast(pkg)
+    best_mtime = 0
+    best_file = None
+    for f in files:
+        try:
+            # Kiểm tra tên file chứa acc_name
+            if acc_name in f:
+                mtime = os.path.getmtime(f)
+                if mtime > best_mtime:
+                    best_mtime = mtime
+                    best_file = f
+        except:
+            pass
     if best_file:
         cache[acc_name] = (best_file, best_mtime)
         last_check[acc_name] = now
@@ -317,21 +329,21 @@ def get_heartbeat(acc_name, pkg):
 
 def discover_unbound_account(pkg):
     global CLAIMED_NAMES
-    paths = get_package_workspace_paths(pkg)
+    files = get_all_heartbeat_files_fast(pkg)
     candidates = []
-    for ws in paths:
-        pattern = os.path.join(ws, "rj_*_checkhudyhub.json")
-        for f in glob.glob(pattern):
-            try:
-                mtime = os.path.getmtime(f)
-                if time.time() - mtime < 180:  # Mới trong 3 phút
-                    basename = os.path.basename(f)
-                    parts = basename.split('_')
-                    if len(parts) >= 3:
-                        name = parts[1]
-                        candidates.append((name, mtime))
-            except:
-                pass
+    now = time.time()
+    for f in files:
+        try:
+            mtime = os.path.getmtime(f)
+            if now - mtime < 240:  # Chỉ nhận file mới trong 4 phút
+                basename = os.path.basename(f)
+                # Tách lấy tên: rj_TEN_checkhudyhub.json
+                parts = basename.split('_')
+                if len(parts) >= 3:
+                    name = parts[1]
+                    candidates.append((name, mtime))
+        except:
+            pass
     candidates.sort(key=lambda x: x[1], reverse=True)
     seen = set()
     for name, _ in candidates:
@@ -341,7 +353,7 @@ def discover_unbound_account(pkg):
     return None
 
 # =====================================================================
-# BOOT & RESTART (GIỚI HẠN TẦN SUẤT)
+# BOOT & RESTART
 # =====================================================================
 def trigger_boot_step_1(pkg):
     safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
@@ -352,7 +364,7 @@ def trigger_boot_step_2(pkg):
 
 def force_restart_app(pkg, states, current_time, reason, color):
     global last_restart_time
-    # Chỉ restart nếu đã qua 180 giây kể từ lần restart trước
+    # Giới hạn restart 180 giây
     if pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
         return
     last_restart_time[pkg] = current_time
@@ -370,12 +382,14 @@ def force_restart_app(pkg, states, current_time, reason, color):
         CLAIMED_NAMES.discard(bound_name)
     time.sleep(0.5)
     trigger_boot_step_1(pkg)
-    time.sleep(3)  # Chờ app mở hoàn toàn
-    trigger_boot_step_2(pkg)
+    time.sleep(2)  # chờ app mở
+    trigger_boot_step_2(pkg)  # bắn deep link ngay
     states[pkg]['rejoin_time'] = current_time
+    # Đặt cờ warmup: trong 60 giây đầu không kiểm tra heartbeat
+    states[pkg]['warmup_until'] = current_time + 60
 
 # =====================================================================
-# COOKIE INJECTION (giữ nguyên)
+# COOKIE INJECTION
 # =====================================================================
 def inject_cookie_webview(pkg, cookie):
     webview_db = f"/data/data/{pkg}/app_webview/Default/Cookies"
@@ -524,7 +538,7 @@ def login_via_cookie():
     time.sleep(5)
 
 # =====================================================================
-# AUTO REJOIN (ĐÃ TỐI ƯU VÀ GIỚI HẠN RESTART)
+# AUTO REJOIN (ĐÃ TỐI ƯU + WARMUP + FIND NHANH)
 # =====================================================================
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time
@@ -545,7 +559,8 @@ def start_auto_rejoin():
             'color': Y,
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
-            'rejoin_time': now
+            'rejoin_time': now,
+            'warmup_until': now + 60   # 60s đầu không kiểm tra heartbeat
         }
         force_restart_app(pkg, states, now, 'Đang Mở Sảnh...', Y)
 
@@ -568,6 +583,15 @@ def start_auto_rejoin():
                     any_change = True
                     continue
 
+                # Trong thời gian warmup, không kiểm tra gì cả, chỉ cập nhật trạng thái "Đang Warmup"
+                if 'warmup_until' in state and current_time < state['warmup_until']:
+                    new_text = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
+                    if state['text'] != new_text:
+                        state['text'] = new_text
+                        state['color'] = Y
+                        any_change = True
+                    continue
+
                 # Bind tên ingame
                 if not state['bound_name']:
                     found = discover_unbound_account(pkg)
@@ -577,30 +601,26 @@ def start_auto_rejoin():
                         any_change = True
 
                 bound = state['bound_name']
-                is_grace = (uptime_seconds < 180)  # Grace period 3 phút
+                is_grace = (uptime_seconds < 240)  # Grace period 4 phút
 
                 if not bound:
                     if is_grace:
-                        new_text = f"Đang Load ({int(180 - uptime_seconds)}s)"
+                        new_text = f"Đang Load ({int(240 - uptime_seconds)}s)"
                         if state['text'] != new_text:
                             state['text'] = new_text
                             state['color'] = Y
                             any_change = True
                     else:
-                        # Chỉ restart nếu đã qua 3 phút và cách lần restart trước ít nhất 3 phút
                         if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
                             force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
                             any_change = True
-                        else:
-                            # Chưa đủ 3 phút, vẫn hiển thị trạng thái nhưng không restart
-                            pass
                     continue
 
                 # Kiểm tra heartbeat
                 last_ping = get_heartbeat(bound, pkg)
                 if last_ping == -1:
                     if is_grace:
-                        new_text = f"Đang Nạp Data ({int(180 - uptime_seconds)}s)"
+                        new_text = f"Đang Nạp Data ({int(240 - uptime_seconds)}s)"
                         if state['text'] != new_text:
                             state['text'] = new_text
                             state['color'] = Y
@@ -611,9 +631,9 @@ def start_auto_rejoin():
                             any_change = True
                 else:
                     diff = current_time - last_ping
-                    if diff > 60:  # Nếu quá 60 giây không có tín hiệu mới
+                    if diff > 60:
                         if is_grace:
-                            new_text = f"Vào Server... ({int(180 - uptime_seconds)}s)"
+                            new_text = f"Vào Server... ({int(240 - uptime_seconds)}s)"
                             if state['text'] != new_text:
                                 state['text'] = new_text
                                 state['color'] = Y
