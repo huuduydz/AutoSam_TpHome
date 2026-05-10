@@ -68,7 +68,6 @@ CHANGE_ACCOUNTS_CUSTOM = "Disable"
 CHECK_UI_TIME = 180
 AUTO_BLOCK = "Disable"
 
-# Thời gian restart gần nhất của mỗi package
 last_restart_time = {}
 
 # =====================================================================
@@ -221,7 +220,7 @@ def select_package_menu():
         pass
 
 # =====================================================================
-# INJECT SCRIPT UNIVERSAL
+# INJECT SCRIPT UNIVERSAL (giữ nguyên)
 # =====================================================================
 def inject_universal_lua():
     lua_code = """task.wait(5)
@@ -261,20 +260,44 @@ end)"""
     safe_root(root_cmd)
 
 # =====================================================================
-# HEARTBEAT & ACCOUNT DISCOVERY (DÙNG FIND NHANH)
+# HEARTBEAT & ACCOUNT DISCOVERY (ĐÃ SỬA TÌM ĐÚNG FILE)
 # =====================================================================
-def get_all_heartbeat_files_fast(pkg):
-    """Dùng find của hệ thống để tìm tất cả file JSON heartbeat trong workspace của pkg"""
-    # Tìm trong các thư mục workspace tiềm năng
-    dirs = [
-        f"/sdcard/Android/media/{pkg}",
-        f"/sdcard/Android/data/{pkg}",
-        f"/sdcard/{pkg}"
+def extract_username_from_filename(filename):
+    """Lấy tên ingame từ tên file kiểu rj_TEN_checkhudyhub.json hoặc r_j_TEN_checkhudyhub.json..."""
+    base = os.path.basename(filename)
+    # Xóa đuôi _checkhudyhub.json
+    if base.endswith('_checkhudyhub.json'):
+        base = base[:-len('_checkhudyhub.json')]
+    else:
+        # Không đúng định dạng, thử tách phần trước đuôi .json
+        base = os.path.splitext(base)[0]
+    # Tách bởi dấu gạch dưới, lấy phần tử cuối cùng (sau khi đã bỏ hậu tố) làm tên
+    # Với rj_TEN -> parts = ['rj', 'TEN'] -> lấy parts[-1]
+    # Với r_j_TEN -> parts = ['r', 'j', 'TEN'] -> lấy parts[-1]
+    parts = base.split('_')
+    if len(parts) >= 2:
+        return parts[-1]  # Phần cuối là tên
+    return base  # fallback
+
+def get_all_heartbeat_files_fast(pkg=None):
+    """Dùng find hệ thống để tìm tất cả file *_checkhudyhub.json trên các đường dẫn phổ biến"""
+    # Các thư mục cần quét, bao gồm cả workspace của bản mod
+    search_dirs = [
+        "/sdcard/Android/media",
+        "/sdcard/Android/data",
+        "/sdcard/Delta",               # thư mục mod thường gặp
+        "/storage/emulated/0/Delta",
+        "/sdcard/ModWorkspace"
     ]
+    # Nếu có pkg, thêm thư mục riêng của package đó (để tối ưu)
+    if pkg:
+        search_dirs.insert(0, f"/sdcard/Android/media/{pkg}")
+        search_dirs.insert(0, f"/sdcard/Android/data/{pkg}")
+        search_dirs.insert(0, f"/sdcard/{pkg}")
     results = []
-    for d in dirs:
+    for d in search_dirs:
         try:
-            cmd = f"su -c 'find {d} -name \"rj_*_checkhudyhub.json\" -type f 2>/dev/null'"
+            cmd = f"su -c 'find {d} -iname \"*_checkhudyhub.json\" -type f 2>/dev/null'"
             out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
             for line in out.splitlines():
                 line = line.strip()
@@ -282,7 +305,8 @@ def get_all_heartbeat_files_fast(pkg):
                     results.append(line)
         except:
             pass
-    return results
+    # Loại trùng
+    return list(set(results))
 
 def get_heartbeat(acc_name, pkg):
     global json_path_cache, heartbeat_last_check
@@ -296,7 +320,7 @@ def get_heartbeat(acc_name, pkg):
     if acc_name in cache:
         cached_path, cached_mtime = cache[acc_name]
         if os.path.exists(cached_path):
-            if now - last_check.get(acc_name, 0) < 25:  # 25 giây kiểm tra một lần
+            if now - last_check.get(acc_name, 0) < 25:
                 return cached_mtime
             try:
                 mtime = os.path.getmtime(cached_path)
@@ -307,14 +331,15 @@ def get_heartbeat(acc_name, pkg):
                 pass
         del cache[acc_name]
 
-    # Tìm mới bằng find nhanh
-    files = get_all_heartbeat_files_fast(pkg)
+    # Tìm mới từ danh sách tất cả file
+    all_files = get_all_heartbeat_files_fast(pkg)
     best_mtime = 0
     best_file = None
-    for f in files:
+    for f in all_files:
         try:
-            # Kiểm tra tên file chứa acc_name
-            if acc_name in f:
+            # Lấy tên từ file, so khớp với acc_name
+            name_in_file = extract_username_from_filename(f)
+            if name_in_file == acc_name:
                 mtime = os.path.getmtime(f)
                 if mtime > best_mtime:
                     best_mtime = mtime
@@ -329,25 +354,21 @@ def get_heartbeat(acc_name, pkg):
 
 def discover_unbound_account(pkg):
     global CLAIMED_NAMES
-    files = get_all_heartbeat_files_fast(pkg)
+    all_files = get_all_heartbeat_files_fast(pkg)
     candidates = []
     now = time.time()
-    for f in files:
+    for f in all_files:
         try:
             mtime = os.path.getmtime(f)
-            if now - mtime < 240:  # Chỉ nhận file mới trong 4 phút
-                basename = os.path.basename(f)
-                # Tách lấy tên: rj_TEN_checkhudyhub.json
-                parts = basename.split('_')
-                if len(parts) >= 3:
-                    name = parts[1]
+            if now - mtime < 240:  # file mới trong 4 phút
+                name = extract_username_from_filename(f)
+                if name:
                     candidates.append((name, mtime))
         except:
             pass
     candidates.sort(key=lambda x: x[1], reverse=True)
-    seen = set()
     for name, _ in candidates:
-        if name not in CLAIMED_NAMES and name not in seen:
+        if name not in CLAIMED_NAMES:
             CLAIMED_NAMES.add(name)
             return name
     return None
@@ -364,7 +385,6 @@ def trigger_boot_step_2(pkg):
 
 def force_restart_app(pkg, states, current_time, reason, color):
     global last_restart_time
-    # Giới hạn restart 180 giây
     if pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
         return
     last_restart_time[pkg] = current_time
@@ -374,7 +394,7 @@ def force_restart_app(pkg, states, current_time, reason, color):
     safe_root(f"su -c 'am force-stop {pkg}'")
     bound_name = states[pkg].get('bound_name')
     if bound_name:
-        safe_root(f"su -c 'find /sdcard -type f -name \"rj_{bound_name}_checkhudyhub.json\" -delete 2>/dev/null'")
+        safe_root(f"su -c 'find /sdcard -type f -name \"*_{bound_name}_checkhudyhub.json\" -delete 2>/dev/null'")
         if pkg in json_path_cache and bound_name in json_path_cache[pkg]:
             del json_path_cache[pkg][bound_name]
         if pkg in heartbeat_last_check and bound_name in heartbeat_last_check[pkg]:
@@ -382,14 +402,13 @@ def force_restart_app(pkg, states, current_time, reason, color):
         CLAIMED_NAMES.discard(bound_name)
     time.sleep(0.5)
     trigger_boot_step_1(pkg)
-    time.sleep(2)  # chờ app mở
+    time.sleep(2)
     trigger_boot_step_2(pkg)  # bắn deep link ngay
     states[pkg]['rejoin_time'] = current_time
-    # Đặt cờ warmup: trong 60 giây đầu không kiểm tra heartbeat
     states[pkg]['warmup_until'] = current_time + 60
 
 # =====================================================================
-# COOKIE INJECTION
+# COOKIE INJECTION (giữ nguyên)
 # =====================================================================
 def inject_cookie_webview(pkg, cookie):
     webview_db = f"/data/data/{pkg}/app_webview/Default/Cookies"
@@ -538,7 +557,7 @@ def login_via_cookie():
     time.sleep(5)
 
 # =====================================================================
-# AUTO REJOIN (ĐÃ TỐI ƯU + WARMUP + FIND NHANH)
+# AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
 # =====================================================================
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time
@@ -560,7 +579,7 @@ def start_auto_rejoin():
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': now,
-            'warmup_until': now + 60   # 60s đầu không kiểm tra heartbeat
+            'warmup_until': now + 60
         }
         force_restart_app(pkg, states, now, 'Đang Mở Sảnh...', Y)
 
@@ -577,13 +596,11 @@ def start_auto_rejoin():
                 state = states[pkg]
                 uptime_seconds = current_time - state['rejoin_time']
 
-                # Auto restart nếu kill_all_time > 0
                 if kill_all_time > 0 and uptime_seconds / 60 >= kill_all_time:
                     force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
                     any_change = True
                     continue
 
-                # Trong thời gian warmup, không kiểm tra gì cả, chỉ cập nhật trạng thái "Đang Warmup"
                 if 'warmup_until' in state and current_time < state['warmup_until']:
                     new_text = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
                     if state['text'] != new_text:
@@ -592,7 +609,6 @@ def start_auto_rejoin():
                         any_change = True
                     continue
 
-                # Bind tên ingame
                 if not state['bound_name']:
                     found = discover_unbound_account(pkg)
                     if found:
@@ -601,7 +617,7 @@ def start_auto_rejoin():
                         any_change = True
 
                 bound = state['bound_name']
-                is_grace = (uptime_seconds < 240)  # Grace period 4 phút
+                is_grace = (uptime_seconds < 240)
 
                 if not bound:
                     if is_grace:
@@ -616,7 +632,6 @@ def start_auto_rejoin():
                             any_change = True
                     continue
 
-                # Kiểm tra heartbeat
                 last_ping = get_heartbeat(bound, pkg)
                 if last_ping == -1:
                     if is_grace:
