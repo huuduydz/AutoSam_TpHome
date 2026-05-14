@@ -405,7 +405,7 @@ def force_restart_app(pkg, states, current_time, reason, color):
     time.sleep(2)
     trigger_boot_step_2(pkg)  # bắn deep link ngay
     states[pkg]['rejoin_time'] = current_time
-    states[pkg]['warmup_until'] = current_time + 90
+    states[pkg]['warmup_until'] = current_time + 60
 
 # =====================================================================
 # COOKIE INJECTION (giữ nguyên)
@@ -561,11 +561,17 @@ def login_via_cookie():
 # =====================================================================
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time
-    last_ok_ping = {}  # {pkg: timestamp} - lần cuối heartbeat hợp lệ (diff <= 120s)
+    last_ok_ping = {}  # {pkg: timestamp} - lần cuối heartbeat hợp lệ
     if not selected_packages:
         print(f"{R}[!] Chọn package trước!{RESET}")
         time.sleep(2)
         return
+
+    # Reset để đảm bảo mở app được khi vào lại session
+    last_restart_time = {}
+    json_path_cache = {}
+    heartbeat_last_check = {}
+    CLAIMED_NAMES = set()
 
     print(f"\n{Y}[*] Inject script universal...{RESET}")
     inject_universal_lua()
@@ -580,7 +586,7 @@ def start_auto_rejoin():
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': now,
-            'warmup_until': now + 90
+            'warmup_until': now + 60
         }
         last_ok_ping[pkg] = now  # khởi tạo để không bị false-restart ngay
         force_restart_app(pkg, states, now, 'Đang Mở Sảnh...', Y)
