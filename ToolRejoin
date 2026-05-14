@@ -600,6 +600,7 @@ def start_auto_rejoin():
 
                 if kill_all_time > 0 and uptime_seconds / 60 >= kill_all_time:
                     force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
+                    last_ok_ping[pkg] = current_time  # reset sau restart
                     any_change = True
                     continue
 
@@ -631,6 +632,7 @@ def start_auto_rejoin():
                     else:
                         if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
                             force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
+                            last_ok_ping[pkg] = current_time  # reset sau restart
                             any_change = True
                     continue
 
@@ -645,6 +647,7 @@ def start_auto_rejoin():
                     else:
                         if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
                             force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
+                            last_ok_ping[pkg] = current_time  # reset sau restart
                             any_change = True
                 else:
                     diff = current_time - last_ping
@@ -664,6 +667,7 @@ def start_auto_rejoin():
                             # Chỉ restart nếu THỰC SỰ không có ping hợp lệ >= 120s
                             if real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
                                 force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                                last_ok_ping[pkg] = current_time  # reset sau restart
                                 any_change = True
                             elif real_diff < 120:
                                 # Vẫn còn ping gần đây, chỉ hiển thị cảnh báo
