@@ -49,9 +49,18 @@ def safe_input(prompt=''):
     val = re.sub(r'\x1b.', '', val)  # ESC + ký tự bất kỳ còn sót
     return val.strip()
 
-def safe_root(cmd):
+def safe_root(cmd, timeout=30):
+    """Chạy lệnh root với timeout - tránh subprocess treo mãi khi 24/7."""
     try:
-        subprocess.run(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            cmd, shell=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        pass
     except:
         pass
     finally:
@@ -430,7 +439,10 @@ def force_restart_app(pkg, states, current_time, reason, color):
     time.sleep(2)
     trigger_boot_step_2(pkg)  # bắn deep link ngay
     states[pkg]['rejoin_time'] = current_time
-    states[pkg]['warmup_until'] = current_time + 90  # 90s warmup
+    states[pkg]['warmup_until'] = current_time + 90
+    # Reset bound_name để tránh dùng tên cũ check heartbeat sau khi rejoin
+    states[pkg]['bound_name'] = None
+    states[pkg]['display_name'] = 'Chờ Auto-Bind...'
 
 # =====================================================================
 # COOKIE INJECTION (giữ nguyên)
@@ -665,8 +677,13 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 else:
                     state['text'] = f"Đang Farm ({int(diff)}s trước)"
                     state['color'] = G
-        except Exception:
-            pass
+        except Exception as e:
+            # Ghi lỗi nhưng không crash thread - quan trọng cho 24/7
+            try:
+                states[pkg]['text'] = f"Lỗi ({str(e)[:15]})"
+                states[pkg]['color'] = R
+            except:
+                pass
         stop_event.wait(10)
 
 
@@ -709,6 +726,8 @@ def start_auto_rejoin():
             time.sleep(3)  # delay giữa các tab tránh conflict
 
     os.system("stty sane < /dev/tty > /dev/null 2>&1")
+    # Đợi thêm 2s cho các shell command sau safe_root hoàn tất
+    time.sleep(2)
 
     # Khởi thread riêng cho từng package
     for item in selected_packages:
