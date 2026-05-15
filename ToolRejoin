@@ -342,6 +342,28 @@ def get_all_heartbeat_files_fast(pkg=None):
     # Loại trùng
     return list(set(results))
 
+def get_heartbeat_files_for_pkg(pkg):
+    """Chỉ tìm heartbeat file trong thư mục RIÊNG của package đó.
+    Dùng cho discover_unbound_account để tránh bind nhầm sang package khác."""
+    # Chỉ quét đúng các thư mục của pkg - không quét global
+    pkg_dirs = [
+        f"/sdcard/Android/media/{pkg}",
+        f"/sdcard/Android/data/{pkg}",
+        f"/sdcard/{pkg}",
+    ]
+    results = []
+    for d in pkg_dirs:
+        try:
+            cmd = f"su -c 'find {d} -iname \"*_checkhudyhub.json\" -type f 2>/dev/null'"
+            out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
+            for line in out.splitlines():
+                line = line.strip()
+                if line:
+                    results.append(line)
+        except:
+            pass
+    return list(set(results))
+
 def get_heartbeat(acc_name, pkg):
     global json_path_cache, heartbeat_last_check
     now = time.time()
@@ -388,10 +410,11 @@ def get_heartbeat(acc_name, pkg):
 
 def discover_unbound_account(pkg):
     global CLAIMED_NAMES
-    all_files = get_all_heartbeat_files_fast(pkg)
+    # Chỉ tìm trong thư mục RIÊNG của pkg - tránh bind nhầm sang package khác
+    pkg_files = get_heartbeat_files_for_pkg(pkg)
     candidates = []
     now = time.time()
-    for f in all_files:
+    for f in pkg_files:
         try:
             mtime = os.path.getmtime(f)
             if now - mtime < 240:
