@@ -1,4 +1,4 @@
-import os, time, subprocess, re, sys, builtins, sqlite3, tempfile
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
@@ -90,6 +90,7 @@ CHECK_UI_TIME = 180
 AUTO_BLOCK = "Disable"
 
 last_restart_time = {}
+shared_lock = threading.Lock()  # bảo vệ CLAIMED_NAMES giữa các thread
 
 # =====================================================================
 # LẤY CPU & RAM
@@ -169,7 +170,7 @@ def settings_menu():
     global target_place_id, kill_all_time
     print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
     fix_tty()
-    p_id_raw = input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}").strip()
+    p_id_raw = safe_input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}")
     if p_id_raw == "":
         target_place_id = "4520749081"
         print(f"{Y}[*] Place ID mặc định: {target_place_id}{RESET}")
@@ -184,7 +185,7 @@ def settings_menu():
         else:
             print(f"{R}[!] ID không hợp lệ.{RESET}")
     fix_tty()
-    k_time_raw = input(f"{M}Nhập thời gian Auto Restart (phút, 0 để tắt): {RESET}").strip()
+    k_time_raw = safe_input(f"{M}Nhập thời gian Auto Restart (phút, 0 để tắt): {RESET}")
     if k_time_raw != "":
         nums = re.findall(r'\d+', k_time_raw)
         if nums:
@@ -225,14 +226,14 @@ def select_package_menu():
     try:
         fix_tty()
         print(f"\n{C}💡 Nhập số thứ tự cách nhau khoảng trắng (VD: 1 3 5){RESET}")
-        choice_str = input(f"{M}Chọn số: {RESET}")
+        choice_str = safe_input(f"{M}Chọn số: {RESET}")
         choices = [int(x) for x in re.findall(r'\d+', choice_str)]
         selected_packages.clear()
         for choice in set(choices):
             if 1 <= choice <= len(packages):
                 pkg_name = packages[choice - 1]
                 fix_tty()
-                acc_name = input(f"\n{C}[?] Tên In-game cho {Y}{pkg_name}{C} (bỏ trống để auto): {RESET}").strip()
+                acc_name = safe_input(f"\n{C}[?] Tên In-game cho {Y}{pkg_name}{C} (bỏ trống để auto): {RESET}")
                 selected_packages.append({"pkg": pkg_name, "name": acc_name})
         if selected_packages:
             print(f"\n{G}[+] Đã chọn {len(selected_packages)} package.{RESET}")
@@ -382,17 +383,19 @@ def discover_unbound_account(pkg):
     for f in all_files:
         try:
             mtime = os.path.getmtime(f)
-            if now - mtime < 240:  # file mới trong 4 phút
+            if now - mtime < 240:
                 name = extract_username_from_filename(f)
                 if name:
                     candidates.append((name, mtime))
         except:
             pass
     candidates.sort(key=lambda x: x[1], reverse=True)
-    for name, _ in candidates:
-        if name not in CLAIMED_NAMES:
-            CLAIMED_NAMES.add(name)
-            return name
+    # Dùng lock tránh race condition giữa các thread
+    with shared_lock:
+        for name, _ in candidates:
+            if name not in CLAIMED_NAMES:
+                CLAIMED_NAMES.add(name)
+                return name
     return None
 
 # =====================================================================
@@ -427,7 +430,7 @@ def force_restart_app(pkg, states, current_time, reason, color):
     time.sleep(2)
     trigger_boot_step_2(pkg)  # bắn deep link ngay
     states[pkg]['rejoin_time'] = current_time
-    states[pkg]['warmup_until'] = current_time + 60
+    states[pkg]['warmup_until'] = current_time + 90  # 90s warmup
 
 # =====================================================================
 # COOKIE INJECTION (giữ nguyên)
@@ -549,7 +552,7 @@ def login_via_cookie():
         time.sleep(3)
         return
     fix_tty()
-    cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip().replace('\r', '').replace('\n', '')
+    cookie = safe_input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").replace('\r', '').replace('\n', '')
     if not cookie.startswith("_|WARNING"):
         print(f"{R}[!] Cookie không hợp lệ!{RESET}")
         time.sleep(2)
@@ -581,15 +584,99 @@ def login_via_cookie():
 # =====================================================================
 # AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
 # =====================================================================
+# =====================================================================
+# MONITOR THREAD - Mỗi package chạy 1 thread riêng
+# =====================================================================
+def monitor_package(pkg, states, last_ok_ping, stop_event):
+    """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
+    global kill_all_time, last_restart_time, CLAIMED_NAMES
+    while not stop_event.is_set():
+        try:
+            current_time = time.time()
+            state = states[pkg]
+            uptime_seconds = current_time - state['rejoin_time']
+
+            # === AUTO RESTART THEO THỜI GIAN ===
+            if kill_all_time > 0 and uptime_seconds / 60 >= kill_all_time:
+                force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
+                last_ok_ping[pkg] = current_time
+                stop_event.wait(10)
+                continue
+
+            # === WARMUP ===
+            if current_time < state.get('warmup_until', 0):
+                state['text'] = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
+                state['color'] = Y
+                stop_event.wait(5)
+                continue
+
+            # === TÌM TÊN NẾU CHƯA BIND ===
+            if not state['bound_name']:
+                found = discover_unbound_account(pkg)
+                if found:
+                    state['bound_name'] = found
+                    state['display_name'] = found
+
+            bound = state['bound_name']
+            is_grace = (uptime_seconds < 240)
+
+            # === CHƯA BIND ĐƯỢC TÊN ===
+            if not bound:
+                if is_grace:
+                    state['text'] = f"Đang Load ({int(240 - uptime_seconds)}s)"
+                    state['color'] = Y
+                else:
+                    can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                    if can_restart:
+                        force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
+                        last_ok_ping[pkg] = current_time
+                    else:
+                        wait_sec = int(180 - (current_time - last_restart_time.get(pkg, current_time)))
+                        state['text'] = f"Chờ Restart ({wait_sec}s)"
+                        state['color'] = R
+                stop_event.wait(10)
+                continue
+
+            # === CHECK HEARTBEAT ===
+            last_ping = get_heartbeat(bound, pkg)
+            if last_ping == -1:
+                if is_grace:
+                    state['text'] = f"Đang Nạp Data ({int(240 - uptime_seconds)}s)"
+                    state['color'] = Y
+                else:
+                    if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
+                        force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
+                        last_ok_ping[pkg] = current_time
+            else:
+                diff = current_time - last_ping
+                if diff <= 120:
+                    last_ok_ping[pkg] = current_time
+                real_diff = current_time - last_ok_ping.get(pkg, current_time)
+                if diff > 120:
+                    if is_grace:
+                        state['text'] = f"Vào Server... ({int(240 - uptime_seconds)}s)"
+                        state['color'] = Y
+                    elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
+                        force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                        last_ok_ping[pkg] = current_time
+                    elif real_diff < 120:
+                        state['text'] = f"Cảnh báo lag ({int(diff)}s)"
+                        state['color'] = Y
+                else:
+                    state['text'] = f"Đang Farm ({int(diff)}s trước)"
+                    state['color'] = G
+        except Exception:
+            pass
+        stop_event.wait(10)
+
+
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time
-    last_ok_ping = {}  # {pkg: timestamp} - lần cuối heartbeat hợp lệ
     if not selected_packages:
         print(f"{R}[!] Chọn package trước!{RESET}")
         time.sleep(2)
         return
 
-    # Reset để đảm bảo mở app được khi vào lại session
     last_restart_time = {}
     json_path_cache = {}
     heartbeat_last_check = {}
@@ -599,8 +686,12 @@ def start_auto_rejoin():
     inject_universal_lua()
 
     states = {}
+    last_ok_ping = {}
+    stop_event = threading.Event()
     now = time.time()
-    for item in selected_packages:
+
+    # Bật từng tab theo thứ tự, cách nhau 3s để tránh xung đột
+    for i, item in enumerate(selected_packages):
         pkg = item['pkg']
         states[pkg] = {
             'text': 'Đang Mở Sảnh...',
@@ -608,136 +699,41 @@ def start_auto_rejoin():
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': now,
-            'warmup_until': now + 90  # tăng lên 90s để đủ thời gian load
+            'warmup_until': now + 90
         }
-        last_ok_ping[pkg] = now  # khởi tạo để không bị false-restart ngay
-        # FIX: xóa last_restart_time của pkg này trước khi restart ban đầu
-        # để không bị block bởi cooldown 180s
+        last_ok_ping[pkg] = now
         last_restart_time.pop(pkg, None)
         force_restart_app(pkg, states, now, 'Đang Mở Sảnh...', Y)
+        if i < len(selected_packages) - 1:
+            print(f"{Y}[*] Chờ 3s trước khi bật tab tiếp theo...{RESET}")
+            time.sleep(3)  # delay giữa các tab tránh conflict
 
     os.system("stty sane < /dev/tty > /dev/null 2>&1")
 
+    # Khởi thread riêng cho từng package
+    for item in selected_packages:
+        pkg = item['pkg']
+        t = threading.Thread(
+            target=monitor_package,
+            args=(pkg, states, last_ok_ping, stop_event),
+            daemon=True,
+            name=f"mon-{pkg[-12:]}"
+        )
+        t.start()
+
+    # Main thread chỉ hiển thị dashboard
     last_dashboard = 0
-    while True:
-        try:
+    try:
+        while True:
             current_time = time.time()
-            any_change = False
-
-            for item in selected_packages:
-                pkg = item['pkg']
-                state = states[pkg]
-                uptime_seconds = current_time - state['rejoin_time']
-
-                if kill_all_time > 0 and uptime_seconds / 60 >= kill_all_time:
-                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
-                    last_ok_ping[pkg] = current_time  # reset sau restart
-                    any_change = True
-                    continue
-
-                if 'warmup_until' in state and current_time < state['warmup_until']:
-                    new_text = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
-                    if state['text'] != new_text:
-                        state['text'] = new_text
-                        state['color'] = Y
-                        any_change = True
-                    continue
-
-                if not state['bound_name']:
-                    found = discover_unbound_account(pkg)
-                    if found:
-                        state['bound_name'] = found
-                        state['display_name'] = found
-                        any_change = True
-
-                bound = state['bound_name']
-                # is_grace: 240s từ lúc rejoin để app có thể tải và ghi heartbeat
-                is_grace = (uptime_seconds < 240)
-
-                if not bound:
-                    if is_grace:
-                        new_text = f"Đang Load ({int(240 - uptime_seconds)}s)"
-                        if state['text'] != new_text:
-                            state['text'] = new_text
-                            state['color'] = Y
-                            any_change = True
-                    else:
-                        # FIX: sau grace period, restart ngay nếu chưa bind được tên
-                        # không cần kiểm tra last_restart_time ở đây vì đây là trường hợp
-                        # app bị kẹt hoàn toàn (không load được tên nhân vật)
-                        if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
-                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
-                            last_ok_ping[pkg] = current_time  # reset sau restart
-                            any_change = True
-                        else:
-                            # Đang trong cooldown - hiện đếm ngược đến lần restart tiếp
-                            wait_sec = int(180 - (current_time - last_restart_time[pkg]))
-                            new_text = f"Chờ Restart ({wait_sec}s)"
-                            if state['text'] != new_text:
-                                state['text'] = new_text
-                                state['color'] = R
-                                any_change = True
-                    continue
-
-                last_ping = get_heartbeat(bound, pkg)
-                if last_ping == -1:
-                    if is_grace:
-                        new_text = f"Đang Nạp Data ({int(240 - uptime_seconds)}s)"
-                        if state['text'] != new_text:
-                            state['text'] = new_text
-                            state['color'] = Y
-                            any_change = True
-                    else:
-                        if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
-                            force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
-                            last_ok_ping[pkg] = current_time  # reset sau restart
-                            any_change = True
-                else:
-                    diff = current_time - last_ping
-                    # Cập nhật last_ok_ping nếu heartbeat còn tươi (<= 120s)
-                    if diff <= 120:
-                        last_ok_ping[pkg] = current_time
-                    # Tính thời gian kể từ lần cuối heartbeat hợp lệ
-                    real_diff = current_time - last_ok_ping.get(pkg, current_time)
-                    if diff > 120:
-                        if is_grace:
-                            new_text = f"Vào Server... ({int(240 - uptime_seconds)}s)"
-                            if state['text'] != new_text:
-                                state['text'] = new_text
-                                state['color'] = Y
-                                any_change = True
-                        else:
-                            # Chỉ restart nếu THỰC SỰ không có ping hợp lệ >= 120s
-                            if real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
-                                force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
-                                last_ok_ping[pkg] = current_time  # reset sau restart
-                                any_change = True
-                            elif real_diff < 120:
-                                # Vẫn còn ping gần đây, chỉ hiển thị cảnh báo
-                                new_text = f"Cảnh báo lag ({int(diff)}s)"
-                                if state['text'] != new_text:
-                                    state['text'] = new_text
-                                    state['color'] = Y
-                                    any_change = True
-                    else:
-                        new_text = f"Đang Farm ({int(diff)}s trước)"
-                        if state['text'] != new_text:
-                            state['text'] = new_text
-                            state['color'] = G
-                            any_change = True
-
-            if any_change or (current_time - last_dashboard > 30):
+            if current_time - last_dashboard >= 5:
                 print_dashboard(states)
                 last_dashboard = current_time
-
-            time.sleep(10)
-
-        except KeyboardInterrupt:
-            print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
-            fix_tty()
-            break
-        except Exception as e:
-            time.sleep(5)
+            time.sleep(3)
+    except KeyboardInterrupt:
+        print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
+        stop_event.set()
+        fix_tty()
 
 # =====================================================================
 # MAIN
@@ -754,7 +750,7 @@ def main():
         print(f"[{C}5{RESET}] Thoát")
         try:
             fix_tty()
-            choice = input(f"\n{M}HuDy > {RESET}").strip()
+            choice = safe_input(f"\n{M}HuDy > {RESET}")
         except EOFError:
             fix_tty()
             continue
