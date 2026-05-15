@@ -587,9 +587,12 @@ def start_auto_rejoin():
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': now,
-            'warmup_until': now + 60
+            'warmup_until': now + 90  # tăng lên 90s để đủ thời gian load
         }
         last_ok_ping[pkg] = now  # khởi tạo để không bị false-restart ngay
+        # FIX: xóa last_restart_time của pkg này trước khi restart ban đầu
+        # để không bị block bởi cooldown 180s
+        last_restart_time.pop(pkg, None)
         force_restart_app(pkg, states, now, 'Đang Mở Sảnh...', Y)
 
     os.system("stty sane < /dev/tty > /dev/null 2>&1")
@@ -627,6 +630,7 @@ def start_auto_rejoin():
                         any_change = True
 
                 bound = state['bound_name']
+                # is_grace: 240s từ lúc rejoin để app có thể tải và ghi heartbeat
                 is_grace = (uptime_seconds < 240)
 
                 if not bound:
@@ -637,10 +641,21 @@ def start_auto_rejoin():
                             state['color'] = Y
                             any_change = True
                     else:
+                        # FIX: sau grace period, restart ngay nếu chưa bind được tên
+                        # không cần kiểm tra last_restart_time ở đây vì đây là trường hợp
+                        # app bị kẹt hoàn toàn (không load được tên nhân vật)
                         if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
                             force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
                             last_ok_ping[pkg] = current_time  # reset sau restart
                             any_change = True
+                        else:
+                            # Đang trong cooldown - hiện đếm ngược đến lần restart tiếp
+                            wait_sec = int(180 - (current_time - last_restart_time[pkg]))
+                            new_text = f"Chờ Restart ({wait_sec}s)"
+                            if state['text'] != new_text:
+                                state['text'] = new_text
+                                state['color'] = R
+                                any_change = True
                     continue
 
                 last_ping = get_heartbeat(bound, pkg)
