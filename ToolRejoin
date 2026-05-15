@@ -167,6 +167,8 @@ def print_dashboard(states):
         s_name = states[pkg]['display_name']
         if len(s_name) > 15: s_name = s_name[:12] + "..."
         txt = states[pkg]['text']
+        # Truncate text để tránh tràn dòng dashboard
+        if len(txt) > 24: txt = txt[:21] + "..."
         col = states[pkg]['color']
         print(f"{s_pkg:<20} | {s_name:<16} | {col}{txt:<25}{RESET}")
     print("-" * 65)
@@ -438,6 +440,8 @@ def force_restart_app(pkg, states, current_time, reason, color):
     trigger_boot_step_1(pkg)
     time.sleep(2)
     trigger_boot_step_2(pkg)  # bắn deep link ngay
+    # Chỉ reset rejoin_time (cho warmup), KHÔNG reset session_start_time
+    # để uptime tích lũy đúng qua các lần rejoin
     states[pkg]['rejoin_time'] = current_time
     states[pkg]['warmup_until'] = current_time + 90
     # Reset bound_name để tránh dùng tên cũ check heartbeat sau khi rejoin
@@ -606,11 +610,16 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
         try:
             current_time = time.time()
             state = states[pkg]
+            # session_start_time: thời điểm start lần đầu, KHÔNG reset khi rejoin
+            # rejoin_time: chỉ dùng để tính warmup
+            session_uptime = current_time - state['session_start_time']
             uptime_seconds = current_time - state['rejoin_time']
 
-            # === AUTO RESTART THEO THỜI GIAN ===
-            if kill_all_time > 0 and uptime_seconds / 60 >= kill_all_time:
+            # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
+            if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
                 force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
+                # Reset session timer sau khi auto restart
+                state['session_start_time'] = current_time
                 last_ok_ping[pkg] = current_time
                 stop_event.wait(10)
                 continue
@@ -716,6 +725,7 @@ def start_auto_rejoin():
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': now,
+            'session_start_time': now,   # Thời điểm bắt đầu session, KHÔNG reset khi rejoin
             'warmup_until': now + 90
         }
         last_ok_ping[pkg] = now
