@@ -27,6 +27,27 @@ def fix_tty():
             os.system("stty sane 2>/dev/null")
     except:
         pass
+    # Tắt bracketed paste mode để tránh lỗi gõ phím ra ^[1
+    try:
+        sys.stdout.write('\033[?2004l')
+        sys.stdout.flush()
+    except:
+        pass
+
+def safe_input(prompt=''):
+    """Input wrapper: fix TTY trước, sau đó lọc escape sequence ra khỏi kết quả."""
+    fix_tty()
+    try:
+        val = input(prompt)
+    except EOFError:
+        fix_tty()
+        return ''
+    # Lọc bỏ escape sequence dạng ^[ (ESC) và ^[[...~ (bracketed paste markers)
+    val = re.sub(r'\x1b\[\?2004[hl]', '', val)  # bracketed paste on/off
+    val = re.sub(r'\x1b\[200~|\x1b\[201~', '', val)  # paste start/end markers
+    val = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', val)  # các escape sequence khác
+    val = re.sub(r'\x1b.', '', val)  # ESC + ký tự bất kỳ còn sót
+    return val.strip()
 
 def safe_root(cmd):
     try:
