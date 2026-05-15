@@ -223,7 +223,8 @@ def select_package_menu():
 # INJECT SCRIPT UNIVERSAL (giữ nguyên)
 # =====================================================================
 def inject_universal_lua():
-    lua_code = """task.wait(5)
+    lua_code = """
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
 local DisconnectErrors = Enum.ConnectionError.DisconnectErrors.Value
