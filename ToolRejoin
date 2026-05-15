@@ -408,13 +408,21 @@ def get_heartbeat(acc_name, pkg):
         return best_mtime
     return -1
 
-def discover_unbound_account(pkg):
+def discover_unbound_account(pkg, states):
+    """Tìm acc chưa được claim. states dùng để double-check tránh bind nhầm sang pkg khác."""
     global CLAIMED_NAMES
-    # Chỉ tìm trong thư mục RIÊNG của pkg - tránh bind nhầm sang package khác
-    pkg_files = get_heartbeat_files_for_pkg(pkg)
+    # Lấy tập tên đang được package KHÁC bind (để skip)
+    active_names_other_pkgs = set()
+    if states:
+        for other_pkg, s in states.items():
+            if other_pkg != pkg and s.get('bound_name'):
+                active_names_other_pkgs.add(s['bound_name'])
+
+    # Tìm file heartbeat trên tất cả thư mục (executor ghi vào /sdcard/Delta/ chung)
+    all_files = get_all_heartbeat_files_fast(pkg)
     candidates = []
     now = time.time()
-    for f in pkg_files:
+    for f in all_files:
         try:
             mtime = os.path.getmtime(f)
             if now - mtime < 240:
@@ -427,7 +435,8 @@ def discover_unbound_account(pkg):
     # Dùng lock tránh race condition giữa các thread
     with shared_lock:
         for name, _ in candidates:
-            if name not in CLAIMED_NAMES:
+            # Bỏ qua nếu: đã claim HOẶC đang được pkg khác dùng (double-check)
+            if name not in CLAIMED_NAMES and name not in active_names_other_pkgs:
                 CLAIMED_NAMES.add(name)
                 return name
     return None
@@ -656,7 +665,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
             # === TÌM TÊN NẾU CHƯA BIND ===
             if not state['bound_name']:
-                found = discover_unbound_account(pkg)
+                found = discover_unbound_account(pkg, states)
                 if found:
                     state['bound_name'] = found
                     state['display_name'] = found
