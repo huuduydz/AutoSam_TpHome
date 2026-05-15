@@ -49,8 +49,9 @@ def safe_input(prompt=''):
     val = re.sub(r'\x1b.', '', val)  # ESC + ký tự bất kỳ còn sót
     return val.strip()
 
-def safe_root(cmd, timeout=30):
+def safe_root(cmd, timeout=15):
     """Chạy lệnh root với timeout - tránh subprocess treo mãi khi 24/7."""
+    # Giảm timeout xuống 15s (từ 30s) để 1 luồng hỏng không block lâu
     try:
         subprocess.run(
             cmd, shell=True,
@@ -100,6 +101,7 @@ AUTO_BLOCK = "Disable"
 
 last_restart_time = {}
 shared_lock = threading.Lock()  # bảo vệ CLAIMED_NAMES giữa các thread
+pkg_restart_locks = {}           # {pkg: Lock} - mỗi pkg 1 lock riêng, tránh 1 luồng hỏng block luồng khác
 
 # =====================================================================
 # LẤY CPU & RAM
@@ -649,7 +651,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
             # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
             if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
-                force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
+                # Dùng lock riêng của pkg - tránh block luồng khác
+                with pkg_restart_locks[pkg]:
+                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
                 # Reset session timer sau khi auto restart
                 state['session_start_time'] = current_time
                 last_ok_ping[pkg] = current_time
@@ -681,7 +685,8 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 else:
                     can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
                     if can_restart:
-                        force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
                         last_ok_ping[pkg] = current_time
                     else:
                         wait_sec = int(180 - (current_time - last_restart_time.get(pkg, current_time)))
@@ -698,7 +703,8 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['color'] = Y
                 else:
                     if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
-                        force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
                         last_ok_ping[pkg] = current_time
             else:
                 diff = current_time - last_ping
@@ -710,7 +716,8 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                         state['text'] = f"Vào Server... ({int(240 - uptime_seconds)}s)"
                         state['color'] = Y
                     elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
-                        force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
                         last_ok_ping[pkg] = current_time
                     elif real_diff < 120:
                         state['text'] = f"Cảnh báo lag ({int(diff)}s)"
@@ -729,7 +736,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
 
 def start_auto_rejoin():
-    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time
+    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks
     if not selected_packages:
         print(f"{R}[!] Chọn package trước!{RESET}")
         time.sleep(2)
@@ -739,6 +746,7 @@ def start_auto_rejoin():
     json_path_cache = {}
     heartbeat_last_check = {}
     CLAIMED_NAMES = set()
+    pkg_restart_locks = {}  # Khởi tạo lock riêng cho từng pkg
 
     print(f"\n{Y}[*] Inject script universal...{RESET}")
     inject_universal_lua()
@@ -751,6 +759,7 @@ def start_auto_rejoin():
     # Bật từng tab theo thứ tự, cách nhau 3s để tránh xung đột
     for i, item in enumerate(selected_packages):
         pkg = item['pkg']
+        pkg_restart_locks[pkg] = threading.Lock()  # Tạo lock riêng mỗi pkg
         states[pkg] = {
             'text': 'Đang Mở Sảnh...',
             'color': Y,
@@ -772,6 +781,7 @@ def start_auto_rejoin():
     time.sleep(2)
 
     # Khởi thread riêng cho từng package
+    monitor_threads = {}
     for item in selected_packages:
         pkg = item['pkg']
         t = threading.Thread(
@@ -781,8 +791,9 @@ def start_auto_rejoin():
             name=f"mon-{pkg[-12:]}"
         )
         t.start()
+        monitor_threads[pkg] = t
 
-    # Main thread chỉ hiển thị dashboard
+    # Main thread: hiển thị dashboard + watchdog tự khởi lại thread chết
     last_dashboard = 0
     try:
         while True:
@@ -790,6 +801,26 @@ def start_auto_rejoin():
             if current_time - last_dashboard >= 5:
                 print_dashboard(states)
                 last_dashboard = current_time
+
+            # === WATCHDOG: phát hiện thread chết và khởi lại ===
+            for item in selected_packages:
+                pkg = item['pkg']
+                t = monitor_threads.get(pkg)
+                if t and not t.is_alive():
+                    try:
+                        states[pkg]['text'] = 'Watchdog: khởi lại...'
+                        states[pkg]['color'] = M
+                    except:
+                        pass
+                    new_t = threading.Thread(
+                        target=monitor_package,
+                        args=(pkg, states, last_ok_ping, stop_event),
+                        daemon=True,
+                        name=f"mon-{pkg[-12:]}"
+                    )
+                    new_t.start()
+                    monitor_threads[pkg] = new_t
+
             time.sleep(3)
     except KeyboardInterrupt:
         print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
