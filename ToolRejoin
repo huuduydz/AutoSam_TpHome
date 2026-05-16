@@ -19,6 +19,9 @@ except:
     OLD_TTY = None
 
 def fix_tty():
+    # Chỉ fix TTY từ main thread - tránh bg thread corrupt terminal
+    if threading.current_thread() is not threading.main_thread():
+        return
     try:
         if OLD_TTY:
             import termios
@@ -51,7 +54,6 @@ def safe_input(prompt=''):
 
 def safe_root(cmd, timeout=15):
     """Chạy lệnh root với timeout - tránh subprocess treo mãi khi 24/7."""
-    # Giảm timeout xuống 15s (từ 30s) để 1 luồng hỏng không block lâu
     try:
         subprocess.run(
             cmd, shell=True,
@@ -64,8 +66,7 @@ def safe_root(cmd, timeout=15):
         pass
     except:
         pass
-    finally:
-        fix_tty()
+    # KHÔNG gọi fix_tty() từ background thread - tránh corrupt terminal
 
 def clear_screen():
     fix_tty()
@@ -100,8 +101,10 @@ CHECK_UI_TIME = 180
 AUTO_BLOCK = "Disable"
 
 last_restart_time = {}
-shared_lock = threading.Lock()  # bảo vệ CLAIMED_NAMES giữa các thread
-pkg_restart_locks = {}           # {pkg: Lock} - mỗi pkg 1 lock riêng, tránh 1 luồng hỏng block luồng khác
+shared_lock = threading.Lock()       # bảo vệ CLAIMED_NAMES giữa các thread
+pkg_restart_locks = {}               # {pkg: Lock} - mỗi pkg 1 lock riêng
+global_restart_semaphore = threading.Semaphore(1)  # Chỉ 1 pkg restart 1 lúc
+file_to_pkg_binding = {}             # {file_path: pkg} - ghi nhớ file json nào thuộc pkg nào
 
 # =====================================================================
 # LẤY CPU & RAM
@@ -367,7 +370,7 @@ def get_heartbeat_files_for_pkg(pkg):
     return list(set(results))
 
 def get_heartbeat(acc_name, pkg):
-    global json_path_cache, heartbeat_last_check
+    global json_path_cache, heartbeat_last_check, file_to_pkg_binding
     now = time.time()
     if pkg not in json_path_cache:
         json_path_cache[pkg] = {}
@@ -384,6 +387,9 @@ def get_heartbeat(acc_name, pkg):
                 mtime = os.path.getmtime(cached_path)
                 cache[acc_name] = (cached_path, mtime)
                 last_check[acc_name] = now
+                # Cập nhật binding mỗi lần đọc file thành công
+                with shared_lock:
+                    file_to_pkg_binding[cached_path] = pkg
                 return mtime
             except:
                 pass
@@ -407,39 +413,57 @@ def get_heartbeat(acc_name, pkg):
     if best_file:
         cache[acc_name] = (best_file, best_mtime)
         last_check[acc_name] = now
+        # Ghi nhớ: file này thuộc pkg này (chống nhận diện chéo)
+        with shared_lock:
+            file_to_pkg_binding[best_file] = pkg
         return best_mtime
     return -1
 
 def discover_unbound_account(pkg, states):
-    """Tìm acc chưa được claim. states dùng để double-check tránh bind nhầm sang pkg khác."""
-    global CLAIMED_NAMES
-    # Lấy tập tên đang được package KHÁC bind (để skip)
-    active_names_other_pkgs = set()
-    if states:
-        for other_pkg, s in states.items():
-            if other_pkg != pkg and s.get('bound_name'):
-                active_names_other_pkgs.add(s['bound_name'])
+    """Tìm acc chưa được claim. states dùng để double-check + dọn stale CLAIMED_NAMES chống kẹt bind."""
+    global CLAIMED_NAMES, file_to_pkg_binding
 
-    # Tìm file heartbeat trên tất cả thư mục (executor ghi vào /sdcard/Delta/ chung)
+    # === DỊN CLAIMED_NAMES cũ (chống kẹt bind) ===
+    # Tên nào trong CLAIMED_NAMES nhưng không có pkg nào đang bind -> stale -> xóa
+    active_bound = {s['bound_name'] for s in states.values() if s.get('bound_name')}
+    with shared_lock:
+        stale_names = CLAIMED_NAMES - active_bound
+        if stale_names:
+            CLAIMED_NAMES -= stale_names
+
+    # Tên đang được pkg KHÁC sử dụng (double-check tránh race condition)
+    active_names_other_pkgs = {
+        s['bound_name'] for p, s in states.items()
+        if p != pkg and s.get('bound_name')
+    }
+
+    # Files đã được xác nhận thuộc pkg KHÁC -> skip
+    with shared_lock:
+        blocked_files = {fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg != pkg}
+
+    # Tìm file heartbeat trên tất cả thư mục
     all_files = get_all_heartbeat_files_fast(pkg)
     candidates = []
     now = time.time()
     for f in all_files:
+        if f in blocked_files:
+            continue  # Bỏ qua file đã xác nhận của pkg khác
         try:
             mtime = os.path.getmtime(f)
             if now - mtime < 240:
                 name = extract_username_from_filename(f)
                 if name:
-                    candidates.append((name, mtime))
+                    candidates.append((name, mtime, f))
         except:
             pass
     candidates.sort(key=lambda x: x[1], reverse=True)
+
     # Dùng lock tránh race condition giữa các thread
     with shared_lock:
-        for name, _ in candidates:
-            # Bỏ qua nếu: đã claim HOẶC đang được pkg khác dùng (double-check)
+        for name, mtime, fpath in candidates:
             if name not in CLAIMED_NAMES and name not in active_names_other_pkgs:
                 CLAIMED_NAMES.add(name)
+                file_to_pkg_binding[fpath] = pkg  # Ghi nhớ file này thuộc pkg này
                 return name
     return None
 
@@ -454,31 +478,41 @@ def trigger_boot_step_2(pkg):
         safe_root(f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\"'")
 
 def force_restart_app(pkg, states, current_time, reason, color):
-    global last_restart_time
+    global last_restart_time, file_to_pkg_binding
     if pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
         return
     last_restart_time[pkg] = current_time
 
     states[pkg]['text'] = reason
     states[pkg]['color'] = color
-    safe_root(f"su -c 'am force-stop {pkg}'")
-    bound_name = states[pkg].get('bound_name')
-    if bound_name:
-        safe_root(f"su -c 'find /sdcard -type f -name \"*_{bound_name}_checkhudyhub.json\" -delete 2>/dev/null'")
-        if pkg in json_path_cache and bound_name in json_path_cache[pkg]:
-            del json_path_cache[pkg][bound_name]
-        if pkg in heartbeat_last_check and bound_name in heartbeat_last_check[pkg]:
-            del heartbeat_last_check[pkg][bound_name]
-        CLAIMED_NAMES.discard(bound_name)
-    time.sleep(0.5)
-    trigger_boot_step_1(pkg)
-    time.sleep(2)
-    trigger_boot_step_2(pkg)  # bắn deep link ngay
-    # Chỉ reset rejoin_time (cho warmup), KHÔNG reset session_start_time
-    # để uptime tích lũy đúng qua các lần rejoin
+
+    # Acquire global semaphore: chỉ 1 pkg restart 1 lúc
+    acquired = global_restart_semaphore.acquire(timeout=60)
+    try:
+        safe_root(f"su -c 'am force-stop {pkg}'")
+        bound_name = states[pkg].get('bound_name')
+        if bound_name:
+            safe_root(f"su -c 'find /sdcard -type f -name \"*_{bound_name}_checkhudyhub.json\" -delete 2>/dev/null'")
+            if pkg in json_path_cache and bound_name in json_path_cache[pkg]:
+                del json_path_cache[pkg][bound_name]
+            if pkg in heartbeat_last_check and bound_name in heartbeat_last_check[pkg]:
+                del heartbeat_last_check[pkg][bound_name]
+            with shared_lock:
+                CLAIMED_NAMES.discard(bound_name)
+                # Xóa file binding của pkg để pkg khác không bị block bởi file cũ
+                stale_fps = [fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg == pkg]
+                for fp in stale_fps:
+                    del file_to_pkg_binding[fp]
+        time.sleep(1)
+        trigger_boot_step_1(pkg)
+        time.sleep(3)
+        trigger_boot_step_2(pkg)
+    finally:
+        if acquired:
+            global_restart_semaphore.release()
+
     states[pkg]['rejoin_time'] = current_time
     states[pkg]['warmup_until'] = current_time + 90
-    # Reset bound_name để tránh dùng tên cũ check heartbeat sau khi rejoin
     states[pkg]['bound_name'] = None
     states[pkg]['display_name'] = 'Chờ Auto-Bind...'
 
@@ -736,7 +770,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
 
 def start_auto_rejoin():
-    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks
+    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
     if not selected_packages:
         print(f"{R}[!] Chọn package trước!{RESET}")
         time.sleep(2)
@@ -746,7 +780,9 @@ def start_auto_rejoin():
     json_path_cache = {}
     heartbeat_last_check = {}
     CLAIMED_NAMES = set()
-    pkg_restart_locks = {}  # Khởi tạo lock riêng cho từng pkg
+    pkg_restart_locks = {}
+    global_restart_semaphore = threading.Semaphore(1)
+    file_to_pkg_binding = {}  # Reset bảng ghi nhớ file-pkg khi bắt đầu
 
     print(f"\n{Y}[*] Inject script universal...{RESET}")
     inject_universal_lua()
@@ -756,25 +792,26 @@ def start_auto_rejoin():
     stop_event = threading.Event()
     now = time.time()
 
-    # Bật từng tab theo thứ tự, cách nhau 3s để tránh xung đột
+    # Bật từng tab theo thứ tự, cách nhau 5s để hệ thống ổn định
     for i, item in enumerate(selected_packages):
         pkg = item['pkg']
-        pkg_restart_locks[pkg] = threading.Lock()  # Tạo lock riêng mỗi pkg
+        pkg_restart_locks[pkg] = threading.Lock()
+        pkg_now = time.time()  # Dùng thời gian thực tế cho từng pkg, không dùng `now` chung
         states[pkg] = {
             'text': 'Đang Mở Sảnh...',
             'color': Y,
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
-            'rejoin_time': now,
-            'session_start_time': now,   # Thời điểm bắt đầu session, KHÔNG reset khi rejoin
-            'warmup_until': now + 90
+            'rejoin_time': pkg_now,
+            'session_start_time': pkg_now,
+            'warmup_until': pkg_now + 90
         }
-        last_ok_ping[pkg] = now
+        last_ok_ping[pkg] = pkg_now
         last_restart_time.pop(pkg, None)
-        force_restart_app(pkg, states, now, 'Đang Mở Sảnh...', Y)
+        force_restart_app(pkg, states, pkg_now, 'Đang Mở Sảnh...', Y)
         if i < len(selected_packages) - 1:
-            print(f"{Y}[*] Chờ 3s trước khi bật tab tiếp theo...{RESET}")
-            time.sleep(3)  # delay giữa các tab tránh conflict
+            print(f"{Y}[*] Chờ 5s trước khi bật tab tiếp theo...{RESET}")
+            time.sleep(5)
 
     os.system("stty sane < /dev/tty > /dev/null 2>&1")
     # Đợi thêm 2s cho các shell command sau safe_root hoàn tất
