@@ -70,8 +70,13 @@ def safe_root(cmd, timeout=15):
 
 def clear_screen():
     fix_tty()
-    sys.stdout.write('\033[2J\033[H\r')
-    sys.stdout.flush()
+    # Dùng clear system command thay vì ANSI escape sequence
+    # Để tránh tạo tab mới hoặc scroll lạ trên terminal Android/Cloud Phone
+    try:
+        os.system('clear 2>/dev/null || cls 2>/dev/null')
+    except:
+        sys.stdout.write('\033[2J\033[H\r')
+        sys.stdout.flush()
 
 # =====================================================================
 # MÀU SẮC
@@ -855,8 +860,16 @@ def start_auto_rejoin():
 
             time.sleep(3)
     except KeyboardInterrupt:
-        print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
         stop_event.set()
+        time.sleep(1.5)  # Đợi thread dừng hết
+        fix_tty()
+        print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
+        print("-" * 65)
+        print(f"{Y}[*] Bấm Enter để về menu...{RESET}")
+        try:
+            input()  # Chờ người dùng bấm Enter trước khi về menu
+        except:
+            pass
         fix_tty()
 
 # =====================================================================
