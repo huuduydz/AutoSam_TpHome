@@ -420,18 +420,12 @@ def get_heartbeat(acc_name, pkg):
     return -1
 
 def discover_unbound_account(pkg, states):
-    """Tìm acc chưa được claim. states dùng để double-check + dọn stale CLAIMED_NAMES chống kẹt bind."""
+    """Tìm acc chưa được claim cho pkg này.
+    Bảo vệ chéo bằng: CLAIMED_NAMES + active bound names + file_to_pkg_binding.
+    KHÔNG dọn stale CLAIMED_NAMES ở đây - việc đó do force_restart_app xử lý."""
     global CLAIMED_NAMES, file_to_pkg_binding
 
-    # === DỊN CLAIMED_NAMES cũ (chống kẹt bind) ===
-    # Tên nào trong CLAIMED_NAMES nhưng không có pkg nào đang bind -> stale -> xóa
-    active_bound = {s['bound_name'] for s in states.values() if s.get('bound_name')}
-    with shared_lock:
-        stale_names = CLAIMED_NAMES - active_bound
-        if stale_names:
-            CLAIMED_NAMES -= stale_names
-
-    # Tên đang được pkg KHÁC sử dụng (double-check tránh race condition)
+    # Tên đang được pkg KHÁC bind (double-check state thực tế)
     active_names_other_pkgs = {
         s['bound_name'] for p, s in states.items()
         if p != pkg and s.get('bound_name')
@@ -461,6 +455,7 @@ def discover_unbound_account(pkg, states):
     # Dùng lock tránh race condition giữa các thread
     with shared_lock:
         for name, mtime, fpath in candidates:
+            # Bỏ qua nếu: đã claim TRONG CLAIMED_NAMES hoặc đang bind bởi pkg khác
             if name not in CLAIMED_NAMES and name not in active_names_other_pkgs:
                 CLAIMED_NAMES.add(name)
                 file_to_pkg_binding[fpath] = pkg  # Ghi nhớ file này thuộc pkg này
