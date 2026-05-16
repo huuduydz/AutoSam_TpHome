@@ -678,6 +678,19 @@ def login_via_cookie():
 # =====================================================================
 # MONITOR THREAD - Mỗi package chạy 1 thread riêng
 # =====================================================================
+def is_app_running(pkg):
+    """Kiểm tra process của package có đang chạy không bằng pidof.
+    Return True nếu chạy hoặc không kiểm tra được (fallback an toàn)."""
+    try:
+        out = subprocess.check_output(
+            f"su -c 'pidof {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=4,
+            stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL
+        ).strip()
+        return len(out) > 0
+    except:
+        return True  # Fallback: giả sử chạy nếu không kiểm tra được
+
 def monitor_package(pkg, states, last_ok_ping, stop_event):
     """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
     global kill_all_time, last_restart_time, CLAIMED_NAMES
@@ -721,8 +734,20 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             # === CHƯA BIND ĐƯỢC TÊN ===
             if not bound:
                 if is_grace:
-                    state['text'] = f"Đang Load ({int(240 - uptime_seconds)}s)"
-                    state['color'] = Y
+                    # Kiểm tra process app có chạy không
+                    # Nếu KHHÔNG chạy -> restart ngay, không đợi hết grace period
+                    if uptime_seconds > 30 and not is_app_running(pkg):
+                        can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                        if can_restart:
+                            with pkg_restart_locks[pkg]:
+                                force_restart_app(pkg, states, current_time, "App không mở được!", R)
+                            last_ok_ping[pkg] = current_time
+                        else:
+                            state['text'] = 'App lỗi, đang chờ...'
+                            state['color'] = R
+                    else:
+                        state['text'] = f"Đang Load ({int(240 - uptime_seconds)}s)"
+                        state['color'] = Y
                 else:
                     can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
                     if can_restart:
