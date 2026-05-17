@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
+    print(f"{G}Core: {Y}Python V3 {RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -326,22 +326,17 @@ def extract_username_from_filename(filename):
     return base  # fallback
 
 def get_all_heartbeat_files_fast(pkg=None):
-    """Tìm file heartbeat bằng find giới hạn trong thư mục của pkg.
-    find trong 1 pkg: nhanh (~0.3s), đúng mọi subdirectory."""
+    """Tìm file heartbeat trong thư mục pkg + thư mục Delta executor."""
     if pkg:
-        # Biết pkg -> chỉ scan trong thư mục của pkg đó (không quét toàn bộ /sdcard)
-        pkg_suffix = pkg.split('.')[-1]  # Tách ra ngoài để tránh lỗi cú pháp f-string
+        # Tìm trong thư mục riêng của pkg (bất kỳ subdirectory)
         cmd = (
             f"su -c 'find /sdcard/Android/media/{pkg} /sdcard/Android/data/{pkg} "
-            f"-name \"*_checkhudyhub.json\" -type f 2>/dev/null; "
-            f"ls /sdcard/Delta/*_{pkg_suffix}*_checkhudyhub.json 2>/dev/null'"
+            f"-name \"*_checkhudyhub.json\" -type f 2>/dev/null'"
         )
     else:
-        # Không biết pkg -> quét global nhưng giới hạn độ sâu (-maxdepth 6)
         cmd = (
             "su -c 'find /sdcard/Android/media /sdcard/Android/data "
-            "-maxdepth 6 -name \"*_checkhudyhub.json\" -type f 2>/dev/null; "
-            "ls /sdcard/Delta/*_checkhudyhub.json 2>/dev/null'"
+            "-maxdepth 6 -name \"*_checkhudyhub.json\" -type f 2>/dev/null'"
         )
     results = []
     try:
@@ -353,6 +348,16 @@ def get_all_heartbeat_files_fast(pkg=None):
                 results.append(line)
     except:
         pass
+    # Luôn thêm Delta path (đường dẫn thực tế của executor Delta/DeltaQT)
+    for delta_dir in ["/storage/emulated/0/Delta", "/sdcard/Delta",
+                       "/storage/emulated/0/DeltaQT", "/sdcard/DeltaQT"]:
+        try:
+            entries = os.listdir(delta_dir)
+            for entry in entries:
+                if entry.endswith('_checkhudyhub.json'):
+                    results.append(os.path.join(delta_dir, entry))
+        except:
+            pass
     return list(set(results))
 
 def get_heartbeat_files_for_pkg(pkg):
@@ -362,24 +367,23 @@ def get_heartbeat_files_for_pkg(pkg):
 import json as _json_mod
 
 def _read_json_timestamp(filepath):
-    """Đọc nội dung JSON qua su -c cat (cần root vì file trong sandbox Android).
-    Trả về Unix timestamp. -1 nếu lỗi.
-    Hỗ trợ cả format mới {timestamp:N} và format cũ {time:string}."""
+    """Đọc nội dung JSON, trả về Unix timestamp. -1 nếu lỗi.
+    Hỗ trợ format mới {timestamp:N} và format cũ {time:string}."""
     raw = None
-    # Thử đọc bằng root trước (file trong /sdcard/Android/ cần root)
+    # Ưu tiên đọc trực tiếp (Delta ở /storage/emulated/0/ không cần root)
     try:
-        raw = subprocess.check_output(
-            f"su -c 'cat \"{filepath}\" 2>/dev/null'",
-            shell=True, text=True, timeout=3,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
+        with open(filepath, 'r', encoding='utf-8') as fh:
+            raw = fh.read().strip()
     except:
         pass
-    # Fallback: thử đọc trực tiếp (file ở /sdcard/Delta/ hoặc path không cần root)
+    # Fallback: đọc qua su -c cat (file trong /sdcard/Android/ cần root)
     if not raw:
         try:
-            with open(filepath, 'r', encoding='utf-8') as fh:
-                raw = fh.read().strip()
+            raw = subprocess.check_output(
+                f"su -c 'cat \"{filepath}\" 2>/dev/null'",
+                shell=True, text=True, timeout=3,
+                stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            ).strip()
         except:
             pass
     if not raw:
