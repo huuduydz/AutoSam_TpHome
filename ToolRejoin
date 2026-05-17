@@ -291,7 +291,8 @@ task.spawn(function()
             local humOk, hum = pcall(function() return LocalPlayer.Character.Humanoid end)
             if not (pidOk and pid == 0 and not (humOk and hum)) then
                 pcall(function()
-                    writefile(fileName, string.format('{"playerName":"%s","time":"%s"}', LocalPlayer.Name, os.date("!%Y-%m-%dT%H:%M:%SZ", workspace:GetServerTimeNow())))
+                    -- Ghi Unix timestamp số nguyên (không dùng string date) để Python đọc chính xác
+                    writefile(fileName, string.format('{"playerName":"%s","timestamp":%d}', LocalPlayer.Name, math.floor(workspace:GetServerTimeNow())))
                 end)
             end
         end
@@ -325,57 +326,65 @@ def extract_username_from_filename(filename):
     return base  # fallback
 
 def get_all_heartbeat_files_fast(pkg=None):
-    """Dùng find hệ thống để tìm tất cả file *_checkhudyhub.json trên các đường dẫn phổ biến"""
-    # Các thư mục cần quét, bao gồm cả workspace của bản mod
-    search_dirs = [
-        "/sdcard/Android/media",
-        "/sdcard/Android/data",
-        "/sdcard/Delta",               # thư mục mod thường gặp
-        "/storage/emulated/0/Delta",
-        "/sdcard/ModWorkspace"
-    ]
-    # Nếu có pkg, thêm thư mục riêng của package đó (để tối ưu)
+    """Dùng ls với wildcard - nhanh hơn find đệ quy ~10x, ít tốn su hơn."""
+    import json as _json
     if pkg:
-        search_dirs.insert(0, f"/sdcard/Android/media/{pkg}")
-        search_dirs.insert(0, f"/sdcard/Android/data/{pkg}")
-        search_dirs.insert(0, f"/sdcard/{pkg}")
+        # Biết chính xác pkg → chỉ ls trong thư mục của pkg đó
+        cmd = (
+            f"su -c 'ls /sdcard/Android/media/{pkg}/workspace/*_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/workspace/*_checkhudyhub.json "
+            f"/sdcard/Android/media/{pkg}/*_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/*_checkhudyhub.json "
+            f"2>/dev/null'"
+        )
+    else:
+        # Quét global - dùng wildcard thay vì find đệ quy
+        cmd = (
+            "su -c 'ls /sdcard/Android/media/*/workspace/*_checkhudyhub.json "
+            "/sdcard/Android/data/*/workspace/*_checkhudyhub.json "
+            "/sdcard/Android/media/*/*_checkhudyhub.json "
+            "/sdcard/Android/data/*/*_checkhudyhub.json "
+            "/sdcard/Delta/*_checkhudyhub.json "
+            "/storage/emulated/0/Delta/*_checkhudyhub.json "
+            "2>/dev/null'"
+        )
     results = []
-    for d in search_dirs:
-        try:
-            cmd = f"su -c 'find {d} -iname \"*_checkhudyhub.json\" -type f 2>/dev/null'"
-            out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
-            for line in out.splitlines():
-                line = line.strip()
-                if line:
-                    results.append(line)
-        except:
-            pass
-    # Loại trùng
+    try:
+        out = subprocess.check_output(cmd, shell=True, text=True, timeout=3,
+                                       stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL).strip()
+        for line in out.splitlines():
+            line = line.strip()
+            if line and '_checkhudyhub.json' in line:
+                results.append(line)
+    except:
+        pass
     return list(set(results))
 
 def get_heartbeat_files_for_pkg(pkg):
-    """Chỉ tìm heartbeat file trong thư mục RIÊNG của package đó.
-    Dùng cho discover_unbound_account để tránh bind nhầm sang package khác."""
-    # Chỉ quét đúng các thư mục của pkg - không quét global
-    pkg_dirs = [
-        f"/sdcard/Android/media/{pkg}",
-        f"/sdcard/Android/data/{pkg}",
-        f"/sdcard/{pkg}",
-    ]
-    results = []
-    for d in pkg_dirs:
-        try:
-            cmd = f"su -c 'find {d} -iname \"*_checkhudyhub.json\" -type f 2>/dev/null'"
-            out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
-            for line in out.splitlines():
-                line = line.strip()
-                if line:
-                    results.append(line)
-        except:
-            pass
-    return list(set(results))
+    """Chỉ tìm heartbeat file trong thư mục riêng của package đó (giữ để tương thích)."""
+    return get_all_heartbeat_files_fast(pkg)
+
+import json as _json_mod
+
+def _read_json_timestamp(filepath):
+    """Đọc nội dung JSON, trả về timestamp số nguyên (Unix). -1 nếu lỗi.
+    Hỗ trợ cả format mới {timestamp:N} và format cũ {time:string}."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as fh:
+            data = _json_mod.loads(fh.read())
+        if 'timestamp' in data:
+            return float(data['timestamp'])
+        if 'time' in data:
+            # Format cũ: "2024-05-01T12:00:00Z" → parse thành epoch
+            from datetime import datetime, timezone
+            dt = datetime.strptime(data['time'], '%Y-%m-%dT%H:%M:%SZ')
+            return dt.replace(tzinfo=timezone.utc).timestamp()
+    except:
+        pass
+    return -1
 
 def get_heartbeat(acc_name, pkg):
+    """Trả về Unix timestamp từ nội dung JSON (chính xác hơn mtime)."""
     global json_path_cache, heartbeat_last_check, file_to_pkg_binding
     now = time.time()
     if pkg not in json_path_cache:
@@ -385,44 +394,36 @@ def get_heartbeat(acc_name, pkg):
     last_check = heartbeat_last_check[pkg]
 
     if acc_name in cache:
-        cached_path, cached_mtime = cache[acc_name]
+        cached_path, cached_ts = cache[acc_name]
         if os.path.exists(cached_path):
-            if now - last_check.get(acc_name, 0) < 15:
-                return cached_mtime
-            try:
-                mtime = os.path.getmtime(cached_path)
-                cache[acc_name] = (cached_path, mtime)
+            if now - last_check.get(acc_name, 0) < 10:  # Cache ngắn 10s để nhạy hơn
+                return cached_ts
+            ts = _read_json_timestamp(cached_path)
+            if ts > 0:
+                cache[acc_name] = (cached_path, ts)
                 last_check[acc_name] = now
-                # Cập nhật binding mỗi lần đọc file thành công
                 with shared_lock:
                     file_to_pkg_binding[cached_path] = pkg
-                return mtime
-            except:
-                pass
+                return ts
         del cache[acc_name]
 
-    # Tìm mới từ danh sách tất cả file
+    # Tìm file mới
     all_files = get_all_heartbeat_files_fast(pkg)
-    best_mtime = 0
+    best_ts = 0
     best_file = None
     for f in all_files:
-        try:
-            # Lấy tên từ file, so khớp với acc_name
-            name_in_file = extract_username_from_filename(f)
-            if name_in_file == acc_name:
-                mtime = os.path.getmtime(f)
-                if mtime > best_mtime:
-                    best_mtime = mtime
-                    best_file = f
-        except:
-            pass
-    if best_file:
-        cache[acc_name] = (best_file, best_mtime)
+        name_in_file = extract_username_from_filename(f)
+        if name_in_file == acc_name:
+            ts = _read_json_timestamp(f)
+            if ts > best_ts:
+                best_ts = ts
+                best_file = f
+    if best_file and best_ts > 0:
+        cache[acc_name] = (best_file, best_ts)
         last_check[acc_name] = now
-        # Ghi nhớ: file này thuộc pkg này (chống nhận diện chéo)
         with shared_lock:
             file_to_pkg_binding[best_file] = pkg
-        return best_mtime
+        return best_ts
     return -1
 
 def discover_unbound_account(pkg, states):
@@ -480,48 +481,54 @@ def trigger_boot_step_2(pkg):
 
 def force_restart_app(pkg, states, current_time, reason, color):
     global last_restart_time, last_any_restart_time, file_to_pkg_binding
-    # Cooldown check
     if pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
         return
 
     states[pkg]['text'] = reason
     states[pkg]['color'] = color
-
-    # Set cooldown NGAY + cập nhật last_any_restart_time cho các pkg khác biết
     last_restart_time[pkg] = current_time
     last_any_restart_time = current_time
 
-    # === BƯỚC 1: Force stop ngay - không cần semaphore vì chỉ kill đúng pkg này ===
-    safe_root(f"su -c 'am force-stop {pkg}'")
-
-    # Dọn dẹp cache và bindings
-    bound_name = states[pkg].get('bound_name')
-    if bound_name:
-        safe_root(f"su -c 'find /sdcard -type f -name \"*_{bound_name}_checkhudyhub.json\" -delete 2>/dev/null'")
-        if pkg in json_path_cache and bound_name in json_path_cache[pkg]:
-            del json_path_cache[pkg][bound_name]
-        if pkg in heartbeat_last_check and bound_name in heartbeat_last_check[pkg]:
-            del heartbeat_last_check[pkg][bound_name]
-        with shared_lock:
-            CLAIMED_NAMES.discard(bound_name)
-            stale_fps = [fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg == pkg]
-            for fp in stale_fps:
-                del file_to_pkg_binding[fp]
-
-    # Reset state TRƯỚC khi boot để monitor thread biết đang restart
-    states[pkg]['rejoin_time'] = current_time
-    states[pkg]['warmup_until'] = current_time + 90
-    states[pkg]['bound_name'] = None
-    states[pkg]['display_name'] = 'Chờ Auto-Bind...'
-
-    # === BƯỚC 2: Boot app - serialize bước này để tránh overload Android ===
-    # Timeout 15s: nếu pkg khác đang boot, chờ tối đa 15s rồi boot luôn
-    boot_acquired = global_restart_semaphore.acquire(timeout=15)
+    # Toàn bộ restart trong semaphore -> tránh spam am force-stop đồng loạt
+    boot_acquired = global_restart_semaphore.acquire(timeout=20)
     try:
-        time.sleep(1)
-        trigger_boot_step_1(pkg)
+        # Bước 1: Dừng app
+        safe_root(f"su -c 'am force-stop {pkg}'")
+
+        # Dọn file heartbeat bằng rm -f (nhanh, không cần find đệ quy)
+        bound_name = states[pkg].get('bound_name')
+        if bound_name:
+            safe_root(
+                f"su -c 'rm -f "
+                f"/sdcard/Android/media/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+                f"/sdcard/Android/data/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+                f"/sdcard/Android/media/{pkg}/*_{bound_name}_checkhudyhub.json "
+                f"/sdcard/Android/data/{pkg}/*_{bound_name}_checkhudyhub.json "
+                f"/sdcard/Delta/*_{bound_name}_checkhudyhub.json "
+                f"2>/dev/null'"
+            )
+            # Xóa toàn bộ cache RAM của pkg này
+            json_path_cache.pop(pkg, None)
+            heartbeat_last_check.pop(pkg, None)
+            with shared_lock:
+                CLAIMED_NAMES.discard(bound_name)
+                stale_fps = [fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg == pkg]
+                for fp in stale_fps:
+                    del file_to_pkg_binding[fp]
+
+        # Reset state
+        states[pkg]['rejoin_time'] = current_time
+        states[pkg]['warmup_until'] = current_time + 90
+        states[pkg]['bound_name'] = None
+        states[pkg]['display_name'] = 'Chờ Auto-Bind...'
+        states[pkg]['heartbeat_misses'] = 0
+
+        # Bước 2: Khởi động lại với delay để Android xả RAM
         time.sleep(2)
+        trigger_boot_step_1(pkg)
+        time.sleep(3)
         trigger_boot_step_2(pkg)
+        time.sleep(2)
     finally:
         if boot_acquired:
             global_restart_semaphore.release()
@@ -682,17 +689,16 @@ def login_via_cookie():
 # MONITOR THREAD - Mỗi package chạy 1 thread riêng
 # =====================================================================
 def is_app_running(pkg):
-    """Kiểm tra process của package có đang chạy không bằng pidof.
-    Return True nếu chạy hoặc không kiểm tra được (fallback an toàn)."""
+    """Kiểm tra process của package bằng pgrep (nhẹ hơn pidof, timeout 2s)."""
     try:
         out = subprocess.check_output(
-            f"su -c 'pidof {pkg} 2>/dev/null'",
-            shell=True, text=True, timeout=4,
+            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=2,
             stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL
         ).strip()
         return len(out) > 0
     except:
-        return True  # Fallback: giả sử chạy nếu không kiểm tra được
+        return True  # Fallback an toàn
 
 def monitor_package(pkg, states, last_ok_ping, stop_event):
     """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
