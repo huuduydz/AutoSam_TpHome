@@ -511,13 +511,31 @@ def force_restart_app(pkg, states, current_time, reason, color):
     last_restart_time[pkg] = current_time
     last_any_restart_time = current_time
 
-    # Toàn bộ restart trong semaphore -> tránh spam am force-stop đồng loạt
+    # Toàn bộ restart trong semaphore -> tránh spam đồng loạt
     boot_acquired = global_restart_semaphore.acquire(timeout=20)
     try:
-        # Bước 1: Dừng app
-        safe_root(f"su -c 'am force-stop {pkg}'")
+        # ── BƯỚC 1: Kill ĐÚNG PID của pkg này ──────────────────────────────
+        # Dùng kill {PID} thay vì am force-stop để KHÔNG kill pkg khác
+        # am force-stop trên một số ROM clone app kill toàn bộ Roblox instances
+        pid_killed = False
+        try:
+            pid_out = subprocess.check_output(
+                f"su -c 'pgrep -f {pkg} 2>/dev/null'",
+                shell=True, text=True, timeout=3,
+                stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            ).strip()
+            if pid_out:
+                pids = ' '.join(pid_out.splitlines())
+                safe_root(f"su -c 'kill -9 {pids} 2>/dev/null'")
+                pid_killed = True
+                time.sleep(1)  # Chờ process die
+        except:
+            pass
+        # Fallback: dùng am force-stop nếu không lấy được PID
+        if not pid_killed:
+            safe_root(f"su -c 'am force-stop {pkg}'")
 
-        # Dọn file heartbeat bằng rm -f (nhanh, không cần find đệ quy)
+        # ── Dọn file heartbeat ───────────────────────────────────────────────
         bound_name = states[pkg].get('bound_name')
         if bound_name:
             safe_root(
@@ -529,7 +547,6 @@ def force_restart_app(pkg, states, current_time, reason, color):
                 f"/sdcard/Delta/*_{bound_name}_checkhudyhub.json "
                 f"2>/dev/null'"
             )
-            # Xóa toàn bộ cache RAM của pkg này
             json_path_cache.pop(pkg, None)
             heartbeat_last_check.pop(pkg, None)
             with shared_lock:
@@ -538,14 +555,14 @@ def force_restart_app(pkg, states, current_time, reason, color):
                 for fp in stale_fps:
                     del file_to_pkg_binding[fp]
 
-        # Reset state
+        # ── Reset state ──────────────────────────────────────────────────────
         states[pkg]['rejoin_time'] = current_time
         states[pkg]['warmup_until'] = current_time + 90
         states[pkg]['bound_name'] = None
         states[pkg]['display_name'] = 'Chờ Auto-Bind...'
         states[pkg]['heartbeat_misses'] = 0
 
-        # Bước 2: Khởi động lại với delay để Android xả RAM
+        # ── BƯỚC 2: Khởi động lại ───────────────────────────────────────────
         time.sleep(2)
         trigger_boot_step_1(pkg)
         time.sleep(3)
