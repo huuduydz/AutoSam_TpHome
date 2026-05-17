@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python V3 {RESET}")
+    print(f"{G}Core: {Y}Python Safe Extraction (Fix 100% Sập Game){RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -326,43 +326,59 @@ def extract_username_from_filename(filename):
     return base  # fallback
 
 def get_all_heartbeat_files_fast(pkg=None):
-    """Tìm file heartbeat trong thư mục pkg + thư mục Delta executor."""
+    """Tìm file heartbeat bằng su find - giống hudy_2.py đã hoạt động."""
+    search_dirs = [
+        "/sdcard/Android/media",
+        "/sdcard/Android/data",
+        "/sdcard/Delta",
+        "/storage/emulated/0/Delta",
+        "/sdcard/DeltaQT",
+        "/storage/emulated/0/DeltaQT",
+        "/sdcard/ModWorkspace",
+    ]
     if pkg:
-        # Tìm trong thư mục riêng của pkg (bất kỳ subdirectory)
-        cmd = (
-            f"su -c 'find /sdcard/Android/media/{pkg} /sdcard/Android/data/{pkg} "
-            f"-name \"*_checkhudyhub.json\" -type f 2>/dev/null'"
-        )
-    else:
-        cmd = (
-            "su -c 'find /sdcard/Android/media /sdcard/Android/data "
-            "-maxdepth 6 -name \"*_checkhudyhub.json\" -type f 2>/dev/null'"
-        )
+        search_dirs = [
+            f"/sdcard/Android/media/{pkg}",
+            f"/sdcard/Android/data/{pkg}",
+            "/sdcard/Delta",
+            "/storage/emulated/0/Delta",
+            "/sdcard/DeltaQT",
+            "/storage/emulated/0/DeltaQT",
+        ]
     results = []
-    try:
-        out = subprocess.check_output(cmd, shell=True, text=True, timeout=5,
-                                       stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL).strip()
-        for line in out.splitlines():
-            line = line.strip()
-            if line and '_checkhudyhub.json' in line and not line.startswith('ls:'):
-                results.append(line)
-    except:
-        pass
-    # Luôn thêm Delta path (đường dẫn thực tế của executor Delta/DeltaQT)
-    for delta_dir in ["/storage/emulated/0/Delta", "/sdcard/Delta",
-                       "/storage/emulated/0/DeltaQT", "/sdcard/DeltaQT"]:
+    for d in search_dirs:
         try:
-            entries = os.listdir(delta_dir)
-            for entry in entries:
-                if entry.endswith('_checkhudyhub.json'):
-                    results.append(os.path.join(delta_dir, entry))
+            cmd = f"su -c 'find {d} -iname \"*_checkhudyhub.json\" -type f 2>/dev/null'"
+            out = subprocess.check_output(cmd, shell=True, text=True, timeout=5,
+                                           stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL).strip()
+            for line in out.splitlines():
+                line = line.strip()
+                if line and '_checkhudyhub.json' in line:
+                    results.append(line)
         except:
             pass
     return list(set(results))
 
 def get_heartbeat_files_for_pkg(pkg):
-    """Chỉ tìm heartbeat file trong thư mục riêng của package đó (giữ để tương thích)."""
     return get_all_heartbeat_files_fast(pkg)
+
+def _get_file_mtime(filepath):
+    """Lấy mtime - thử getmtime trước, fallback su stat cho file cần root."""
+    try:
+        return os.path.getmtime(filepath)
+    except:
+        pass
+    try:
+        out = subprocess.check_output(
+            f"su -c 'stat -c %Y \"{filepath}\" 2>/dev/null'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out.isdigit():
+            return float(out)
+    except:
+        pass
+    return -1
 
 import json as _json_mod
 
@@ -402,7 +418,7 @@ def _read_json_timestamp(filepath):
     return -1
 
 def get_heartbeat(acc_name, pkg):
-    """Trả về Unix timestamp từ nội dung JSON (chính xác hơn mtime)."""
+    """Trả về mtime của file heartbeat - giống hudy_2.py đã hoạt động."""
     global json_path_cache, heartbeat_last_check, file_to_pkg_binding
     now = time.time()
     if pkg not in json_path_cache:
@@ -412,48 +428,45 @@ def get_heartbeat(acc_name, pkg):
     last_check = heartbeat_last_check[pkg]
 
     if acc_name in cache:
-        cached_path, cached_ts = cache[acc_name]
+        cached_path, cached_mtime = cache[acc_name]
         if os.path.exists(cached_path):
-            if now - last_check.get(acc_name, 0) < 10:  # Cache ngắn 10s để nhạy hơn
-                return cached_ts
-            ts = _read_json_timestamp(cached_path)
-            if ts > 0:
-                cache[acc_name] = (cached_path, ts)
+            if now - last_check.get(acc_name, 0) < 15:
+                return cached_mtime
+            mtime = _get_file_mtime(cached_path)
+            if mtime > 0:
+                cache[acc_name] = (cached_path, mtime)
                 last_check[acc_name] = now
                 with shared_lock:
                     file_to_pkg_binding[cached_path] = pkg
-                return ts
+                return mtime
         del cache[acc_name]
 
-    # Tìm file mới
     all_files = get_all_heartbeat_files_fast(pkg)
-    best_ts = 0
+    best_mtime = 0
     best_file = None
     for f in all_files:
         name_in_file = extract_username_from_filename(f)
         if name_in_file == acc_name:
-            ts = _read_json_timestamp(f)
-            if ts > best_ts:
-                best_ts = ts
+            mtime = _get_file_mtime(f)
+            if mtime > best_mtime:
+                best_mtime = mtime
                 best_file = f
-    if best_file and best_ts > 0:
-        cache[acc_name] = (best_file, best_ts)
+    if best_file and best_mtime > 0:
+        cache[acc_name] = (best_file, best_mtime)
         last_check[acc_name] = now
         with shared_lock:
             file_to_pkg_binding[best_file] = pkg
-        return best_ts
+        return best_mtime
     return -1
 
 def discover_unbound_account(pkg, states):
-    """Tìm acc chưa được claim cho pkg này.
-    Dùng _read_json_timestamp (root cat) thay vì getmtime (không đọc được khi không có root)."""
+    """Tìm acc chưa được claim. Dùng mtime giống hudy_2.py (đã hoạt động)."""
     global CLAIMED_NAMES, file_to_pkg_binding
 
     active_names_other_pkgs = {
         s['bound_name'] for p, s in states.items()
         if p != pkg and s.get('bound_name')
     }
-
     with shared_lock:
         blocked_files = {fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg != pkg}
 
@@ -463,16 +476,15 @@ def discover_unbound_account(pkg, states):
     for f in all_files:
         if f in blocked_files:
             continue
-        # Dùng _read_json_timestamp thay vì getmtime (không cần root)
-        ts = _read_json_timestamp(f)
-        if ts > 0 and now - ts < 300:  # File trong vòng 5 phút mới hợp lệ
+        mtime = _get_file_mtime(f)
+        if mtime > 0 and now - mtime < 300:
             name = extract_username_from_filename(f)
             if name:
-                candidates.append((name, ts, f))
+                candidates.append((name, mtime, f))
     candidates.sort(key=lambda x: x[1], reverse=True)
 
     with shared_lock:
-        for name, ts, fpath in candidates:
+        for name, mtime, fpath in candidates:
             if name not in CLAIMED_NAMES and name not in active_names_other_pkgs:
                 CLAIMED_NAMES.add(name)
                 file_to_pkg_binding[fpath] = pkg
