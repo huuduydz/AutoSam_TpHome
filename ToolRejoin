@@ -326,35 +326,30 @@ def extract_username_from_filename(filename):
     return base  # fallback
 
 def get_all_heartbeat_files_fast(pkg=None):
-    """Dùng ls với wildcard - nhanh hơn find đệ quy ~10x, ít tốn su hơn."""
-    import json as _json
+    """Tìm file heartbeat bằng find giới hạn trong thư mục của pkg.
+    find trong 1 pkg: nhanh (~0.3s), đúng mọi subdirectory."""
     if pkg:
-        # Biết chính xác pkg → chỉ ls trong thư mục của pkg đó
+        # Biết pkg -> chỉ scan trong thư mục của pkg đó (không quét toàn bộ /sdcard)
+        pkg_suffix = pkg.split('.')[-1]  # Tách ra ngoài để tránh lỗi cú pháp f-string
         cmd = (
-            f"su -c 'ls /sdcard/Android/media/{pkg}/workspace/*_checkhudyhub.json "
-            f"/sdcard/Android/data/{pkg}/workspace/*_checkhudyhub.json "
-            f"/sdcard/Android/media/{pkg}/*_checkhudyhub.json "
-            f"/sdcard/Android/data/{pkg}/*_checkhudyhub.json "
-            f"2>/dev/null'"
+            f"su -c 'find /sdcard/Android/media/{pkg} /sdcard/Android/data/{pkg} "
+            f"-name \"*_checkhudyhub.json\" -type f 2>/dev/null; "
+            f"ls /sdcard/Delta/*_{pkg_suffix}*_checkhudyhub.json 2>/dev/null'"
         )
     else:
-        # Quét global - dùng wildcard thay vì find đệ quy
+        # Không biết pkg -> quét global nhưng giới hạn độ sâu (-maxdepth 6)
         cmd = (
-            "su -c 'ls /sdcard/Android/media/*/workspace/*_checkhudyhub.json "
-            "/sdcard/Android/data/*/workspace/*_checkhudyhub.json "
-            "/sdcard/Android/media/*/*_checkhudyhub.json "
-            "/sdcard/Android/data/*/*_checkhudyhub.json "
-            "/sdcard/Delta/*_checkhudyhub.json "
-            "/storage/emulated/0/Delta/*_checkhudyhub.json "
-            "2>/dev/null'"
+            "su -c 'find /sdcard/Android/media /sdcard/Android/data "
+            "-maxdepth 6 -name \"*_checkhudyhub.json\" -type f 2>/dev/null; "
+            "ls /sdcard/Delta/*_checkhudyhub.json 2>/dev/null'"
         )
     results = []
     try:
-        out = subprocess.check_output(cmd, shell=True, text=True, timeout=3,
+        out = subprocess.check_output(cmd, shell=True, text=True, timeout=5,
                                        stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL).strip()
         for line in out.splitlines():
             line = line.strip()
-            if line and '_checkhudyhub.json' in line:
+            if line and '_checkhudyhub.json' in line and not line.startswith('ls:'):
                 results.append(line)
     except:
         pass
@@ -447,44 +442,36 @@ def get_heartbeat(acc_name, pkg):
 
 def discover_unbound_account(pkg, states):
     """Tìm acc chưa được claim cho pkg này.
-    Bảo vệ chéo bằng: CLAIMED_NAMES + active bound names + file_to_pkg_binding.
-    KHÔNG dọn stale CLAIMED_NAMES ở đây - việc đó do force_restart_app xử lý."""
+    Dùng _read_json_timestamp (root cat) thay vì getmtime (không đọc được khi không có root)."""
     global CLAIMED_NAMES, file_to_pkg_binding
 
-    # Tên đang được pkg KHÁC bind (double-check state thực tế)
     active_names_other_pkgs = {
         s['bound_name'] for p, s in states.items()
         if p != pkg and s.get('bound_name')
     }
 
-    # Files đã được xác nhận thuộc pkg KHÁC -> skip
     with shared_lock:
         blocked_files = {fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg != pkg}
 
-    # Tìm file heartbeat trên tất cả thư mục
     all_files = get_all_heartbeat_files_fast(pkg)
     candidates = []
     now = time.time()
     for f in all_files:
         if f in blocked_files:
-            continue  # Bỏ qua file đã xác nhận của pkg khác
-        try:
-            mtime = os.path.getmtime(f)
-            if now - mtime < 240:
-                name = extract_username_from_filename(f)
-                if name:
-                    candidates.append((name, mtime, f))
-        except:
-            pass
+            continue
+        # Dùng _read_json_timestamp thay vì getmtime (không cần root)
+        ts = _read_json_timestamp(f)
+        if ts > 0 and now - ts < 300:  # File trong vòng 5 phút mới hợp lệ
+            name = extract_username_from_filename(f)
+            if name:
+                candidates.append((name, ts, f))
     candidates.sort(key=lambda x: x[1], reverse=True)
 
-    # Dùng lock tránh race condition giữa các thread
     with shared_lock:
-        for name, mtime, fpath in candidates:
-            # Bỏ qua nếu: đã claim TRONG CLAIMED_NAMES hoặc đang bind bởi pkg khác
+        for name, ts, fpath in candidates:
             if name not in CLAIMED_NAMES and name not in active_names_other_pkgs:
                 CLAIMED_NAMES.add(name)
-                file_to_pkg_binding[fpath] = pkg  # Ghi nhớ file này thuộc pkg này
+                file_to_pkg_binding[fpath] = pkg
                 return name
     return None
 
