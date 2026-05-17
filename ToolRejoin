@@ -106,9 +106,10 @@ CHECK_UI_TIME = 180
 AUTO_BLOCK = "Disable"
 
 last_restart_time = {}
+last_any_restart_time = 0            # Thời điểm bất kỳ pkg nào restart gần nhất
 shared_lock = threading.Lock()       # bảo vệ CLAIMED_NAMES giữa các thread
 pkg_restart_locks = {}               # {pkg: Lock} - mỗi pkg 1 lock riêng
-global_restart_semaphore = threading.Semaphore(1)  # Chỉ 1 pkg restart 1 lúc
+global_restart_semaphore = threading.Semaphore(1)  # Chỉ serialize bước boot
 file_to_pkg_binding = {}             # {file_path: pkg} - ghi nhớ file json nào thuộc pkg nào
 
 # =====================================================================
@@ -478,7 +479,7 @@ def trigger_boot_step_2(pkg):
         safe_root(f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\"'")
 
 def force_restart_app(pkg, states, current_time, reason, color):
-    global last_restart_time, file_to_pkg_binding
+    global last_restart_time, last_any_restart_time, file_to_pkg_binding
     # Cooldown check
     if pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
         return
@@ -486,8 +487,9 @@ def force_restart_app(pkg, states, current_time, reason, color):
     states[pkg]['text'] = reason
     states[pkg]['color'] = color
 
-    # Set cooldown NGAY để các pkg_lock khác không trigger đồng thời
+    # Set cooldown NGAY + cập nhật last_any_restart_time cho các pkg khác biết
     last_restart_time[pkg] = current_time
+    last_any_restart_time = current_time
 
     # === BƯỚC 1: Force stop ngay - không cần semaphore vì chỉ kill đúng pkg này ===
     safe_root(f"su -c 'am force-stop {pkg}'")
@@ -763,24 +765,37 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 continue
 
             # === CHECK HEARTBEAT ===
+            # Nếu pkg khác vừa restart (< 180s), cho thêm grace để tránh cascade
+            other_just_restarted = (current_time - last_any_restart_time < 180) and \
+                                   (last_any_restart_time != last_restart_time.get(pkg, 0))
+
             last_ping = get_heartbeat(bound, pkg)
             if last_ping == -1:
-                if is_grace:
-                    state['text'] = f"Đang Nạp Data ({int(240 - uptime_seconds)}s)"
+                state['heartbeat_misses'] = state.get('heartbeat_misses', 0) + 1
+                misses = state['heartbeat_misses']
+                if is_grace or other_just_restarted:
+                    remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
+                    state['text'] = f"Đang Nạp Data ({max(0,remain)}s)"
                     state['color'] = Y
+                elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
+                    # Cần 3 miss liên tiếp (~30s) mới restart - tránh false negative
+                    with pkg_restart_locks[pkg]:
+                        force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
+                    last_ok_ping[pkg] = current_time
+                    state['heartbeat_misses'] = 0
                 else:
-                    if pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180:
-                        with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
-                        last_ok_ping[pkg] = current_time
+                    state['text'] = f"Mất HB ({misses}/3 lần)..."
+                    state['color'] = Y
             else:
+                state['heartbeat_misses'] = 0  # Reset khi có heartbeat
                 diff = current_time - last_ping
                 if diff <= 120:
                     last_ok_ping[pkg] = current_time
                 real_diff = current_time - last_ok_ping.get(pkg, current_time)
                 if diff > 120:
-                    if is_grace:
-                        state['text'] = f"Vào Server... ({int(240 - uptime_seconds)}s)"
+                    if is_grace or other_just_restarted:
+                        remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
+                        state['text'] = f"Vào Server... ({max(0,remain)}s)"
                         state['color'] = Y
                     elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
                         with pkg_restart_locks[pkg]:
@@ -810,12 +825,13 @@ def start_auto_rejoin():
         return
 
     last_restart_time = {}
+    last_any_restart_time = 0
     json_path_cache = {}
     heartbeat_last_check = {}
     CLAIMED_NAMES = set()
     pkg_restart_locks = {}
     global_restart_semaphore = threading.Semaphore(1)
-    file_to_pkg_binding = {}  # Reset bảng ghi nhớ file-pkg khi bắt đầu
+    file_to_pkg_binding = {}
 
     print(f"\n{Y}[*] Inject script universal...{RESET}")
     inject_universal_lua()
@@ -837,7 +853,8 @@ def start_auto_rejoin():
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': pkg_now,
             'session_start_time': pkg_now,
-            'warmup_until': pkg_now + 90
+            'warmup_until': pkg_now + 90,
+            'heartbeat_misses': 0
         }
         last_ok_ping[pkg] = pkg_now
         last_restart_time.pop(pkg, None)
