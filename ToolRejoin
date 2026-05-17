@@ -367,11 +367,30 @@ def get_heartbeat_files_for_pkg(pkg):
 import json as _json_mod
 
 def _read_json_timestamp(filepath):
-    """Đọc nội dung JSON, trả về timestamp số nguyên (Unix). -1 nếu lỗi.
+    """Đọc nội dung JSON qua su -c cat (cần root vì file trong sandbox Android).
+    Trả về Unix timestamp. -1 nếu lỗi.
     Hỗ trợ cả format mới {timestamp:N} và format cũ {time:string}."""
+    raw = None
+    # Thử đọc bằng root trước (file trong /sdcard/Android/ cần root)
     try:
-        with open(filepath, 'r', encoding='utf-8') as fh:
-            data = _json_mod.loads(fh.read())
+        raw = subprocess.check_output(
+            f"su -c 'cat \"{filepath}\" 2>/dev/null'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+    except:
+        pass
+    # Fallback: thử đọc trực tiếp (file ở /sdcard/Delta/ hoặc path không cần root)
+    if not raw:
+        try:
+            with open(filepath, 'r', encoding='utf-8') as fh:
+                raw = fh.read().strip()
+        except:
+            pass
+    if not raw:
+        return -1
+    try:
+        data = _json_mod.loads(raw)
         if 'timestamp' in data:
             return float(data['timestamp'])
         if 'time' in data:
