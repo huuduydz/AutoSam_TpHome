@@ -500,6 +500,22 @@ def trigger_boot_step_1(pkg):
 def trigger_boot_step_2(pkg):
     if target_place_id:
         safe_root(f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\"'")
+    else:
+        # Không có place ID: mở lại bằng launcher
+        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+
+def boot_pkg_with_verify(pkg):
+    """Boot + xác nhận app lên trong 15s. Nếu không lên thì retry 1 lần."""
+    trigger_boot_step_1(pkg)
+    time.sleep(3)
+    trigger_boot_step_2(pkg)
+    # Xác nhận app đã lên sau 15s
+    time.sleep(15)
+    if not is_app_running(pkg):
+        # Retry boot lần 2
+        trigger_boot_step_1(pkg)
+        time.sleep(3)
+        trigger_boot_step_2(pkg)
 
 def force_restart_app(pkg, states, current_time, reason, color):
     global last_restart_time, last_any_restart_time, file_to_pkg_binding
@@ -511,63 +527,59 @@ def force_restart_app(pkg, states, current_time, reason, color):
     last_restart_time[pkg] = current_time
     last_any_restart_time = current_time
 
-    # Toàn bộ restart trong semaphore -> tránh spam đồng loạt
-    boot_acquired = global_restart_semaphore.acquire(timeout=20)
+    # ── BƯỚC 1: Kill process (NGOÀI semaphore để không block pkg khác) ──────
+    pid_killed = False
     try:
-        # ── BƯỚC 1: Kill ĐÚNG PID của pkg này ──────────────────────────────
-        # Dùng kill {PID} thay vì am force-stop để KHÔNG kill pkg khác
-        # am force-stop trên một số ROM clone app kill toàn bộ Roblox instances
-        pid_killed = False
-        try:
-            pid_out = subprocess.check_output(
-                f"su -c 'pgrep -f {pkg} 2>/dev/null'",
-                shell=True, text=True, timeout=3,
-                stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            ).strip()
-            if pid_out:
-                pids = ' '.join(pid_out.splitlines())
-                safe_root(f"su -c 'kill -9 {pids} 2>/dev/null'")
-                pid_killed = True
-                time.sleep(1)  # Chờ process die
-        except:
-            pass
-        # Fallback: dùng am force-stop nếu không lấy được PID
-        if not pid_killed:
-            safe_root(f"su -c 'am force-stop {pkg}'")
+        pid_out = subprocess.check_output(
+            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if pid_out:
+            pids = ' '.join(pid_out.splitlines())
+            safe_root(f"su -c 'kill -9 {pids} 2>/dev/null'")
+            pid_killed = True
+            time.sleep(1)
+    except:
+        pass
+    if not pid_killed:
+        safe_root(f"su -c 'am force-stop {pkg}'")
 
-        # ── Dọn file heartbeat ───────────────────────────────────────────────
-        bound_name = states[pkg].get('bound_name')
-        if bound_name:
-            safe_root(
-                f"su -c 'rm -f "
-                f"/sdcard/Android/media/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
-                f"/sdcard/Android/data/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
-                f"/sdcard/Android/media/{pkg}/*_{bound_name}_checkhudyhub.json "
-                f"/sdcard/Android/data/{pkg}/*_{bound_name}_checkhudyhub.json "
-                f"/sdcard/Delta/*_{bound_name}_checkhudyhub.json "
-                f"2>/dev/null'"
-            )
-            json_path_cache.pop(pkg, None)
-            heartbeat_last_check.pop(pkg, None)
-            with shared_lock:
-                CLAIMED_NAMES.discard(bound_name)
-                stale_fps = [fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg == pkg]
-                for fp in stale_fps:
-                    del file_to_pkg_binding[fp]
+    # ── Dọn file heartbeat + cache ───────────────────────────────────────────
+    bound_name = states[pkg].get('bound_name')
+    if bound_name:
+        safe_root(
+            f"su -c 'rm -f "
+            f"/sdcard/Android/media/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/media/{pkg}/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Delta/*_{bound_name}_checkhudyhub.json "
+            f"2>/dev/null'"
+        )
+        json_path_cache.pop(pkg, None)
+        heartbeat_last_check.pop(pkg, None)
+        with shared_lock:
+            CLAIMED_NAMES.discard(bound_name)
+            stale_fps = [fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg == pkg]
+            for fp in stale_fps:
+                del file_to_pkg_binding[fp]
 
-        # ── Reset state ──────────────────────────────────────────────────────
-        states[pkg]['rejoin_time'] = current_time
-        states[pkg]['warmup_until'] = current_time + 90
-        states[pkg]['bound_name'] = None
-        states[pkg]['display_name'] = 'Chờ Auto-Bind...'
-        states[pkg]['heartbeat_misses'] = 0
+    # ── Reset state ──────────────────────────────────────────────────────────
+    states[pkg]['rejoin_time'] = current_time
+    states[pkg]['warmup_until'] = current_time + 60   # 60s đủ cho process die
+    states[pkg]['bound_name'] = None
+    states[pkg]['display_name'] = 'Chờ Auto-Bind...'
+    states[pkg]['heartbeat_misses'] = 0
 
-        # ── BƯỚC 2: Khởi động lại ───────────────────────────────────────────
+    # ── BƯỚC 2: Boot (serialize để không spam Android đồng loạt) ────────────
+    # Timeout 10s: nếu không lấy được semaphore → đợi 3s rồi boot luôn
+    boot_acquired = global_restart_semaphore.acquire(timeout=10)
+    if not boot_acquired:
+        time.sleep(3)  # Stagger tự nhiên khi busy
+    try:
         time.sleep(2)
-        trigger_boot_step_1(pkg)
-        time.sleep(3)
-        trigger_boot_step_2(pkg)
-        time.sleep(2)
+        boot_pkg_with_verify(pkg)
     finally:
         if boot_acquired:
             global_restart_semaphore.release()
@@ -777,13 +789,12 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['display_name'] = found
 
             bound = state['bound_name']
-            is_grace = (uptime_seconds < 240)
+            is_grace = (uptime_seconds < 150)  # 150s thay vì 240s → detect fail nhanh hơn
 
-            # === CHƯA BIND ĐƯỢC TÊN ===
+            # === CHƯ A BIND ĐƯỢC TÊN ===
             if not bound:
                 if is_grace:
-                    # Kiểm tra process app có chạy không
-                    # Nếu KHHÔNG chạy -> restart ngay, không đợi hết grace period
+                    # Nếu app không chạy sau 30s warmup → restart ngay
                     if uptime_seconds > 30 and not is_app_running(pkg):
                         can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
                         if can_restart:
@@ -794,13 +805,13 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             state['text'] = 'App lỗi, đang chờ...'
                             state['color'] = R
                     else:
-                        state['text'] = f"Đang Load ({int(240 - uptime_seconds)}s)"
+                        state['text'] = f"Đang Load ({int(150 - uptime_seconds)}s)"
                         state['color'] = Y
                 else:
                     can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
                     if can_restart:
                         with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
+                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẻ t Bind!", R)
                         last_ok_ping[pkg] = current_time
                     else:
                         wait_sec = int(180 - (current_time - last_restart_time.get(pkg, current_time)))
