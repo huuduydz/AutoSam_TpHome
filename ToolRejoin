@@ -523,7 +523,8 @@ def boot_pkg_with_verify(pkg, max_retries=3):
         # 1) Dọn process cũ trước mỗi lần boot
         pids = _pgrep_pkg(pkg)
         if pids:
-            safe_root(f"su -c 'kill -9 {\" \".join(pids)} 2>/dev/null'")
+            pid_str = ' '.join(pids)
+            safe_root(f"su -c 'kill -9 {pid_str} 2>/dev/null'")
             time.sleep(2)
 
         # 2) Gửi lệnh boot
