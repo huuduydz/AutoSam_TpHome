@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V4{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -504,18 +504,57 @@ def trigger_boot_step_2(pkg):
         # Không có place ID: mở lại bằng launcher
         safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
 
-def boot_pkg_with_verify(pkg):
-    """Boot + xác nhận app lên trong 15s. Nếu không lên thì retry 1 lần."""
-    trigger_boot_step_1(pkg)
-    time.sleep(3)
-    trigger_boot_step_2(pkg)
-    # Xác nhận app đã lên sau 15s
-    time.sleep(15)
-    if not is_app_running(pkg):
-        # Retry boot lần 2
-        trigger_boot_step_1(pkg)
+def _pgrep_pkg(pkg, timeout=3):
+    """Lấy danh sách PID của pkg. Trả về list PID hoặc []."""
+    try:
+        out = subprocess.check_output(
+            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=timeout,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        return [p for p in out.splitlines() if p.strip().isdigit()]
+    except:
+        return []
+
+def boot_pkg_with_verify(pkg, max_retries=3):
+    """Boot pkg với tối đa 3 lần thử, verify bằng polling sau mỗi lần.
+    Hoàn toàn cô lập - fail không ảnh hưởng pkg khác."""
+    for attempt in range(1, max_retries + 1):
+        # 1) Dọn process cũ trước mỗi lần boot
+        pids = _pgrep_pkg(pkg)
+        if pids:
+            safe_root(f"su -c 'kill -9 {\" \".join(pids)} 2>/dev/null'")
+            time.sleep(2)
+
+        # 2) Gửi lệnh boot
+        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
         time.sleep(3)
-        trigger_boot_step_2(pkg)
+        if target_place_id:
+            safe_root(
+                f"su -c 'am start -p {pkg} -a android.intent.action.VIEW "
+                f"-d \"roblox://experiences/start?placeId={target_place_id}\"'"
+            )
+
+        # 3) Poll xác nhận process lên (tối đa 25s, kiểm tra mỗi 5s)
+        booted = False
+        for _ in range(5):
+            time.sleep(5)
+            if _pgrep_pkg(pkg):
+                booted = True
+                break
+
+        if booted:
+            return True  # Boot thành công
+
+        # Chưa lên → thử lại
+        if attempt < max_retries:
+            time.sleep(3)
+
+    # Tất cả attempt đều thất bại → fallback am force-stop rồi monkey
+    safe_root(f"su -c 'am force-stop {pkg}'")
+    time.sleep(2)
+    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+    return False
 
 def force_restart_app(pkg, states, current_time, reason, color):
     global last_restart_time, last_any_restart_time, file_to_pkg_binding
