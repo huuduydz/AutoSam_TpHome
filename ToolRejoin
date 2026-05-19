@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V4{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -509,11 +509,9 @@ def _pgrep_pkg(pkg, timeout=3):
         return []
 
 def _is_pkg_active(pkg):
-    """Đuầy đủ kiểm tra: pgrep (nhanh) + dumpsys activity (chính xác)."""
-    # Method 1: pgrep nhanh
+    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys (chính xác)."""
     if _pgrep_pkg(pkg):
         return True
-    # Method 2: dumpsys — xác nhận activity thực sự lên
     try:
         out = subprocess.check_output(
             f"su -c 'dumpsys activity activities 2>/dev/null | grep {pkg}'",
@@ -525,7 +523,7 @@ def _is_pkg_active(pkg):
         return False
 
 def _kill_pkg(pkg):
-    """Kill process của pkg — thử kill -9 PID trước, fallback am force-stop."""
+    """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
     pids = _pgrep_pkg(pkg)
     if pids:
         pid_str = ' '.join(pids)
@@ -535,36 +533,33 @@ def _kill_pkg(pkg):
     time.sleep(1)
 
 def boot_pkg_with_verify(pkg, max_retries=4):
-    """Boot pkg với tối đa 4 lần thử. Mỗi lần: kill sạch + launch + poll 30s.
-    Trả về True nếu bật thành công."""
+    """Boot pkg với tối đa 4 lần thử. Mỗi lần: force-stop sạch → am start → poll 30s.
+    Dùng -p {pkg} để tránh hộp thoại 'Mở bằng...' (app chooser)."""
     for attempt in range(1, max_retries + 1):
-        # A) Dọn process cũ hoàn toàn trước mỗi lần
+        # A) Dọn process cũ hoàn toàn
         safe_root(f"su -c 'am force-stop {pkg}'")
         time.sleep(2)
 
-        # B) Launch: monkey mở launcher activity
-        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
-        time.sleep(3)
-
-        # C) Nếu có place ID: deep-link vào game luôn
+        # B) Launch đúng package, tránh dialog chọn app
         if target_place_id:
+            # -p {pkg}: buộc intent vào đúng package này, không hỏi
             safe_root(
-                f"su -c 'am start -a android.intent.action.VIEW "
-                f"-d \"roblox://experiences/start?placeId={target_place_id}\" "
-                f"--es package {pkg} 2>/dev/null'" 
+                f"su -c 'am start -p {pkg} -a android.intent.action.VIEW "
+                f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
             )
+        else:
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
 
-        # D) Poll 6×5s = 30s — dùng _is_pkg_active (pgrep + dumpsys)
+        # C) Poll 6×5s = 30s
         for _ in range(6):
             time.sleep(5)
             if _is_pkg_active(pkg):
-                return True  # Boot thành công
+                return True
 
-        # Không lên sau 30s → thử lại
         if attempt < max_retries:
             time.sleep(3)
 
-    # Tất cả attempt thất bại → last resort: force-stop + monkey
+    # Last resort
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(2)
     safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
@@ -572,7 +567,6 @@ def boot_pkg_with_verify(pkg, max_retries=4):
 
 def _boot_worker(pkg, states):
     """Background thread: boot pkg không block monitor thread."""
-    # Serialize boot để không spam Android (timeout dài hơn vì có 4 retries)
     boot_acquired = global_restart_semaphore.acquire(timeout=60)
     try:
         boot_pkg_with_verify(pkg)
