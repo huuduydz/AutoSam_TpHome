@@ -497,28 +497,41 @@ def discover_unbound_account(pkg, states):
 _boot_threads = {}   # {pkg: Thread} — track boot threads
 
 def _pgrep_pkg(pkg, timeout=3):
-    """Lấy danh sách PID của pkg qua pgrep. Trả về list PID."""
+    """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c để tránh va chạm clone."""
+    pids = []
     try:
+        cmd = "su -c 'for p in /proc/[0-9]*; do [ -d \"$p\" ] && echo -n \"${p##*/}:\" && cat \"$p/cmdline\" 2>/dev/null && echo; done'"
         out = subprocess.check_output(
-            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
-            shell=True, text=True, timeout=timeout,
+            cmd, shell=True, timeout=timeout,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
-        return [p for p in out.splitlines() if p.strip().isdigit()]
+        )
+        for line in out.split(b'\n'):
+            if b':' not in line:
+                continue
+            parts = line.split(b':', 1)
+            pid_str = parts[0].strip()
+            if not pid_str.isdigit():
+                continue
+            cmdline = parts[1].split(b'\x00')[0].decode('utf-8', errors='ignore').strip()
+            if cmdline == pkg or cmdline.startswith(pkg + ':'):
+                pids.append(pid_str.decode('utf-8'))
     except:
-        return []
+        pass
+    return pids
 
 def _is_pkg_active(pkg):
-    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys (chính xác)."""
+    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys (chính xác, không va chạm clone)."""
     if _pgrep_pkg(pkg):
         return True
     try:
         out = subprocess.check_output(
-            f"su -c 'dumpsys activity activities 2>/dev/null | grep {pkg}'",
+            f"su -c 'dumpsys activity activities 2>/dev/null'",
             shell=True, text=True, timeout=5,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
-        return bool(out)
+        )
+        # So khớp package name chính xác với word boundary
+        pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
+        return bool(pattern.search(out))
     except:
         return False
 
@@ -543,8 +556,9 @@ def boot_pkg_with_verify(pkg, max_retries=4):
         # B) Launch đúng package, tránh dialog chọn app
         if target_place_id:
             # -p {pkg}: buộc intent vào đúng package này, không hỏi
+            # -f 0x18000000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK tránh tắt tab khác
             safe_root(
-                f"su -c 'am start -p {pkg} -a android.intent.action.VIEW "
+                f"su -c 'am start -p {pkg} -f 0x18000000 -a android.intent.action.VIEW "
                 f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
             )
         else:
@@ -784,16 +798,8 @@ def login_via_cookie():
 # MONITOR THREAD - Mỗi package chạy 1 thread riêng
 # =====================================================================
 def is_app_running(pkg):
-    """Kiểm tra process của package bằng pgrep (nhẹ hơn pidof, timeout 2s)."""
-    try:
-        out = subprocess.check_output(
-            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
-            shell=True, text=True, timeout=2,
-            stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL
-        ).strip()
-        return len(out) > 0
-    except:
-        return True  # Fallback an toàn
+    """Kiểm tra process của package (chính xác, không va chạm clone)."""
+    return bool(_pgrep_pkg(pkg))
 
 def monitor_package(pkg, states, last_ok_ping, stop_event):
     """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
