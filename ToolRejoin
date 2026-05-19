@@ -494,18 +494,10 @@ def discover_unbound_account(pkg, states):
 # =====================================================================
 # BOOT & RESTART
 # =====================================================================
-def trigger_boot_step_1(pkg):
-    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
-
-def trigger_boot_step_2(pkg):
-    if target_place_id:
-        safe_root(f"su -c 'am start -p {pkg} -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\"'")
-    else:
-        # Không có place ID: mở lại bằng launcher
-        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+_boot_threads = {}   # {pkg: Thread} — track boot threads
 
 def _pgrep_pkg(pkg, timeout=3):
-    """Lấy danh sách PID của pkg. Trả về list PID hoặc []."""
+    """Lấy danh sách PID của pkg qua pgrep. Trả về list PID."""
     try:
         out = subprocess.check_output(
             f"su -c 'pgrep -f {pkg} 2>/dev/null'",
@@ -516,46 +508,80 @@ def _pgrep_pkg(pkg, timeout=3):
     except:
         return []
 
-def boot_pkg_with_verify(pkg, max_retries=3):
-    """Boot pkg với tối đa 3 lần thử, verify bằng polling sau mỗi lần.
-    Hoàn toàn cô lập - fail không ảnh hưởng pkg khác."""
-    for attempt in range(1, max_retries + 1):
-        # 1) Dọn process cũ trước mỗi lần boot
-        pids = _pgrep_pkg(pkg)
-        if pids:
-            pid_str = ' '.join(pids)
-            safe_root(f"su -c 'kill -9 {pid_str} 2>/dev/null'")
-            time.sleep(2)
+def _is_pkg_active(pkg):
+    """Đuầy đủ kiểm tra: pgrep (nhanh) + dumpsys activity (chính xác)."""
+    # Method 1: pgrep nhanh
+    if _pgrep_pkg(pkg):
+        return True
+    # Method 2: dumpsys — xác nhận activity thực sự lên
+    try:
+        out = subprocess.check_output(
+            f"su -c 'dumpsys activity activities 2>/dev/null | grep {pkg}'",
+            shell=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        return bool(out)
+    except:
+        return False
 
-        # 2) Gửi lệnh boot
+def _kill_pkg(pkg):
+    """Kill process của pkg — thử kill -9 PID trước, fallback am force-stop."""
+    pids = _pgrep_pkg(pkg)
+    if pids:
+        pid_str = ' '.join(pids)
+        safe_root(f"su -c 'kill -9 {pid_str} 2>/dev/null'")
+    else:
+        safe_root(f"su -c 'am force-stop {pkg}'")
+    time.sleep(1)
+
+def boot_pkg_with_verify(pkg, max_retries=4):
+    """Boot pkg với tối đa 4 lần thử. Mỗi lần: kill sạch + launch + poll 30s.
+    Trả về True nếu bật thành công."""
+    for attempt in range(1, max_retries + 1):
+        # A) Dọn process cũ hoàn toàn trước mỗi lần
+        safe_root(f"su -c 'am force-stop {pkg}'")
+        time.sleep(2)
+
+        # B) Launch: monkey mở launcher activity
         safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
         time.sleep(3)
+
+        # C) Nếu có place ID: deep-link vào game luôn
         if target_place_id:
             safe_root(
-                f"su -c 'am start -p {pkg} -a android.intent.action.VIEW "
-                f"-d \"roblox://experiences/start?placeId={target_place_id}\"'"
+                f"su -c 'am start -a android.intent.action.VIEW "
+                f"-d \"roblox://experiences/start?placeId={target_place_id}\" "
+                f"--es package {pkg} 2>/dev/null'" 
             )
 
-        # 3) Poll xác nhận process lên (tối đa 25s, kiểm tra mỗi 5s)
-        booted = False
-        for _ in range(5):
+        # D) Poll 6×5s = 30s — dùng _is_pkg_active (pgrep + dumpsys)
+        for _ in range(6):
             time.sleep(5)
-            if _pgrep_pkg(pkg):
-                booted = True
-                break
+            if _is_pkg_active(pkg):
+                return True  # Boot thành công
 
-        if booted:
-            return True  # Boot thành công
-
-        # Chưa lên → thử lại
+        # Không lên sau 30s → thử lại
         if attempt < max_retries:
             time.sleep(3)
 
-    # Tất cả attempt đều thất bại → fallback am force-stop rồi monkey
+    # Tất cả attempt thất bại → last resort: force-stop + monkey
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(2)
     safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
     return False
+
+def _boot_worker(pkg, states):
+    """Background thread: boot pkg không block monitor thread."""
+    # Serialize boot để không spam Android (timeout dài hơn vì có 4 retries)
+    boot_acquired = global_restart_semaphore.acquire(timeout=60)
+    try:
+        boot_pkg_with_verify(pkg)
+    except Exception:
+        pass
+    finally:
+        if boot_acquired:
+            global_restart_semaphore.release()
+        _boot_threads.pop(pkg, None)
 
 def force_restart_app(pkg, states, current_time, reason, color):
     global last_restart_time, last_any_restart_time, file_to_pkg_binding
@@ -567,25 +593,10 @@ def force_restart_app(pkg, states, current_time, reason, color):
     last_restart_time[pkg] = current_time
     last_any_restart_time = current_time
 
-    # ── BƯỚC 1: Kill process (NGOÀI semaphore để không block pkg khác) ──────
-    pid_killed = False
-    try:
-        pid_out = subprocess.check_output(
-            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
-            shell=True, text=True, timeout=3,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
-        if pid_out:
-            pids = ' '.join(pid_out.splitlines())
-            safe_root(f"su -c 'kill -9 {pids} 2>/dev/null'")
-            pid_killed = True
-            time.sleep(1)
-    except:
-        pass
-    if not pid_killed:
-        safe_root(f"su -c 'am force-stop {pkg}'")
+    # ── B1: Kill ngay (ngược lại với semaphore → không block pkg khác) ───
+    _kill_pkg(pkg)
 
-    # ── Dọn file heartbeat + cache ───────────────────────────────────────────
+    # ── Dọn file heartbeat + cache RAM ──────────────────────────
     bound_name = states[pkg].get('bound_name')
     if bound_name:
         safe_root(
@@ -605,24 +616,23 @@ def force_restart_app(pkg, states, current_time, reason, color):
             for fp in stale_fps:
                 del file_to_pkg_binding[fp]
 
-    # ── Reset state ──────────────────────────────────────────────────────────
+    # ── Reset state ──────────────────────────────────────────
     states[pkg]['rejoin_time'] = current_time
-    states[pkg]['warmup_until'] = current_time + 60   # 60s đủ cho process die
+    states[pkg]['warmup_until'] = current_time + 60
     states[pkg]['bound_name'] = None
     states[pkg]['display_name'] = 'Chờ Auto-Bind...'
     states[pkg]['heartbeat_misses'] = 0
 
-    # ── BƯỚC 2: Boot (serialize để không spam Android đồng loạt) ────────────
-    # Timeout 10s: nếu không lấy được semaphore → đợi 3s rồi boot luôn
-    boot_acquired = global_restart_semaphore.acquire(timeout=10)
-    if not boot_acquired:
-        time.sleep(3)  # Stagger tự nhiên khi busy
-    try:
-        time.sleep(2)
-        boot_pkg_with_verify(pkg)
-    finally:
-        if boot_acquired:
-            global_restart_semaphore.release()
+    # ── B2: Boot trong background thread — monitor thread không bị block ────
+    existing = _boot_threads.get(pkg)
+    if existing and existing.is_alive():
+        return  # Đang boot rồi, không spawn thêm
+    t = threading.Thread(
+        target=_boot_worker, args=(pkg, states),
+        daemon=True, name=f"boot_{pkg[-8:]}"
+    )
+    _boot_threads[pkg] = t
+    t.start()
 
 # =====================================================================
 # COOKIE INJECTION (giữ nguyên)
