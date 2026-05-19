@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V4{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -812,6 +812,26 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             # rejoin_time: chỉ dùng để tính warmup
             session_uptime = current_time - state['session_start_time']
             uptime_seconds = current_time - state['rejoin_time']
+
+            # === KIỂM TRA ĐANG TRONG TIẾN TRÌNH BOOT ===
+            if pkg in _boot_threads and _boot_threads[pkg].is_alive():
+                state['text'] = "Đang Khởi Động..."
+                state['color'] = Y
+                stop_event.wait(5)
+                continue
+
+            # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
+            if uptime_seconds > 15 and not is_app_running(pkg):
+                can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                if can_restart:
+                    with pkg_restart_locks[pkg]:
+                        force_restart_app(pkg, states, current_time, "App không chạy!", R)
+                    last_ok_ping[pkg] = current_time
+                else:
+                    state['text'] = 'App tắt, chờ...'
+                    state['color'] = R
+                stop_event.wait(5)
+                continue
 
             # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
             if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
