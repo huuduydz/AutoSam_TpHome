@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V4{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -520,9 +520,20 @@ def _pgrep_pkg(pkg, timeout=3):
     return pids
 
 def _is_pkg_active(pkg):
-    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys (chính xác, không va chạm clone)."""
+    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys package + dumpsys activity."""
     if _pgrep_pkg(pkg):
         return True
+    # Kiểm tra qua dumpsys package (chính xác hơn, nhẹ hơn)
+    try:
+        out = subprocess.check_output(
+            f"su -c 'dumpsys package {pkg} 2>/dev/null | grep -i running'",
+            shell=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        if out.strip():
+            return True
+    except:
+        pass
     try:
         out = subprocess.check_output(
             f"su -c 'dumpsys activity activities 2>/dev/null'",
@@ -630,6 +641,7 @@ def force_restart_app(pkg, states, current_time, reason, color):
     states[pkg]['bound_name'] = None
     states[pkg]['display_name'] = 'Chờ Auto-Bind...'
     states[pkg]['heartbeat_misses'] = 0
+    states[pkg]['not_running_count'] = 0
 
     # ── B2: Boot trong background thread — monitor thread không bị block ────
     existing = _boot_threads.get(pkg)
@@ -821,17 +833,30 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 continue
 
             # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
-            if uptime_seconds > 15 and not is_app_running(pkg):
-                can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
-                if can_restart:
-                    with pkg_restart_locks[pkg]:
-                        force_restart_app(pkg, states, current_time, "App không chạy!", R)
-                    last_ok_ping[pkg] = current_time
+            # Đếm số lần liên tiếp không chạy (3 lần = 30 giây liên tục chết thực sự)
+            # PIP_WATCHDOG thread xử lý trường hợp app chết ngay từ đầu
+            if is_app_running(pkg):
+                state['not_running_count'] = 0
+            else:
+                # Luôn đếm, không phân biệt grace period (watchdog đã lo phần boot)
+                state['not_running_count'] = state.get('not_running_count', 0) + 1
+                if state['not_running_count'] >= 3:
+                    can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                    if can_restart:
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, "App tắt liên tục!", R)
+                        last_ok_ping[pkg] = current_time
+                    else:
+                        state['text'] = 'App tắt, chờ restart...'
+                        state['color'] = R
+                    state['not_running_count'] = 0
+                    stop_event.wait(5)
+                    continue
                 else:
-                    state['text'] = 'App tắt, chờ...'
-                    state['color'] = R
-                stop_event.wait(5)
-                continue
+                    state['text'] = f"Mất Process ({state['not_running_count']}/3)..."
+                    state['color'] = Y
+                    stop_event.wait(10)
+                    continue
 
             # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
             if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
@@ -943,6 +968,58 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
         stop_event.wait(10)
 
 
+# =====================================================================
+# PIP WATCHDOG — Thread riêng: bật lại app ngay khi phát hiện tắt
+# =====================================================================
+_pip_watchdog_threads = {}  # {pkg: Thread}
+
+def _pip_watchdog_worker(pkg, states, last_ok_ping, stop_event):
+    """Watchdog chuyên biệt: kiểm tra process mỗi 8s và bật lại ngay nếu tắt.
+    Hoạt động song song với monitor_package, không cần đợi heartbeat."""
+    # Delay nhỏ lúc đầu để boot thread có thời gian khởi động
+    stop_event.wait(15)
+    consecutive_dead = 0
+    while not stop_event.is_set():
+        try:
+            # Bỏ qua nếu đang trong boot thread
+            if pkg in _boot_threads and _boot_threads[pkg].is_alive():
+                consecutive_dead = 0
+                stop_event.wait(8)
+                continue
+
+            alive = _is_pkg_active(pkg)
+            if alive:
+                consecutive_dead = 0
+            else:
+                consecutive_dead += 1
+                # 2 lần liên tiếp (~16s) = app thực sự chết, bật lại ngay
+                if consecutive_dead >= 2:
+                    current_time = time.time()
+                    can_restart = pkg not in last_restart_time or \
+                                  current_time - last_restart_time.get(pkg, 0) >= 120
+                    if can_restart:
+                        # Bật lại trong boot thread nếu chưa có
+                        existing = _boot_threads.get(pkg)
+                        if not existing or not existing.is_alive():
+                            try:
+                                states[pkg]['text'] = 'Watchdog: Bật lại pip!'
+                                states[pkg]['color'] = M
+                            except:
+                                pass
+                            last_restart_time[pkg] = current_time
+                            t = threading.Thread(
+                                target=_boot_worker,
+                                args=(pkg, states),
+                                daemon=True,
+                                name=f"boot_wd_{pkg[-8:]}"
+                            )
+                            _boot_threads[pkg] = t
+                            t.start()
+                    consecutive_dead = 0
+        except Exception:
+            pass
+        stop_event.wait(8)
+
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
     if not selected_packages:
@@ -980,7 +1057,8 @@ def start_auto_rejoin():
             'rejoin_time': pkg_now,
             'session_start_time': pkg_now,
             'warmup_until': pkg_now + 90,
-            'heartbeat_misses': 0
+            'heartbeat_misses': 0,
+            'not_running_count': 0
         }
         last_ok_ping[pkg] = pkg_now
         last_restart_time.pop(pkg, None)
@@ -995,8 +1073,10 @@ def start_auto_rejoin():
 
     # Khởi thread riêng cho từng package
     monitor_threads = {}
+    pip_watchdog_threads = {}
     for item in selected_packages:
         pkg = item['pkg']
+        # Thread monitor chính
         t = threading.Thread(
             target=monitor_package,
             args=(pkg, states, last_ok_ping, stop_event),
@@ -1005,6 +1085,15 @@ def start_auto_rejoin():
         )
         t.start()
         monitor_threads[pkg] = t
+        # PIP Watchdog thread: bật lại ngay khi phát hiện app tắt
+        wd = threading.Thread(
+            target=_pip_watchdog_worker,
+            args=(pkg, states, last_ok_ping, stop_event),
+            daemon=True,
+            name=f"wd-{pkg[-12:]}"
+        )
+        wd.start()
+        pip_watchdog_threads[pkg] = wd
 
     # Main thread: hiển thị dashboard + watchdog tự khởi lại thread chết
     last_dashboard = 0
@@ -1018,6 +1107,7 @@ def start_auto_rejoin():
             # === WATCHDOG: phát hiện thread chết và khởi lại ===
             for item in selected_packages:
                 pkg = item['pkg']
+                # Restart monitor thread nếu chết
                 t = monitor_threads.get(pkg)
                 if t and not t.is_alive():
                     try:
@@ -1033,6 +1123,17 @@ def start_auto_rejoin():
                     )
                     new_t.start()
                     monitor_threads[pkg] = new_t
+                # Restart pip watchdog thread nếu chết
+                wd = pip_watchdog_threads.get(pkg)
+                if wd and not wd.is_alive():
+                    new_wd = threading.Thread(
+                        target=_pip_watchdog_worker,
+                        args=(pkg, states, last_ok_ping, stop_event),
+                        daemon=True,
+                        name=f"wd-{pkg[-12:]}"
+                    )
+                    new_wd.start()
+                    pip_watchdog_threads[pkg] = new_wd
 
             time.sleep(3)
     except KeyboardInterrupt:
