@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V4{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -496,55 +496,102 @@ def discover_unbound_account(pkg, states):
 # =====================================================================
 _boot_threads = {}   # {pkg: Thread} — track boot threads
 
-def _pgrep_pkg(pkg, timeout=3):
-    """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c để tránh va chạm clone."""
+def _pgrep_pkg(pkg, timeout=6):
+    """Lấy danh sách PID chính xác của pkg.
+    Ưu tiên pidof (nhanh nhất), fallback pgrep -x, fallback /proc scan.
+    Chỉ match ĐÚNG pkg — không bao giờ trả PID của pkg khác."""
+    # Method 1: pidof (nhanh nhất, match exact binary name)
+    try:
+        out = subprocess.check_output(
+            f"su -c 'pidof {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=4,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out:
+            pids = [p for p in out.split() if p.isdigit()]
+            if pids:
+                return pids
+    except:
+        pass
+    # Method 2: pgrep -x (exact match full process name)
+    try:
+        out = subprocess.check_output(
+            f"su -c 'pgrep -x {re.escape(pkg)} 2>/dev/null'",
+            shell=True, text=True, timeout=4,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out:
+            pids = [p for p in out.split() if p.isdigit()]
+            if pids:
+                return pids
+    except:
+        pass
+    # Method 3: /proc scan — fallback, chỉ match cmdline == pkg hoặc pkg:
     pids = []
     try:
-        cmd = "su -c 'for p in /proc/[0-9]*; do [ -d \"$p\" ] && echo -n \"${p##*/}:\" && cat \"$p/cmdline\" 2>/dev/null && echo; done'"
+        cmd = ("su -c 'for p in /proc/[0-9]*; do "
+               "[ -d \"$p\" ] && "
+               "echo -n \"${p##*/}:\" && "
+               "cat \"$p/cmdline\" 2>/dev/null && echo; done'")
         out = subprocess.check_output(
             cmd, shell=True, timeout=timeout,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
+        pkg_b = pkg.encode()
         for line in out.split(b'\n'):
             if b':' not in line:
                 continue
             parts = line.split(b':', 1)
-            pid_str = parts[0].strip()
-            if not pid_str.isdigit():
+            pid_b = parts[0].strip()
+            if not pid_b.isdigit():
                 continue
-            cmdline = parts[1].split(b'\x00')[0].decode('utf-8', errors='ignore').strip()
-            if cmdline == pkg or cmdline.startswith(pkg + ':'):
-                pids.append(pid_str.decode('utf-8'))
+            # cmdline: lấy trường đầu tiên (null-terminated)
+            cmdline = parts[1].split(b'\x00')[0]
+            # Chỉ match ĐÚNG pkg, không match substring của pkg khác
+            if cmdline == pkg_b or cmdline == pkg_b + b':' or cmdline.startswith(pkg_b + b':'):
+                pids.append(pid_b.decode('utf-8'))
     except:
         pass
     return pids
 
 def _is_pkg_active(pkg):
-    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys package + dumpsys activity."""
+    """Kiểm tra pkg đang chạy. Chỉ dùng các method có scope đúng pkg.
+    KHÔNG dùng dumpsys activity activities vì nó dump toàn hệ thống
+    và gây check chéo giữa các package (pkgA match nhầm pkgB)."""
+    # Bước 1: /proc PID scan — nhanh, chính xác, isolate theo pkg
     if _pgrep_pkg(pkg):
         return True
-    # Kiểm tra qua dumpsys package (chính xác hơn, nhẹ hơn)
+    # Bước 2: am dump state của đúng pkg này (không chứa data của pkg khác)
     try:
         out = subprocess.check_output(
-            f"su -c 'dumpsys package {pkg} 2>/dev/null | grep -i running'",
+            f"su -c 'am dump state {pkg} 2>/dev/null'",
             shell=True, text=True, timeout=5,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-        if out.strip():
+        if out.strip() and 'error' not in out.lower() and 'not found' not in out.lower():
             return True
     except:
         pass
+    # Bước 3: kiểm tra /proc/*/cmdline chứa pkg (tìm theo /proc trực tiếp)
     try:
         out = subprocess.check_output(
-            f"su -c 'dumpsys activity activities 2>/dev/null'",
+            f"su -c 'grep -rl --include=cmdline \"{pkg}\" /proc/[0-9]*/cmdline 2>/dev/null | head -1'",
             shell=True, text=True, timeout=5,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        # So khớp package name chính xác với word boundary
-        pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
-        return bool(pattern.search(out))
+        ).strip()
+        if out:
+            # Đọc cmdline của pid đó để xác nhận chính xác
+            pid = out.split('/')[2]
+            try:
+                with open(f'/proc/{pid}/cmdline', 'rb') as f:
+                    cmdline = f.read().split(b'\x00')[0].decode('utf-8', errors='ignore')
+                if cmdline == pkg or cmdline.startswith(pkg + ':'):
+                    return True
+            except:
+                pass
     except:
-        return False
+        pass
+    return False
 
 def _kill_pkg(pkg):
     """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
