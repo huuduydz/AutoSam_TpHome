@@ -698,16 +698,42 @@ def force_restart_app(pkg, states, current_time, reason, color):
     t.start()
 
 # =====================================================================
-# COOKIE INJECTION (giữ nguyên)
+# COOKIE INJECTION (TỐI ƯU SCAN TẤT CẢ DB VÀ XML)
 # =====================================================================
-def inject_cookie_webview(pkg, cookie):
-    webview_db = f"/data/data/{pkg}/app_webview/Default/Cookies"
+def find_all_cookie_dbs(pkg):
+    """Tìm tất cả các file Cookies SQLite trong /data/data/{pkg}."""
+    dbs = []
     try:
-        subprocess.check_output(f"su -c 'test -f {webview_db} && echo exists'", shell=True, text=True, timeout=5)
+        cmd = f"su -c 'find /data/data/{pkg}/ -name \"Cookies\" -o -iname \"*cookie*.db\" 2>/dev/null'"
+        out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
+        for line in out.splitlines():
+            line = line.strip()
+            if line:
+                dbs.append(line)
     except:
+        pass
+    # Thêm đường dẫn mặc định nếu find không ra
+    default_paths = [
+        f"/data/data/{pkg}/app_webview/Default/Cookies",
+        f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
+        f"/data/data/{pkg}/app_webview/Cookies"
+    ]
+    for p in default_paths:
+        if p not in dbs:
+            try:
+                res = subprocess.check_output(f"su -c 'test -f {p} && echo exists'", shell=True, text=True, timeout=3).strip()
+                if "exists" in res:
+                    dbs.append(p)
+            except:
+                pass
+    return list(set(dbs))
+
+def inject_cookie_webview(pkg, cookie):
+    dbs = find_all_cookie_dbs(pkg)
+    if not dbs:
+        print(f"{R}    └─ Không tìm thấy file Cookies SQLite nào trong /data/data/{pkg}{RESET}")
         return False
 
-    # Lấy UID của ứng dụng để gán lại quyền chown sau khi copy
     uid = "10000"
     try:
         uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
@@ -716,64 +742,79 @@ def inject_cookie_webview(pkg, cookie):
 
     tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
     os.makedirs(tmp_dir, exist_ok=True)
-    local_db = os.path.join(tmp_dir, f"cookies_{pkg.split('.')[-1]}.db")
-    subprocess.run(f"su -c 'cp {webview_db} {local_db} && chmod 666 {local_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        conn = sqlite3.connect(local_db)
-        c = conn.cursor()
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
-        if not c.fetchone():
-            conn.close()
-            os.remove(local_db)
-            return False
-        c.execute("PRAGMA table_info(cookies)")
-        columns = [col[1] for col in c.fetchall()]
+    
+    success_count = 0
+    for idx, webview_db in enumerate(dbs, 1):
+        local_db = os.path.join(tmp_dir, f"cookies_{pkg.split('.')[-1]}_{idx}.db")
+        # Copy file DB ra tmp
+        res_cp = subprocess.run(f"su -c 'cp \"{webview_db}\" \"{local_db}\" && chmod 666 \"{local_db}\"'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not os.path.exists(local_db):
+            continue
 
-        # Epoch 1601 của Chromium (Microseconds kể từ 1601-01-01 UTC)
-        now_epoch_1601 = (int(time.time()) + 11644473600) * 1000000
-        expires_epoch_1601 = (int(time.time()) + 10 * 365 * 86400 + 11644473600) * 1000000
+        try:
+            conn = sqlite3.connect(local_db)
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+            if not c.fetchone():
+                conn.close()
+                os.remove(local_db)
+                continue
 
-        data = {
-            'creation_utc': now_epoch_1601,
-            'top_frame_site_key': '.roblox.com',
-            'host_key': '.roblox.com',
-            'name': '.ROBLOSECURITY',
-            'value': cookie,
-            'path': '/',
-            'expires_utc': expires_epoch_1601,
-            'is_secure': 1,
-            'is_httponly': 1,
-            'last_access_utc': now_epoch_1601,
-            'has_expires': 1,
-            'is_permanent': 1,
-            'source_port': -1,
-            'is_same_party': 0
-        }
-        cols = [k for k in data if k in columns]
-        values = [data[k] for k in cols]
-        placeholders = ','.join(['?' for _ in cols])
-        c.execute("DELETE FROM cookies WHERE host_key=? AND name=?", ('.roblox.com', '.ROBLOSECURITY'))
-        sql = f"INSERT INTO cookies ({','.join(cols)}) VALUES ({placeholders})"
-        c.execute(sql, values)
-        conn.commit()
-        conn.close()
-        subprocess.run(
-            f"su -c 'cp {local_db} {webview_db} && chown {uid}:{uid} {webview_db} && chmod 660 {webview_db} && restorecon {webview_db} 2>/dev/null || true'",
-            shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        os.remove(local_db)
-        return True
-    except Exception as e:
-        try:
+            c.execute("PRAGMA table_info(cookies)")
+            columns = [col[1] for col in c.fetchall()]
+
+            # Epoch 1601 của Chromium (Microseconds kể từ 1601-01-01 UTC)
+            now_epoch_1601 = (int(time.time()) + 11644473600) * 1000000
+            expires_epoch_1601 = (int(time.time()) + 10 * 365 * 86400 + 11644473600) * 1000000
+
+            # Ghi cả 2 host_key: .roblox.com và www.roblox.com
+            hosts = ['.roblox.com', 'www.roblox.com']
+            for hk in hosts:
+                data = {
+                    'creation_utc': now_epoch_1601,
+                    'top_frame_site_key': hk,
+                    'host_key': hk,
+                    'name': '.ROBLOSECURITY',
+                    'value': cookie,
+                    'path': '/',
+                    'expires_utc': expires_epoch_1601,
+                    'is_secure': 1,
+                    'is_httponly': 1,
+                    'last_access_utc': now_epoch_1601,
+                    'has_expires': 1,
+                    'is_permanent': 1,
+                    'source_port': -1,
+                    'is_same_party': 0
+                }
+                cols = [k for k in data if k in columns]
+                values = [data[k] for k in cols]
+                placeholders = ','.join(['?' for _ in cols])
+                c.execute("DELETE FROM cookies WHERE (host_key=? OR host_key=?) AND name=?", (hk, hk.lstrip('.'), '.ROBLOSECURITY'))
+                sql = f"INSERT INTO cookies ({','.join(cols)}) VALUES ({placeholders})"
+                c.execute(sql, values)
+            
+            conn.commit()
             conn.close()
-        except:
-            pass
-        try:
+
+            # Chép đè DB đã inject trở lại + chown + chmod
+            cmd_return = (
+                f"su -c 'cp \"{local_db}\" \"{webview_db}\" && "
+                f"chown {uid}:{uid} \"{webview_db}\" && "
+                f"chmod 660 \"{webview_db}\" && "
+                f"restorecon \"{webview_db}\" 2>/dev/null || true'"
+            )
+            subprocess.run(cmd_return, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             os.remove(local_db)
-        except:
-            pass
-        print(f"{R}    └─ Lỗi WebView: {str(e)[:80]}{RESET}")
-        return False
+            print(f"{G}    ├─ [✓] DB: {os.path.basename(os.path.dirname(webview_db))}/{os.path.basename(webview_db)}{RESET}")
+            success_count += 1
+        except Exception as e:
+            try: conn.close()
+            except: pass
+            try: os.remove(local_db)
+            except: pass
+            print(f"{Y}    ├─ [!] Lỗi nạp DB ({os.path.basename(webview_db)}): {str(e)[:50]}{RESET}")
+
+    return success_count > 0
 
 def inject_cookie_safe_xml(pkg, cookie):
     shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
@@ -783,22 +824,26 @@ def inject_cookie_safe_xml(pkg, cookie):
         return False
     if not files_str:
         return False
-    xml_files = files_str.split('\n')
+
+    xml_files = files_str.splitlines()
     uid = "10000"
     try:
         uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
     except:
         pass
+
+    success_count = 0
     for xml_path in xml_files:
         xml_path = xml_path.strip()
         if not xml_path:
             continue
         try:
-            raw = subprocess.check_output(f"su -c 'cat {xml_path} 2>/dev/null'", shell=True, text=True, timeout=5)
+            raw = subprocess.check_output(f"su -c 'cat \"{xml_path}\" 2>/dev/null'", shell=True, text=True, timeout=5)
         except:
             continue
         if '<map>' not in raw:
             continue
+
         existing = {}
         try:
             root_el = ET.fromstring(raw)
@@ -808,20 +853,37 @@ def inject_cookie_safe_xml(pkg, cookie):
                     existing[key] = string_tag.text
         except:
             pass
+
+        # Ghi các key phổ biến của Roblox storage
         existing['ROBLOSECURITY'] = cookie
+        existing['.ROBLOSECURITY'] = cookie
+        existing['RobloxSecurityToken'] = cookie
+
         new_root = ET.Element('map')
         for k, v in existing.items():
             el = ET.SubElement(new_root, 'string', name=k)
-            el.text = v
+            el.text = v if v else ""
+
         xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(new_root, encoding='unicode')
         tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
         os.makedirs(tmp_dir, exist_ok=True)
         fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(xml_output)
-        subprocess.run(f"su -c 'cp {temp_file} {xml_path} && chown {uid}:{uid} {xml_path} && chmod 660 {xml_path} && restorecon {xml_path} 2>/dev/null || true && touch {xml_path}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        cmd_xml = (
+            f"su -c 'cp \"{temp_file}\" \"{xml_path}\" && "
+            f"chown {uid}:{uid} \"{xml_path}\" && "
+            f"chmod 660 \"{xml_path}\" && "
+            f"restorecon \"{xml_path}\" 2>/dev/null || true && "
+            f"touch \"{xml_path}\"'"
+        )
+        subprocess.run(cmd_xml, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         os.remove(temp_file)
-    return True
+        print(f"{G}    ├─ [✓] XML: {os.path.basename(xml_path)}{RESET}")
+        success_count += 1
+
+    return success_count > 0
 
 def login_via_cookie():
     global selected_packages
@@ -829,47 +891,57 @@ def login_via_cookie():
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
         time.sleep(2)
         return
-    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG PHÁT HIỆN DB) ---{RESET}")
-    print(f"{Y}Tool sẽ thử WebView, nếu không có sẽ dùng XML shared_prefs.{RESET}")
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG QUÉT TOÀN BỘ DATA) ---{RESET}")
+    print(f"{Y}Tool sẽ quét toàn bộ SQLite DB & XML shared_prefs của app để nạp Cookie.{RESET}")
     try:
         test = subprocess.check_output("su -c 'echo testok'", shell=True, text=True, timeout=5)
         if "testok" not in test:
-            print(f"{R}[!] Không có quyền ROOT!{RESET}")
+            print(f"{R}[!] Không có quyền ROOT! Cần quyền ROOT để tiêm cookie.{RESET}")
             time.sleep(3)
             return
     except:
-        print(f"{R}[!] Lỗi kiểm tra SU.{RESET}")
+        print(f"{R}[!] Lỗi kiểm tra lệnh SU ROOT.{RESET}")
         time.sleep(3)
         return
+
     fix_tty()
-    cookie = safe_input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").replace('\r', '').replace('\n', '')
+    cookie = safe_input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").replace('\r', '').replace('\n', '').strip()
     if not cookie.startswith("_|WARNING"):
-        print(f"{R}[!] Cookie không hợp lệ!{RESET}")
+        print(f"{R}[!] Cookie không hợp lệ (Phải bắt đầu bằng _|WARNING)!{RESET}")
         time.sleep(2)
         return
-    print(f"\n{G}[+] Cookie hợp lệ! Đang inject...{RESET}")
+
+    print(f"\n{G}[+] Cookie hợp lệ! Đang xử lý tiêm cookie...{RESET}")
     time.sleep(1)
+
     for idx, item in enumerate(selected_packages, 1):
         pkg = item['pkg']
         print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
-        print(f"{Y}[{idx}/{len(selected_packages)}] {pkg}{RESET}")
+        print(f"{Y}[{idx}/{len(selected_packages)}] Package: {pkg}{RESET}")
+
+        # Stop app hoàn toàn trước khi sửa data
+        print(f"{Y}[*] Đang force-stop {pkg}...{RESET}")
         subprocess.run(f"su -c 'am force-stop {pkg}'", shell=True, stdout=subprocess.DEVNULL)
         time.sleep(1)
-        success = inject_cookie_webview(pkg, cookie)
-        if success:
-            print(f"{G}[✓] WebView Database thành công.{RESET}")
+
+        # Xóa cache app để tránh cache lại phiên cũ
+        print(f"{Y}[*] Dọn dẹp cache phiên cũ...{RESET}")
+        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/* /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
+
+        wv_success = inject_cookie_webview(pkg, cookie)
+        xml_success = inject_cookie_safe_xml(pkg, cookie)
+
+        if wv_success or xml_success:
+            print(f"{G}[✓] Tiêm Cookie thành công cho {pkg}!{RESET}")
         else:
-            print(f"{Y}[*] Thử XML shared_prefs...{RESET}")
-            if inject_cookie_safe_xml(pkg, cookie):
-                print(f"{G}[✓] XML shared_prefs thành công.{RESET}")
-            else:
-                print(f"{R}[✗] Không thể inject cookie.{RESET}")
-        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/*; rm -rf /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
-        print(f"{Y}[*] Mở app...{RESET}")
-        subprocess.run(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'", shell=True, stdout=subprocess.DEVNULL)
+            print(f"{R}[✗] Thất bại: Không thể tiêm vào DB hoặc XML nào của {pkg}.{RESET}")
+
+        print(f"{Y}[*] Đang khởi chạy lại ứng dụng...{RESET}")
+        subprocess.run(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'", shell=True, stdout=subprocess.DEVNULL)
         time.sleep(1)
-    print(f"\n{G}[+] HOÀN TẤT.{RESET}")
-    time.sleep(5)
+
+    print(f"\n{G}[+] HOÀN TẤT TIÊM COOKIE.{RESET}")
+    time.sleep(3)
 
 # =====================================================================
 # AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
