@@ -1,0 +1,328 @@
+import os, sys, subprocess, sqlite3, time, json, tempfile
+import xml.etree.ElementTree as ET
+import urllib.request, urllib.error
+
+# =====================================================================
+# TOOL TEST NÂNG CAO CAC METHOD TIÊM COOKIE ROBLOX MOBILE
+# Version: 1.0.3 (Diagnostic Test Suite)
+# =====================================================================
+
+C = '\033[96m'
+G = '\033[92m'
+Y = '\033[93m'
+R = '\033[91m'
+M = '\033[95m'
+RESET = '\033[0m'
+
+def run_su(cmd, timeout=10):
+    """Thực thi lệnh SU ROOT trên Android."""
+    try:
+        res = subprocess.check_output(f"su -c '{cmd}'", shell=True, text=True, timeout=timeout).strip()
+        return res
+    except Exception as e:
+        return None
+
+def verify_cookie(cookie):
+    """Kiểm tra Cookie có sống hay không qua Roblox API."""
+    try:
+        req = urllib.request.Request(
+            "https://users.roblox.com/v1/users/authenticated",
+            headers={
+                "Cookie": f".ROBLOSECURITY={cookie}",
+                "User-Agent": "Roblox/WinInet"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode('utf-8'))
+                return True, data.get('name', 'Unknown'), data.get('id', 0)
+    except Exception as e:
+        return False, str(e), 0
+    return False, "Invalid Cookie", 0
+
+def get_auth_ticket(cookie):
+    """Tạo Auth Ticket từ Roblox Auth API."""
+    try:
+        req = urllib.request.Request(
+            "https://auth.roblox.com/v1/authentication-ticket/",
+            data=b"{}",
+            headers={
+                "Cookie": f".ROBLOSECURITY={cookie}",
+                "Content-Type": "application/json",
+                "Referer": "https://www.roblox.com/"
+            },
+            method="POST"
+        )
+        csrf_token = None
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                csrf_token = resp.headers.get("x-csrf-token")
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                csrf_token = e.headers.get("x-csrf-token")
+        
+        if not csrf_token:
+            return None, "Không lấy được X-CSRF-Token"
+
+        req2 = urllib.request.Request(
+            "https://auth.roblox.com/v1/authentication-ticket/",
+            data=b"{}",
+            headers={
+                "Cookie": f".ROBLOSECURITY={cookie}",
+                "Content-Type": "application/json",
+                "Referer": "https://www.roblox.com/",
+                "x-csrf-token": csrf_token
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req2, timeout=5) as resp2:
+            ticket = resp2.headers.get("rbx-authentication-ticket")
+            if ticket:
+                return ticket, "Thành công"
+    except Exception as e:
+        return None, str(e)
+    return None, "Không tạo được Auth Ticket"
+
+# =====================================================================
+# METHOD 1: AUTH TICKET INTENT DEEP-LINKING
+# =====================================================================
+def test_method_1_auth_ticket(pkg, cookie):
+    print(f"\n{C}=== [METHOD 1] TẠO VÀ CHẠY NATIVE AUTH TICKET INTENT ==={RESET}")
+    ticket, msg = get_auth_ticket(cookie)
+    if not ticket:
+        print(f"{R}[✗] Lỗi sinh Auth Ticket: {msg}{RESET}")
+        return False
+    
+    print(f"{G}[✓] Lấy thành công Auth Ticket: {ticket[:25]}...{RESET}")
+    print(f"{Y}[*] Force-stop app {pkg}...{RESET}")
+    run_su(f"am force-stop {pkg}")
+    time.sleep(1)
+
+    intents = [
+        f"am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg}",
+        f"am start -a android.intent.action.VIEW -d \"roblox://navigation/home?authTicket={ticket}\" -p {pkg}",
+        f"am start -a android.intent.action.VIEW -d \"roblox://placeId=4520749081&authTicket={ticket}\" -p {pkg}"
+    ]
+
+    for i, cmd in enumerate(intents, 1):
+        print(f"{Y}[*] Thử nghiệm Intent Variant {i}...{RESET}")
+        print(f"{C}    Command: {cmd}{RESET}")
+        run_su(cmd)
+        time.sleep(3)
+    return True
+
+# =====================================================================
+# METHOD 2: DEEP WEBVIEW SQLITE COOKIES INJECTION (CHROMIUM HIGH COMPATIBILITY)
+# =====================================================================
+def test_method_2_webview_sqlite(pkg, cookie):
+    print(f"\n{C}=== [METHOD 2] TIÊM ĐA DẠNG NỀN TẢNG CHUẨN SQLITE WEBVIEW ==={RESET}")
+    run_su(f"am force-stop {pkg}")
+    time.sleep(1)
+
+    # Tìm tất cả file db
+    find_cmd = f"find /data/data/{pkg}/ -name \"Cookies\" -o -iname \"*cookie*.db\" 2>/dev/null"
+    out = run_su(find_cmd)
+    dbs = [line.strip() for line in (out.splitlines() if out else []) if line.strip()]
+    
+    if not dbs:
+        dbs = [f"/data/data/{pkg}/app_webview/Default/Cookies", f"/data/data/{pkg}/app_webview/Cookies"]
+    
+    print(f"{Y}[*] Tìm thấy {len(dbs)} file DB Cookies:{RESET}")
+    for db in dbs:
+        print(f"    - {db}")
+
+    uid = run_su(f"stat -c %u /data/data/{pkg}") or "10000"
+    tmp_dir = os.path.join(tempfile.gettempdir(), "test_cookies")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    now_1601 = (int(time.time()) + 11644473600) * 1000000
+    exp_1601 = (int(time.time()) + 10 * 365 * 86400 + 11644473600) * 1000000
+
+    success_count = 0
+    for idx, db_path in enumerate(dbs, 1):
+        local_db = os.path.join(tmp_dir, f"test_db_{idx}.db")
+        run_su(f"cp \"{db_path}\" \"{local_db}\" && chmod 666 \"{local_db}\"")
+        if not os.path.exists(local_db):
+            print(f"{R}[!] Không copy được {db_path}{RESET}")
+            continue
+
+        try:
+            conn = sqlite3.connect(local_db)
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+            if not c.fetchone():
+                conn.close()
+                os.remove(local_db)
+                continue
+
+            c.execute("PRAGMA table_info(cookies)")
+            cols = [col[1] for col in c.fetchall()]
+
+            hosts = ['.roblox.com', 'www.roblox.com', 'roblox.com', '.www.roblox.com', 'api.roblox.com', '.api.roblox.com']
+            cookie_names = ['.ROBLOSECURITY', 'ROBLOSECURITY', 'RobloxSecurityToken']
+
+            for hk in hosts:
+                for cname in cookie_names:
+                    data = {
+                        'creation_utc': now_1601,
+                        'top_frame_site_key': 'https://roblox.com',
+                        'host_key': hk,
+                        'name': cname,
+                        'value': cookie,
+                        'encrypted_value': b'',
+                        'path': '/',
+                        'expires_utc': exp_1601,
+                        'is_secure': 1,
+                        'is_httponly': 1,
+                        'last_access_utc': now_1601,
+                        'has_expires': 1,
+                        'is_persistent': 1,
+                        'priority': 1,
+                        'samesite': -1,
+                        'source_scheme': 2,
+                        'source_port': 443,
+                        'is_same_party': 0
+                    }
+                    valid_cols = [k for k in data if k in cols]
+                    vals = [data[k] for k in valid_cols]
+                    placeholders = ','.join(['?' for _ in valid_cols])
+                    c.execute("DELETE FROM cookies WHERE (host_key=? OR host_key=?) AND name=?", (hk, hk.lstrip('.'), cname))
+                    sql = f"INSERT INTO cookies ({','.join(valid_cols)}) VALUES ({placeholders})"
+                    c.execute(sql, vals)
+
+            conn.commit()
+            conn.close()
+
+            # Chép đè & xóa sạch WAL
+            run_su(f"cp \"{local_db}\" \"{db_path}\" && rm -f \"{db_path}-wal\" \"{db_path}-shm\" \"{db_path}-journal\" 2>/dev/null")
+            run_su(f"chown {uid}:{uid} \"{db_path}\" && chmod 660 \"{db_path}\" && restorecon \"{db_path}\" 2>/dev/null || true")
+            os.remove(local_db)
+            print(f"{G}[✓] Đã tiêm thành công SQLite DB: {db_path}{RESET}")
+            success_count += 1
+        except Exception as e:
+            print(f"{R}[✗] Lỗi xử lý DB {db_path}: {e}{RESET}")
+
+    return success_count > 0
+
+# =====================================================================
+# METHOD 3: FULL SHARED PREFERENCES XML OVERWRITE
+# =====================================================================
+def test_method_3_xml_preferences(pkg, cookie, user_name, user_id):
+    print(f"\n{C}=== [METHOD 3] TIÊM TOÀN BỘ FILE XML SHARED PREFERENCES ==={RESET}")
+    run_su(f"am force-stop {pkg}")
+    time.sleep(1)
+
+    shared_dir = f"/data/data/{pkg}/shared_prefs"
+    out = run_su(f"ls {shared_dir}/*.xml 2>/dev/null")
+    xmls = [line.strip() for line in (out.splitlines() if out else []) if line.strip()]
+
+    if not xmls:
+        print(f"{R}[!] Không tìm thấy file XML nào trong {shared_dir}{RESET}")
+        return False
+
+    uid = run_su(f"stat -c %u /data/data/{pkg}") or "10000"
+    print(f"{Y}[*] Phát hiện {len(xmls)} file XML SharedPreferences. Tiến hành nạp key security...{RESET}")
+
+    for xml_path in xmls:
+        raw = run_su(f"cat \"{xml_path}\" 2>/dev/null")
+        if not raw or '<map>' not in raw:
+            continue
+
+        existing = {}
+        try:
+            root_el = ET.fromstring(raw)
+            for s in root_el.findall('string'):
+                k = s.get('name')
+                if k: existing[k] = s.text
+        except:
+            pass
+
+        # Nạp tất cả các key token biến thể
+        existing['RobloxSecurityToken'] = cookie
+        existing['ROBLOSECURITY'] = cookie
+        existing['.ROBLOSECURITY'] = cookie
+        if user_name:
+            existing['Username'] = str(user_name)
+            existing['RobloxUsername'] = str(user_name)
+            existing['RBX_USERNAME'] = str(user_name)
+        if user_id:
+            existing['UserId'] = str(user_id)
+            existing['RobloxUserId'] = str(user_id)
+            existing['RBX_USER_ID'] = str(user_id)
+
+        new_root = ET.Element('map')
+        for k, v in existing.items():
+            el = ET.SubElement(new_root, 'string', name=k)
+            el.text = v if v is not None else ""
+
+        xml_out = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(new_root, encoding='unicode')
+        
+        tmp_xml = os.path.join(tempfile.gettempdir(), f"tmp_{os.path.basename(xml_path)}")
+        with open(tmp_xml, 'w', encoding='utf-8') as f:
+            f.write(xml_out)
+
+        run_su(f"cp \"{tmp_xml}\" \"{xml_path}\" && chown {uid}:{uid} \"{xml_path}\" && chmod 660 \"{xml_path}\" && restorecon \"{xml_path}\" 2>/dev/null")
+        if os.path.exists(tmp_xml): os.remove(tmp_xml)
+        print(f"{G}  ├─ [✓] Updated XML: {os.path.basename(xml_path)}{RESET}")
+
+    return True
+
+# =====================================================================
+# MAIN TEST DIAGNOSTIC MENU
+# =====================================================================
+def main():
+    print(f"{C}====================================================={RESET}")
+    print(f"{G}   ROBLOX MOBILE COOKIE INJECTION DIAGNOSTIC TESTER   {RESET}")
+    print(f"{C}====================================================={RESET}")
+
+    test_su = run_su("echo root_ok")
+    if test_su != "root_ok":
+        print(f"{R}[!] Cần quyền ROOT để chạy script test này!{RESET}")
+        return
+
+    pkg = "vip.delta.samehwid.maio"
+    print(f"{Y}[i] Package thử nghiệm mặc định: {pkg}{RESET}")
+
+    cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+    if not cookie.startswith("_|WARNING"):
+        print(f"{R}[!] Cookie không hợp lệ!{RESET}")
+        return
+
+    print(f"\n{Y}[*] Đang kiểm tra Cookie với Roblox Server...{RESET}")
+    valid, user_name, user_id = verify_cookie(cookie)
+    if not valid:
+        print(f"{R}[✗] Cookie KHÔNG HỢP LỆ hoặc đã hết hạn: {user_name}{RESET}")
+        return
+
+    print(f"{G}[✓] Cookie SỐNG! Account: {C}{user_name}{G} | ID: {user_id}{RESET}")
+
+    while True:
+        print(f"\n{Y}--- CHỌN METHOD TEST ---{RESET}")
+        print(f"[{C}1{RESET}] Test Method 1: Auth Ticket Intent Launch (NATIVE DEEP-LINK)")
+        print(f"[{C}2{RESET}] Test Method 2: WebView SQLite Cookies Injection (ALL DOMAINS)")
+        print(f"[{C}3{RESET}] Test Method 3: Full XML SharedPreferences Overwrite")
+        print(f"[{C}4{RESET}] Test ALL METHODS (Thực hiện toàn bộ 1+2+3 theo thứ tự chuẩn)")
+        print(f"[{C}5{RESET}] Mở App {pkg} để kiểm tra kết quả")
+        print(f"[{C}6{RESET}] Thoát")
+
+        ch = input(f"\n{M}Chọn (1-6): {RESET}").strip()
+        if ch == '1':
+            test_method_1_auth_ticket(pkg, cookie)
+        elif ch == '2':
+            test_method_2_webview_sqlite(pkg, cookie)
+        elif ch == '3':
+            test_method_3_xml_preferences(pkg, cookie, user_name, user_id)
+        elif ch == '4':
+            print(f"\n{G}[*] BẮT ĐẦU CHẠY THỬ NỔI BẬT TẤT CẢ METHOD...{RESET}")
+            test_method_2_webview_sqlite(pkg, cookie)
+            test_method_3_xml_preferences(pkg, cookie, user_name, user_id)
+            test_method_1_auth_ticket(pkg, cookie)
+            print(f"\n{G}[✓] HOÀN TẤT TEST ALL METHODS! Hãy kiểm tra màn hình App.{RESET}")
+        elif ch == '5':
+            print(f"{Y}[*] Đang mở App {pkg}...{RESET}")
+            run_su(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1")
+        elif ch == '6':
+            break
+
+if __name__ == '__main__':
+    main()
