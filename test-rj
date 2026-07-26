@@ -291,6 +291,28 @@ def test_method_3_xml_preferences(pkg, cookie, user_name, user_id):
 # =====================================================================
 # MAIN TEST DIAGNOSTIC MENU
 # =====================================================================
+def test_analyze_storage(pkg):
+    print(f"\n{C}=== QUÉT TOÀN BỘ FILE THAY ĐỔI KHI ĐĂNG NHẬP (TRONG 15 PHÚT QUA) ==={RESET}")
+    cmd = f"find /data/data/{pkg}/ -type f -mmin -15 2>/dev/null"
+    res = run_su(cmd)
+    if not res:
+        print(f"{Y}[i] Không thấy file nào thay đổi trong 15 phút qua. Hãy đăng nhập thủ công trên App rồi chọn lại mục này!{RESET}")
+        return
+    lines = [line.strip() for line in res.splitlines() if line.strip()]
+    print(f"{G}[✓] Phát hiện {len(lines)} file dữ liệu đã thay đổi/tạo mới:{RESET}")
+    for line in lines:
+        print(f"  ├─ {C}{line}{RESET}")
+
+        if line.endswith('.xml'):
+            raw = run_su(f"cat \"{line}\" 2>/dev/null")
+            if raw:
+                # Tìm các key liên quan đến session
+                keys = re.findall(r'name="([^"]+)"', raw)
+                print(f"     {Y}↳ XML Keys ({len(keys)} keys): {', '.join(keys[:10])}{RESET}")
+        elif 'Cookies' in line or line.endswith('.db'):
+            tables = run_su(f"sqlite3 \"{line}\" \".tables\" 2>/dev/null")
+            print(f"     {Y}↳ SQLite Tables: {tables}{RESET}")
+
 def main():
     print(f"{C}====================================================={RESET}")
     print(f"{G}   ROBLOX MOBILE COOKIE INJECTION DIAGNOSTIC TESTER   {RESET}")
@@ -362,10 +384,12 @@ def main():
         print(f"[{C}2{RESET}] Test Method 2: WebView SQLite Cookies Injection (ALL DOMAINS)")
         print(f"[{C}3{RESET}] Test Method 3: Full XML SharedPreferences Overwrite")
         print(f"[{C}4{RESET}] Test ALL METHODS (Thực hiện toàn bộ 1+2+3 theo thứ tự chuẩn)")
-        print(f"[{C}5{RESET}] Mở App {pkg} để kiểm tra kết quả")
-        print(f"[{C}6{RESET}] Thoát")
+        print(f"[{C}5{RESET}] Test Method 5: Direct Game Join Deep-Link with Auth Ticket")
+        print(f"[{C}6{RESET}] Phân tích File Dữ Liệu Thay Đổi Khi Đăng Nhập (Diagnostic Scan)")
+        print(f"[{C}7{RESET}] Mở App {pkg} để kiểm tra kết quả")
+        print(f"[{C}8{RESET}] Thoát")
 
-        ch = input(f"\n{M}Chọn (1-6): {RESET}").strip()
+        ch = input(f"\n{M}Chọn (1-8): {RESET}").strip()
         if ch == '1':
             test_method_1_auth_ticket(pkg, cookie)
         elif ch == '2':
@@ -379,9 +403,18 @@ def main():
             test_method_1_auth_ticket(pkg, cookie)
             print(f"\n{G}[✓] HOÀN TẤT TEST ALL METHODS! Hãy kiểm tra màn hình App.{RESET}")
         elif ch == '5':
+            ticket, _ = get_auth_ticket(cookie)
+            if ticket:
+                print(f"{Y}[*] Đang khởi chạy thẳng Game bằng Quick Launch Intent...{RESET}")
+                run_su(f"am start -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId=4520749081&accessCode=&gameInstanceId=&authTicket={ticket}\" -p {pkg}")
+            else:
+                print(f"{R}[!] Lỗi không lấy được Auth Ticket{RESET}")
+        elif ch == '6':
+            test_analyze_storage(pkg)
+        elif ch == '7':
             print(f"{Y}[*] Đang mở App {pkg}...{RESET}")
             run_su(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1")
-        elif ch == '6':
+        elif ch == '8':
             print(f"{G}Kết thúc chương trình test.{RESET}")
             sys.exit(0)
 
