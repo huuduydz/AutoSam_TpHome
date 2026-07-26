@@ -42,43 +42,62 @@ def verify_cookie(cookie):
 
 def get_auth_ticket(cookie):
     """Tạo Auth Ticket từ Roblox Auth API."""
-    try:
-        req = urllib.request.Request(
-            "https://auth.roblox.com/v1/authentication-ticket/",
-            data=b"{}",
-            headers={
-                "Cookie": f".ROBLOSECURITY={cookie}",
-                "Content-Type": "application/json",
-                "Referer": "https://www.roblox.com/"
-            },
-            method="POST"
-        )
-        csrf_token = None
-        try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                csrf_token = resp.headers.get("x-csrf-token")
-        except urllib.error.HTTPError as e:
-            if e.code == 403:
-                csrf_token = e.headers.get("x-csrf-token")
-        
-        if not csrf_token:
-            return None, "Không lấy được X-CSRF-Token"
+    headers = {
+        "Cookie": f".ROBLOSECURITY={cookie}",
+        "Content-Type": "application/json",
+        "Referer": "https://www.roblox.com/",
+        "Origin": "https://www.roblox.com",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
-        req2 = urllib.request.Request(
-            "https://auth.roblox.com/v1/authentication-ticket/",
-            data=b"{}",
-            headers={
-                "Cookie": f".ROBLOSECURITY={cookie}",
-                "Content-Type": "application/json",
-                "Referer": "https://www.roblox.com/",
-                "x-csrf-token": csrf_token
-            },
-            method="POST"
-        )
-        with urllib.request.urlopen(req2, timeout=5) as resp2:
-            ticket = resp2.headers.get("rbx-authentication-ticket")
+    # Bước 1: Lấy X-CSRF-TOKEN
+    csrf_token = None
+    req = urllib.request.Request(
+        "https://auth.roblox.com/v1/authentication-ticket/",
+        data=b"{}",
+        headers=headers,
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            csrf_token = resp.headers.get("x-csrf-token") or resp.headers.get("X-CSRF-TOKEN")
+    except urllib.error.HTTPError as e:
+        csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
+    except Exception as e:
+        return None, f"Lỗi kết nối CSRF: {str(e)}"
+
+    if not csrf_token:
+        try:
+            req_l = urllib.request.Request("https://auth.roblox.com/v1/logout", data=b"{}", headers=headers, method="POST")
+            with urllib.request.urlopen(req_l, timeout=8) as resp_l:
+                csrf_token = resp_l.headers.get("x-csrf-token") or resp_l.headers.get("X-CSRF-TOKEN")
+        except urllib.error.HTTPError as e:
+            csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
+        except:
+            pass
+
+    if not csrf_token:
+        return None, "Không lấy được X-CSRF-Token"
+
+    # Bước 2: Yêu cầu sinh Auth Ticket
+    headers["x-csrf-token"] = csrf_token
+    headers["X-CSRF-TOKEN"] = csrf_token
+    req2 = urllib.request.Request(
+        "https://auth.roblox.com/v1/authentication-ticket/",
+        data=b"{}",
+        headers=headers,
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req2, timeout=8) as resp2:
+            ticket = resp2.headers.get("rbx-authentication-ticket") or resp2.headers.get("RBX-Authentication-Ticket")
             if ticket:
                 return ticket, "Thành công"
+    except urllib.error.HTTPError as e:
+        ticket = e.headers.get("rbx-authentication-ticket") or e.headers.get("RBX-Authentication-Ticket")
+        if ticket:
+            return ticket, "Thành công"
+        return None, f"Lỗi HTTP {e.code}"
     except Exception as e:
         return None, str(e)
     return None, "Không tạo được Auth Ticket"
@@ -283,19 +302,31 @@ def main():
     pkg = "vip.delta.samehwid.maio"
     print(f"{Y}[i] Package thử nghiệm mặc định: {pkg}{RESET}")
 
-    # Hỗ trợ đọc Cookie tự động từ Android Clipboard nếu không gõ/dán được
+    # Ưu tiên đọc từ file cookie.txt nếu có
     cookie = ""
-    try:
-        clip = run_su("cmd clipboard get 2>/dev/null || service call clipboard 2 s16 com.android.shell 2>/dev/null")
-        if clip and "_|WARNING" in clip:
-            # Match regex lấy đúng chuỗi Cookie
-            m = re.search(r'(_\|WARNING[^\s"\'<>]+)', clip)
-            if m:
-                cookie = m.group(1)
-                print(f"{G}[✓] Đã tự động đọc Cookie từ Clipboard!{RESET}")
-    except:
-        pass
+    if os.path.exists("cookie.txt"):
+        try:
+            with open("cookie.txt", "r", encoding="utf-8") as f:
+                c_content = f.read().strip()
+                if "_|WARNING" in c_content:
+                    cookie = c_content
+                    print(f"{G}[✓] Đã đọc Cookie từ file cookie.txt thành công!{RESET}")
+        except:
+            pass
 
+    # Nếu không có file cookie.txt, thử đọc từ Clipboard
+    if not cookie:
+        try:
+            clip = run_su("cmd clipboard get 2>/dev/null || service call clipboard 2 s16 com.android.shell 2>/dev/null")
+            if clip and "_|WARNING" in clip:
+                m = re.search(r'(_\|WARNING[^\s"\'<>]+)', clip)
+                if m:
+                    cookie = m.group(1)
+                    print(f"{G}[✓] Đã tự động đọc Cookie từ Clipboard!{RESET}")
+        except:
+            pass
+
+    # Nếu vẫn chưa có, hỏi người dùng nhập
     if not cookie:
         try:
             sys.stdout.write('\033[?2004l')
@@ -349,7 +380,8 @@ def main():
             print(f"{Y}[*] Đang mở App {pkg}...{RESET}")
             run_su(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1")
         elif ch == '6':
-            break
+            print(f"{G}Kết thúc chương trình test.{RESET}")
+            sys.exit(0)
 
 if __name__ == '__main__':
     main()
