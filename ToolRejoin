@@ -706,6 +706,14 @@ def inject_cookie_webview(pkg, cookie):
         subprocess.check_output(f"su -c 'test -f {webview_db} && echo exists'", shell=True, text=True, timeout=5)
     except:
         return False
+
+    # Lấy UID của ứng dụng để gán lại quyền chown sau khi copy
+    uid = "10000"
+    try:
+        uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
+    except:
+        pass
+
     tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
     os.makedirs(tmp_dir, exist_ok=True)
     local_db = os.path.join(tmp_dir, f"cookies_{pkg.split('.')[-1]}.db")
@@ -720,12 +728,26 @@ def inject_cookie_webview(pkg, cookie):
             return False
         c.execute("PRAGMA table_info(cookies)")
         columns = [col[1] for col in c.fetchall()]
-        now = int(time.time())
+
+        # Epoch 1601 của Chromium (Microseconds kể từ 1601-01-01 UTC)
+        now_epoch_1601 = (int(time.time()) + 11644473600) * 1000000
+        expires_epoch_1601 = (int(time.time()) + 10 * 365 * 86400 + 11644473600) * 1000000
+
         data = {
-            'creation_utc': now, 'top_frame_site_key': '.roblox.com', 'host_key': '.roblox.com',
-            'name': '.ROBLOSECURITY', 'value': cookie, 'path': '/', 'expires_utc': 2147483647,
-            'is_secure': 1, 'is_httponly': 1, 'last_access_utc': now, 'has_expires': 1,
-            'is_permanent': 1, 'source_port': -1, 'is_same_party': 0
+            'creation_utc': now_epoch_1601,
+            'top_frame_site_key': '.roblox.com',
+            'host_key': '.roblox.com',
+            'name': '.ROBLOSECURITY',
+            'value': cookie,
+            'path': '/',
+            'expires_utc': expires_epoch_1601,
+            'is_secure': 1,
+            'is_httponly': 1,
+            'last_access_utc': now_epoch_1601,
+            'has_expires': 1,
+            'is_permanent': 1,
+            'source_port': -1,
+            'is_same_party': 0
         }
         cols = [k for k in data if k in columns]
         values = [data[k] for k in cols]
@@ -735,7 +757,10 @@ def inject_cookie_webview(pkg, cookie):
         c.execute(sql, values)
         conn.commit()
         conn.close()
-        subprocess.run(f"su -c 'cp {local_db} {webview_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            f"su -c 'cp {local_db} {webview_db} && chown {uid}:{uid} {webview_db} && chmod 660 {webview_db} && restorecon {webview_db} 2>/dev/null || true'",
+            shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
         os.remove(local_db)
         return True
     except Exception as e:
