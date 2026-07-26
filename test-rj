@@ -22,6 +22,28 @@ def run_su(cmd, timeout=10):
     except Exception as e:
         return None
 
+def fix_tty():
+    """Khôi phục chế độ TTY terminal và tắt bracketed paste mode."""
+    try:
+        os.system("stty sane 2>/dev/null")
+        sys.stdout.write('\033[?2004l')
+        sys.stdout.flush()
+    except:
+        pass
+
+def safe_input(prompt=''):
+    """Input an toàn cho Termux: tự động sửa TTY và lọc ký tự rác."""
+    fix_tty()
+    try:
+        res = input(prompt)
+    except Exception:
+        return ""
+    if not res:
+        return ""
+    # Lọc các escape sequence ANSI
+    cleaned = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res).strip()
+    return cleaned
+
 def verify_cookie(cookie):
     """Kiểm tra Cookie có sống hay không qua Roblox API."""
     try:
@@ -292,26 +314,48 @@ def test_method_3_xml_preferences(pkg, cookie, user_name, user_id):
 # MAIN TEST DIAGNOSTIC MENU
 # =====================================================================
 def test_analyze_storage(pkg):
-    print(f"\n{C}=== QUÉT TOÀN BỘ FILE THAY ĐỔI KHI ĐĂNG NHẬP (TRONG 15 PHÚT QUA) ==={RESET}")
-    cmd = f"find /data/data/{pkg}/ -type f -mmin -15 2>/dev/null"
+    print(f"\n{C}=== QUÉT TOÀN BỘ FILE THAY ĐỔI KHI ĐĂNG NHẬP (TRONG 30 PHÚT QUA) ==={RESET}")
+    cmd = f"find /data/data/{pkg}/ -type f -mmin -30 2>/dev/null"
     res = run_su(cmd)
     if not res:
-        print(f"{Y}[i] Không thấy file nào thay đổi trong 15 phút qua. Hãy đăng nhập thủ công trên App rồi chọn lại mục này!{RESET}")
+        print(f"{Y}[i] Không thấy file nào thay đổi trong 30 phút qua. Hãy mở App đăng nhập thủ công rồi chạy lại!{RESET}")
         return
+
     lines = [line.strip() for line in res.splitlines() if line.strip()]
+    output_lines = [f"=== DIAGNOSTIC STORAGE SCAN FOR {pkg} ===", f"Total files modified: {len(lines)}\n"]
+    
     print(f"{G}[✓] Phát hiện {len(lines)} file dữ liệu đã thay đổi/tạo mới:{RESET}")
     for line in lines:
+        msg = f"FILE: {line}"
         print(f"  ├─ {C}{line}{RESET}")
+        output_lines.append(msg)
 
         if line.endswith('.xml'):
             raw = run_su(f"cat \"{line}\" 2>/dev/null")
             if raw:
-                # Tìm các key liên quan đến session
                 keys = re.findall(r'name="([^"]+)"', raw)
-                print(f"     {Y}↳ XML Keys ({len(keys)} keys): {', '.join(keys[:10])}{RESET}")
+                info = f"   ↳ XML Keys ({len(keys)} keys): {', '.join(keys[:15])}"
+                print(f"     {Y}{info}{RESET}")
+                output_lines.append(info)
+                output_lines.append(f"   RAW XML: {raw[:400]}")
         elif 'Cookies' in line or line.endswith('.db'):
             tables = run_su(f"sqlite3 \"{line}\" \".tables\" 2>/dev/null")
-            print(f"     {Y}↳ SQLite Tables: {tables}{RESET}")
+            info = f"   ↳ SQLite Tables: {tables}"
+            print(f"     {Y}{info}{RESET}")
+            output_lines.append(info)
+
+    out_file = "scan_result.txt"
+    full_output = "\n".join(output_lines)
+    with open(out_file, "w", encoding="utf-8") as f:
+        f.write(full_output)
+
+    print(f"\n{G}[✓] ĐÃ LƯU KẾT QUẢ VÀO FILE: {Y}{out_file}{RESET}")
+    # Copy vào clipboard nếu có lệnh termux-clipboard-set
+    try:
+        subprocess.run(f"cat \"{out_file}\" | termux-clipboard-set 2>/dev/null", shell=True)
+        print(f"{G}[✓] Đã tự động sao chép kết quả vào Bộ Nhớ Tạm (Clipboard)!{RESET}")
+    except:
+        pass
 
 def main():
     print(f"{C}====================================================={RESET}")
@@ -358,7 +402,7 @@ def main():
             os.system("stty sane 2>/dev/null")
         except:
             pass
-        cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+        cookie = safe_input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}")
     
     # Lọc bỏ ký tự rác nếu có
     if "_|WARNING" in cookie:
@@ -389,7 +433,7 @@ def main():
         print(f"[{C}7{RESET}] Mở App {pkg} để kiểm tra kết quả")
         print(f"[{C}8{RESET}] Thoát")
 
-        ch = input(f"\n{M}Chọn (1-8): {RESET}").strip()
+        ch = safe_input(f"\n{M}Chọn (1-8): {RESET}")
         if ch == '1':
             test_method_1_auth_ticket(pkg, cookie)
         elif ch == '2':
