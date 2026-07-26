@@ -120,7 +120,9 @@ def test_method_1_auth_ticket(pkg, cookie):
     intents = [
         f"am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg}",
         f"am start -a android.intent.action.VIEW -d \"roblox://navigation/home?authTicket={ticket}\" -p {pkg}",
-        f"am start -a android.intent.action.VIEW -d \"roblox://placeId=4520749081&authTicket={ticket}\" -p {pkg}"
+        f"am start -n {pkg}/com.roblox.client.Activity.WebLoginActivity --es authTicket \"{ticket}\"",
+        f"am start -n {pkg}/com.roblox.client.Activity.WebLoginActivity -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\"",
+        f"am start -a android.intent.action.VIEW -d \"robloxmobile://navigation?authTicket={ticket}\" -p {pkg}"
     ]
 
     for i, cmd in enumerate(intents, 1):
