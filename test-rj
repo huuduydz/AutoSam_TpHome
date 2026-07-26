@@ -1,4 +1,4 @@
-import os, sys, subprocess, sqlite3, time, json, tempfile
+import os, sys, subprocess, sqlite3, time, json, tempfile, re
 import xml.etree.ElementTree as ET
 import urllib.request, urllib.error
 
@@ -283,9 +283,36 @@ def main():
     pkg = "vip.delta.samehwid.maio"
     print(f"{Y}[i] Package thử nghiệm mặc định: {pkg}{RESET}")
 
-    cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+    # Hỗ trợ đọc Cookie tự động từ Android Clipboard nếu không gõ/dán được
+    cookie = ""
+    try:
+        clip = run_su("cmd clipboard get 2>/dev/null || service call clipboard 2 s16 com.android.shell 2>/dev/null")
+        if clip and "_|WARNING" in clip:
+            # Match regex lấy đúng chuỗi Cookie
+            m = re.search(r'(_\|WARNING[^\s"\'<>]+)', clip)
+            if m:
+                cookie = m.group(1)
+                print(f"{G}[✓] Đã tự động đọc Cookie từ Clipboard!{RESET}")
+    except:
+        pass
+
+    if not cookie:
+        try:
+            sys.stdout.write('\033[?2004l')
+            sys.stdout.flush()
+            os.system("stty sane 2>/dev/null")
+        except:
+            pass
+        cookie = input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+    
+    # Lọc bỏ ký tự rác nếu có
+    if "_|WARNING" in cookie:
+        cookie = cookie[cookie.find("_|WARNING"):]
+        # Cắt đến khoảng trắng hoặc ký tự xuống dòng
+        cookie = re.split(r'[\r\n\s]', cookie)[0]
+
     if not cookie.startswith("_|WARNING"):
-        print(f"{R}[!] Cookie không hợp lệ!{RESET}")
+        print(f"{R}[!] Cookie không hợp lệ (Phải bắt đầu bằng _|WARNING)!{RESET}")
         return
 
     print(f"\n{Y}[*] Đang kiểm tra Cookie với Roblox Server...{RESET}")
