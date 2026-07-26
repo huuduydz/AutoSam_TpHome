@@ -844,7 +844,7 @@ def inject_cookie_webview(pkg, cookie):
 
     return success_count > 0
 
-def inject_cookie_safe_xml(pkg, cookie):
+def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
     shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
     try:
         files_str = subprocess.check_output(f"su -c 'ls {shared_prefs_dir}/*.xml 2>/dev/null'", shell=True, text=True, timeout=5).strip()
@@ -897,6 +897,16 @@ def inject_cookie_safe_xml(pkg, cookie):
         existing['RobloxSecurityToken'] = cookie
         existing['ROBLOSECURITY'] = cookie
         existing['.ROBLOSECURITY'] = cookie
+
+        if user_id:
+            existing['RBX_USER_ID'] = str(user_id)
+            existing['UserId'] = str(user_id)
+            existing['userId'] = str(user_id)
+            existing['RobloxUserId'] = str(user_id)
+        if user_name:
+            existing['RBX_USERNAME'] = str(user_name)
+            existing['Username'] = str(user_name)
+            existing['RobloxUsername'] = str(user_name)
 
         new_root = ET.Element('map')
         for k, v in existing.items():
@@ -979,7 +989,7 @@ def login_via_cookie():
         subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/* /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
 
         wv_success = inject_cookie_webview(pkg, cookie)
-        xml_success = inject_cookie_safe_xml(pkg, cookie)
+        xml_success = inject_cookie_safe_xml(pkg, cookie, user_name, user_id)
 
         if wv_success or xml_success:
             print(f"{G}[✓] Tiêm Cookie thành công cho {pkg}!{RESET}")
