@@ -1043,19 +1043,22 @@ def login_via_cookie():
         else:
             print(f"{R}[✗] Thất bại: Không thể tiêm vào DB hoặc XML nào của {pkg}.{RESET}")
 
-        print(f"{Y}[*] Đang khởi chạy ứng dụng với Auth Ticket...{RESET}")
+        print(f"{Y}[*] Đang kích hoạt tự động đăng nhập vào App...{RESET}")
         ticket, err = get_auth_ticket(cookie)
         if ticket:
-            print(f"{G}[✓] Tạo thành công Auth Ticket: {ticket[:20]}...{RESET}")
-            cmd_intent = f"su -c 'am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg}'"
-            subprocess.run(cmd_intent, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            print(f"{Y}[!] Không tạo được Auth Ticket ({err}), mở app thông thường...{RESET}")
-            subprocess.run(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'", shell=True, stdout=subprocess.DEVNULL)
+            print(f"{G}[✓] Tạo Auth Ticket thành công: {ticket[:20]}...{RESET}")
+            subprocess.run(f"su -c 'am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(1)
+
+        # Mở trực tiếp WebLoginActivity / Home Intent để WebView kích hoạt Cookie
+        print(f"{Y}[*] Mở giao diện kích thực WebView Cookie...{RESET}")
+        subprocess.run(f"su -c 'am start -n {pkg}/com.roblox.client.Activity.WebLoginActivity 2>/dev/null || am start -n {pkg}/com.roblox.client.Activity.LoginActivity 2>/dev/null || am start -a android.intent.action.VIEW -d \"roblox://navigation/home\" -p {pkg}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1)
 
     print(f"\n{G}[+] HOÀN TẤT TIÊM COOKIE.{RESET}")
-    time.sleep(3)
+    print(f"{Y}[i] NẾU APP HIỆN MÀN HÌNH \"Sign In\", HÃY BẤM NÚT [ Sign In ]: {RESET}")
+    print(f"{G}    App sẽ tự đọc Cookie đã tiêm trong WebView và VÀO THẲNG NICK!{RESET}")
+    time.sleep(4)
 
 # =====================================================================
 # AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
