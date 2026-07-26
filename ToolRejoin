@@ -179,7 +179,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin 1.0.0{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
