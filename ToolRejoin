@@ -844,6 +844,12 @@ def inject_cookie_safe_xml(pkg, cookie):
         if '<map>' not in raw:
             continue
 
+        # Chỉ tiêm vào file XML có sẵn thông tin auth/roblox hoặc file Datastore chính
+        xml_name = os.path.basename(xml_path).lower()
+        is_target_xml = any(k in xml_name for k in ['roblox', 'auth', 'user', 'session', 'token', 'datastore', 'app']) or ('RobloxSecurityToken' in raw or 'ROBLOSECURITY' in raw)
+        if not is_target_xml:
+            continue
+
         existing = {}
         try:
             root_el = ET.fromstring(raw)
@@ -854,10 +860,10 @@ def inject_cookie_safe_xml(pkg, cookie):
         except:
             pass
 
-        # Ghi các key phổ biến của Roblox storage
+        # Ghi đúng key `RobloxSecurityToken` và `ROBLOSECURITY`
+        existing['RobloxSecurityToken'] = cookie
         existing['ROBLOSECURITY'] = cookie
         existing['.ROBLOSECURITY'] = cookie
-        existing['RobloxSecurityToken'] = cookie
 
         new_root = ET.Element('map')
         for k, v in existing.items():
