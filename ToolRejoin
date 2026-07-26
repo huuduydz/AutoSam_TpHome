@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V4{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -496,102 +496,97 @@ def discover_unbound_account(pkg, states):
 # =====================================================================
 _boot_threads = {}   # {pkg: Thread} — track boot threads
 
-def _pgrep_pkg(pkg, timeout=6):
-    """Lấy danh sách PID chính xác của pkg.
-    Ưu tiên pidof (nhanh nhất), fallback pgrep -x, fallback /proc scan.
-    Chỉ match ĐÚNG pkg — không bao giờ trả PID của pkg khác."""
-    # Method 1: pidof (nhanh nhất, match exact binary name)
+def _check_pkg_alive_once(pkg):
+    """Kiểm tra nhanh 1 lần xem pkg còn process không.
+    CHỈ dùng /proc scan + pidof — không gọi dumpsys hay am (chậm, sai scope).
+    Trả về: True (chắc chắn sống) | False (chắc chắn chết) | None (không chắc/timeout)."""
+    # Method 1: pidof — nhanh nhất (~50ms)
     try:
         out = subprocess.check_output(
             f"su -c 'pidof {pkg} 2>/dev/null'",
-            shell=True, text=True, timeout=4,
+            shell=True, text=True, timeout=3,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         ).strip()
-        if out:
-            pids = [p for p in out.split() if p.isdigit()]
-            if pids:
-                return pids
+        if out and any(p.isdigit() for p in out.split()):
+            return True  # Chắc sống
+        # pidof trả về rỗng → chết HOẶC lệnh không tồn tại
+    except subprocess.TimeoutExpired:
+        return None  # Timeout → không chắc
     except:
-        pass
-    # Method 2: pgrep -x (exact match full process name)
-    try:
-        out = subprocess.check_output(
-            f"su -c 'pgrep -x {re.escape(pkg)} 2>/dev/null'",
-            shell=True, text=True, timeout=4,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
-        if out:
-            pids = [p for p in out.split() if p.isdigit()]
-            if pids:
-                return pids
-    except:
-        pass
-    # Method 3: /proc scan — fallback, chỉ match cmdline == pkg hoặc pkg:
-    pids = []
+        pass  # pidof không có → fallback
+
+    # Method 2: /proc/*/cmdline scan — chính xác nhất
     try:
         cmd = ("su -c 'for p in /proc/[0-9]*; do "
-               "[ -d \"$p\" ] && "
+               "[ -f \"$p/cmdline\" ] && "
                "echo -n \"${p##*/}:\" && "
-               "cat \"$p/cmdline\" 2>/dev/null && echo; done'")
+               "tr -d \\\\0 < \"$p/cmdline\" 2>/dev/null && echo; done'")
+        out = subprocess.check_output(
+            cmd, shell=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        pkg_colon = pkg + ':'
+        for line in out.splitlines():
+            if ':' not in line:
+                continue
+            _, _, rest = line.partition(':')
+            # Lấy phần đầu (tên process, trước dấu : tiếp theo nếu có clone)
+            proc_name = rest.split(':')[0].strip() if ':' in rest else rest.strip()
+            # Match CHÍNH XÁC: đúng pkg hoặc pkg:thread_name
+            if proc_name == pkg or rest.strip() == pkg or rest.strip().startswith(pkg_colon):
+                return True
+        return False  # Đã scan xong, không tìm thấy → chết
+    except subprocess.TimeoutExpired:
+        return None  # Timeout → không chắc
+    except:
+        return None  # Lỗi khác → không chắc
+
+def _is_pkg_alive_confirmed(pkg, votes=2, interval=3.0):
+    """Kiểm tra pkg có thực sự chết không bằng cách vote nhiều lần.
+    Chỉ trả về False (chết) nếu `votes` lần liên tiếp đều báo chết.
+    Trả về True ngay khi 1 lần thấy sống (tránh false-negative).
+    Nếu có timeout thì coi là sống (an toàn hơn là restart nhầm)."""
+    dead_count = 0
+    for i in range(votes):
+        result = _check_pkg_alive_once(pkg)
+        if result is True:
+            return True   # Sống → dừng sớm
+        elif result is None:
+            return True   # Không chắc → coi như sống (an toàn)
+        else:
+            dead_count += 1
+        if i < votes - 1:
+            time.sleep(interval)
+    return dead_count >= votes  # False = chết confirmed
+
+# Alias cho monitor_package (dùng vote 1 lần để không chậm vòng lặp 10s)
+def _is_pkg_active(pkg):
+    """Alias nhanh: 1 lần check. Dùng cho watchdog."""
+    r = _check_pkg_alive_once(pkg)
+    return r is not False  # None hoặc True → coi là active
+
+def _pgrep_pkg(pkg, timeout=3):
+    """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c để tránh va chạm clone."""
+    pids = []
+    try:
+        cmd = "su -c 'for p in /proc/[0-9]*; do [ -d \"$p\" ] && echo -n \"${p##*/}:\" && cat \"$p/cmdline\" 2>/dev/null && echo; done'"
         out = subprocess.check_output(
             cmd, shell=True, timeout=timeout,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-        pkg_b = pkg.encode()
         for line in out.split(b'\n'):
             if b':' not in line:
                 continue
             parts = line.split(b':', 1)
-            pid_b = parts[0].strip()
-            if not pid_b.isdigit():
+            pid_str = parts[0].strip()
+            if not pid_str.isdigit():
                 continue
-            # cmdline: lấy trường đầu tiên (null-terminated)
-            cmdline = parts[1].split(b'\x00')[0]
-            # Chỉ match ĐÚNG pkg, không match substring của pkg khác
-            if cmdline == pkg_b or cmdline == pkg_b + b':' or cmdline.startswith(pkg_b + b':'):
-                pids.append(pid_b.decode('utf-8'))
+            cmdline = parts[1].split(b'\x00')[0].decode('utf-8', errors='ignore').strip()
+            if cmdline == pkg or cmdline.startswith(pkg + ':'):
+                pids.append(pid_str.decode('utf-8'))
     except:
         pass
     return pids
-
-def _is_pkg_active(pkg):
-    """Kiểm tra pkg đang chạy. Chỉ dùng các method có scope đúng pkg.
-    KHÔNG dùng dumpsys activity activities vì nó dump toàn hệ thống
-    và gây check chéo giữa các package (pkgA match nhầm pkgB)."""
-    # Bước 1: /proc PID scan — nhanh, chính xác, isolate theo pkg
-    if _pgrep_pkg(pkg):
-        return True
-    # Bước 2: am dump state của đúng pkg này (không chứa data của pkg khác)
-    try:
-        out = subprocess.check_output(
-            f"su -c 'am dump state {pkg} 2>/dev/null'",
-            shell=True, text=True, timeout=5,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        if out.strip() and 'error' not in out.lower() and 'not found' not in out.lower():
-            return True
-    except:
-        pass
-    # Bước 3: kiểm tra /proc/*/cmdline chứa pkg (tìm theo /proc trực tiếp)
-    try:
-        out = subprocess.check_output(
-            f"su -c 'grep -rl --include=cmdline \"{pkg}\" /proc/[0-9]*/cmdline 2>/dev/null | head -1'",
-            shell=True, text=True, timeout=5,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
-        if out:
-            # Đọc cmdline của pid đó để xác nhận chính xác
-            pid = out.split('/')[2]
-            try:
-                with open(f'/proc/{pid}/cmdline', 'rb') as f:
-                    cmdline = f.read().split(b'\x00')[0].decode('utf-8', errors='ignore')
-                if cmdline == pkg or cmdline.startswith(pkg + ':'):
-                    return True
-            except:
-                pass
-    except:
-        pass
-    return False
 
 def _kill_pkg(pkg):
     """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
@@ -604,23 +599,24 @@ def _kill_pkg(pkg):
     time.sleep(1)
 
 def boot_pkg_with_verify(pkg, max_retries=4):
-    """Boot pkg với tối đa 4 lần thử. Mỗi lần: force-stop sạch → am start → poll 30s.
-    Dùng -p {pkg} để tránh hộp thoại 'Mở bằng...' (app chooser)."""
+    """Boot pkg với tối đa 4 lần thử. Mỗi lần: force-stop sạch → am start / monkey → poll 30s."""
     for attempt in range(1, max_retries + 1):
         # A) Dọn process cũ hoàn toàn
         safe_root(f"su -c 'am force-stop {pkg}'")
         time.sleep(2)
 
-        # B) Launch đúng package, tránh dialog chọn app
+        # B) Launch đúng package
         if target_place_id:
-            # -p {pkg}: buộc intent vào đúng package này, không hỏi
-            # -f 0x18000000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK tránh tắt tab khác
+            # -f 0x18000000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK
+            # Tên package được truyền ở cuối intent để chỉ định ứng dụng đích
             safe_root(
-                f"su -c 'am start -p {pkg} -f 0x18000000 -a android.intent.action.VIEW "
-                f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
+                f"su -c 'am start -a android.intent.action.VIEW "
+                f"-d \"roblox://experiences/start?placeId={target_place_id}\" -f 0x18000000 {pkg} 2>/dev/null'"
             )
+            time.sleep(1)
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
         else:
-            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
 
         # C) Poll 6×5s = 30s
         for _ in range(6):
@@ -634,7 +630,7 @@ def boot_pkg_with_verify(pkg, max_retries=4):
     # Last resort
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(2)
-    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
     return False
 
 def _boot_worker(pkg, states):
@@ -857,8 +853,11 @@ def login_via_cookie():
 # MONITOR THREAD - Mỗi package chạy 1 thread riêng
 # =====================================================================
 def is_app_running(pkg):
-    """Kiểm tra process của package (chính xác, không va chạm clone)."""
-    return bool(_pgrep_pkg(pkg))
+    """Kiểm tra nhanh process của package.
+    Dùng _check_pkg_alive_once() — scope đúng pkg, không gây check chéo.
+    None (timeout) → coi là đang chạy để tránh false restart."""
+    r = _check_pkg_alive_once(pkg)
+    return r is not False  # True hoặc None → còn sống
 
 def monitor_package(pkg, states, last_ok_ping, stop_event):
     """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
@@ -867,43 +866,27 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
         try:
             current_time = time.time()
             state = states[pkg]
-            # session_start_time: thời điểm start lần đầu, KHÔNG reset khi rejoin
-            # rejoin_time: chỉ dùng để tính warmup
             session_uptime = current_time - state['session_start_time']
             uptime_seconds = current_time - state['rejoin_time']
 
             # === KIỂM TRA ĐANG TRONG TIẾN TRÌNH BOOT ===
+            # PIP_WATCHDOG chịu trách nhiệm bật lại process
+            # monitor_package chỉ lo heartbeat + rejoin game
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
                 state['text'] = "Đang Khởi Động..."
                 state['color'] = Y
                 stop_event.wait(5)
                 continue
 
-            # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
-            # Đếm số lần liên tiếp không chạy (3 lần = 30 giây liên tục chết thực sự)
-            # PIP_WATCHDOG thread xử lý trường hợp app chết ngay từ đầu
-            if is_app_running(pkg):
-                state['not_running_count'] = 0
-            else:
-                # Luôn đếm, không phân biệt grace period (watchdog đã lo phần boot)
-                state['not_running_count'] = state.get('not_running_count', 0) + 1
-                if state['not_running_count'] >= 3:
-                    can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
-                    if can_restart:
-                        with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, "App tắt liên tục!", R)
-                        last_ok_ping[pkg] = current_time
-                    else:
-                        state['text'] = 'App tắt, chờ restart...'
-                        state['color'] = R
-                    state['not_running_count'] = 0
-                    stop_event.wait(5)
-                    continue
-                else:
-                    state['text'] = f"Mất Process ({state['not_running_count']}/3)..."
-                    state['color'] = Y
-                    stop_event.wait(10)
-                    continue
+            # === KIỂM TRA PROCESS CÒN SỐNG KHÔNG ===
+            # is_app_running dùng _check_pkg_alive_once (1 lần, nhanh)
+            # Nếu chết: hiển thị cảnh báo nhưng KHÔNG tự restart
+            # → PIP_WATCHDOG sẽ vote 3 lần rồi mới restart để tránh false-restart
+            if not is_app_running(pkg):
+                state['text'] = f"Chờ Watchdog bật lại..."
+                state['color'] = Y
+                stop_event.wait(10)
+                continue
 
             # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
             if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
@@ -1021,50 +1004,62 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 _pip_watchdog_threads = {}  # {pkg: Thread}
 
 def _pip_watchdog_worker(pkg, states, last_ok_ping, stop_event):
-    """Watchdog chuyên biệt: kiểm tra process mỗi 8s và bật lại ngay nếu tắt.
-    Hoạt động song song với monitor_package, không cần đợi heartbeat."""
-    # Delay nhỏ lúc đầu để boot thread có thời gian khởi động
-    stop_event.wait(15)
-    consecutive_dead = 0
+    """PIP WATCHDOG — nguồn quyết định DUY NHẤT để restart process.
+    Monitor_package chỉ hiển thị trạng thái, watchdog mới thực sự bật lại.
+
+    Logic vote: cần 3 lần check liên tiếp (~24s) đều báo CHẾT mới restart.
+    Nếu BẤT KỲ lần nào thấy sống hoặc timeout → reset về 0 (tránh false-restart)."""
+    # Delay ban đầu cho boot thread khởi động xong
+    stop_event.wait(20)
+    dead_votes = 0  # Số lần liên tiếp xác nhận app chết
     while not stop_event.is_set():
         try:
-            # Bỏ qua nếu đang trong boot thread
+            # Đang trong boot → không cần kiểm tra
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
-                consecutive_dead = 0
+                dead_votes = 0
                 stop_event.wait(8)
                 continue
 
-            alive = _is_pkg_active(pkg)
-            if alive:
-                consecutive_dead = 0
+            # _check_pkg_alive_once: True=sống, False=chết, None=không chắc(timeout)
+            result = _check_pkg_alive_once(pkg)
+
+            if result is True:
+                # Sống rõ ràng → reset counter
+                dead_votes = 0
+            elif result is None:
+                # Timeout/không chắc → coi như sống, reset để tránh false-restart
+                dead_votes = 0
             else:
-                consecutive_dead += 1
-                # 2 lần liên tiếp (~16s) = app thực sự chết, bật lại ngay
-                if consecutive_dead >= 2:
-                    current_time = time.time()
-                    can_restart = pkg not in last_restart_time or \
-                                  current_time - last_restart_time.get(pkg, 0) >= 120
-                    if can_restart:
-                        # Bật lại trong boot thread nếu chưa có
-                        existing = _boot_threads.get(pkg)
-                        if not existing or not existing.is_alive():
-                            try:
-                                states[pkg]['text'] = 'Watchdog: Bật lại pip!'
-                                states[pkg]['color'] = M
-                            except:
-                                pass
-                            last_restart_time[pkg] = current_time
-                            t = threading.Thread(
-                                target=_boot_worker,
-                                args=(pkg, states),
-                                daemon=True,
-                                name=f"boot_wd_{pkg[-8:]}"
-                            )
-                            _boot_threads[pkg] = t
-                            t.start()
-                    consecutive_dead = 0
+                # result is False → chắc chắn chết 1 lần
+                dead_votes += 1
+
+            # Cần ĐỦ 3 lần liên tiếp mới tin là app thực sự chết
+            if dead_votes >= 3:
+                current_time = time.time()
+                # Cooldown 120s giữa 2 lần restart để tránh restart storm
+                last_r = last_restart_time.get(pkg, 0)
+                can_restart = (current_time - last_r) >= 120
+                if can_restart:
+                    existing = _boot_threads.get(pkg)
+                    if not existing or not existing.is_alive():
+                        try:
+                            states[pkg]['text'] = 'Watchdog: Pip die → Bật lại!'
+                            states[pkg]['color'] = R
+                        except:
+                            pass
+                        last_restart_time[pkg] = current_time
+                        t = threading.Thread(
+                            target=_boot_worker,
+                            args=(pkg, states),
+                            daemon=True,
+                            name=f"boot_wd_{pkg[-8:]}"
+                        )
+                        _boot_threads[pkg] = t
+                        t.start()
+                dead_votes = 0  # Reset sau khi đã xử lý
         except Exception:
             pass
+        # Interval 8s giữa các lần vote
         stop_event.wait(8)
 
 def start_auto_rejoin():
