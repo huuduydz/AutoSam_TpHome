@@ -25,7 +25,6 @@ def run_su(cmd, timeout=10):
 def fix_tty():
     """Khôi phục chế độ TTY terminal và tắt bracketed paste mode."""
     try:
-        os.system("stty sane 2>/dev/null")
         sys.stdout.write('\033[?2004l')
         sys.stdout.flush()
     except:
