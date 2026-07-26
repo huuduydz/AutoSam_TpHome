@@ -156,7 +156,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V4{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -844,9 +844,14 @@ def inject_cookie_safe_xml(pkg, cookie):
         if '<map>' not in raw:
             continue
 
-        # Chỉ tiêm vào file XML có sẵn thông tin auth/roblox hoặc file Datastore chính
+        # Ưu tiên các file XML chính: <package_name>_preferences.xml, APPS_FLYER_SHARED_PREFS, gms, locale và các file chứa token
         xml_name = os.path.basename(xml_path).lower()
-        is_target_xml = any(k in xml_name for k in ['roblox', 'auth', 'user', 'session', 'token', 'datastore', 'app']) or ('RobloxSecurityToken' in raw or 'ROBLOSECURITY' in raw)
+        is_target_xml = (
+            f"{pkg.lower()}_preferences.xml" in xml_name or
+            "preferences.xml" in xml_name or
+            any(k in xml_name for k in ['roblox', 'auth', 'user', 'session', 'token', 'datastore', 'app', 'gms', 'locale', 'rate_me']) or
+            ('RobloxSecurityToken' in raw or 'ROBLOSECURITY' in raw)
+        )
         if not is_target_xml:
             continue
 
