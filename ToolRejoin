@@ -156,7 +156,7 @@ R = '\033[91m'
 M = '\033[95m'
 RESET = '\033[0m'
 
-VERSION = "1.0.4"
+VERSION = "1.0.3"
 
 # =====================================================================
 # BIẾN TOÀN CỤC
@@ -567,48 +567,67 @@ def discover_unbound_account(pkg, states):
 _boot_threads = {}   # {pkg: Thread} — track boot threads
 
 def _check_pkg_alive_once(pkg):
-    """Kiểm tra nhanh 1 lần xem pkg còn process không.
-    Trả về: True (chắc chắn sống) | False (chắc chắn chết)."""
-    # Method 1: pidof
+    """Kiểm tra chính xác và siêu nhanh xem process của pkg có đang chạy hay không.
+    Trả về: True (chắc chắn sống) | False (chắc chắn chết) | None (timeout/lỗi → coi như sống)."""
+    # 1. Check pgrep -f (Chính xác nhất cho full package name / clone Android)
     try:
         out = subprocess.check_output(
-            f"su -c 'pidof {pkg} 2>/dev/null'",
-            shell=True, text=True, timeout=3,
+            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=2,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         ).strip()
         if out and any(p.isdigit() for p in out.split()):
             return True
+    except subprocess.TimeoutExpired:
+        return None
     except:
         pass
 
-    # Method 2: ps -A | grep pkg
+    # 2. Check pidof (cả full package name và 15 ký tự đầu - giới hạn Linux comm)
+    try:
+        short_pkg = pkg[:15]
+        out = subprocess.check_output(
+            f"su -c 'pidof {pkg} {short_pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=2,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out and any(p.isdigit() for p in out.split()):
+            return True
+    except subprocess.TimeoutExpired:
+        return None
+    except:
+        pass
+
+    # 3. Check ps -ef (in full commandline, tránh bị ngắt 15 ký tự như ps -A)
     try:
         out = subprocess.check_output(
-            f"su -c 'ps -A 2>/dev/null | grep \"{pkg}\"'",
-            shell=True, text=True, timeout=3,
+            f"su -c 'ps -ef 2>/dev/null | grep \"{pkg}\"'",
+            shell=True, text=True, timeout=2,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         ).strip()
         if out:
             for line in out.splitlines():
-                if pkg in line:
+                if pkg in line and "grep" not in line:
                     return True
+    except subprocess.TimeoutExpired:
+        return None
     except:
         pass
 
-    # Method 3: /proc scan
+    # 4. Fast scan /proc với grep -l -z
     try:
-        cmd = ("su -c 'for p in /proc/[0-9]*; do "
-               "[ -f \"$p/cmdline\" ] && "
-               "cat \"$p/cmdline\" 2>/dev/null && echo; done'")
         out = subprocess.check_output(
-            cmd, shell=True, text=True, timeout=4,
+            f"su -c 'grep -l -z \"{pkg}\" /proc/[0-9]*/cmdline 2>/dev/null'",
+            shell=True, text=True, timeout=3,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        if pkg in out:
+        ).strip()
+        if out:
             return True
         return False
+    except subprocess.TimeoutExpired:
+        return None
     except:
-        return False
+        return None
 
 def _is_pkg_alive_confirmed(pkg, votes=2, interval=3.0):
     """Kiểm tra pkg có thực sự chết không bằng cách vote nhiều lần.
@@ -618,15 +637,13 @@ def _is_pkg_alive_confirmed(pkg, votes=2, interval=3.0):
     dead_count = 0
     for i in range(votes):
         result = _check_pkg_alive_once(pkg)
-        if result is True:
-            return True   # Sống → dừng sớm
-        elif result is None:
-            return True   # Không chắc → coi như sống (an toàn)
+        if result is True or result is None:
+            return True   # Sống hoặc không chắc → dừng sớm (coi là sống)
         else:
             dead_count += 1
         if i < votes - 1:
             time.sleep(interval)
-    return dead_count >= votes  # False = chết confirmed
+    return dead_count < votes  # Nếu dead_count >= votes -> False (chết)
 
 # Alias cho monitor_package (dùng vote 1 lần để không chậm vòng lặp 10s)
 def _is_pkg_active(pkg):
