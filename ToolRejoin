@@ -156,7 +156,7 @@ R = '\033[91m'
 M = '\033[95m'
 RESET = '\033[0m'
 
-VERSION = "1.0.3"
+VERSION = "1.0.5"
 
 # =====================================================================
 # BIẾN TOÀN CỤC
@@ -684,39 +684,31 @@ def _kill_pkg(pkg):
         safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(1)
 
-def boot_pkg_with_verify(pkg, max_retries=4):
-    """Boot pkg với tối đa 4 lần thử. Mỗi lần: force-stop sạch → am start / monkey → poll 30s."""
+def boot_pkg_with_verify(pkg, max_retries=2):
+    """Boot pkg tối ưu tốc độ: force-stop sạch → launch intent/monkey → poll 10s."""
     for attempt in range(1, max_retries + 1):
-        # A) Dọn process cũ hoàn toàn
         safe_root(f"su -c 'am force-stop {pkg}'")
-        time.sleep(2)
+        time.sleep(1)
 
-        # B) Launch đúng package
         if target_place_id:
-            # -f 0x18000000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK
-            # Tên package được truyền ở cuối intent để chỉ định ứng dụng đích
             safe_root(
                 f"su -c 'am start -a android.intent.action.VIEW "
                 f"-d \"roblox://experiences/start?placeId={target_place_id}\" -f 0x18000000 {pkg} 2>/dev/null'"
             )
-            time.sleep(1)
+            time.sleep(0.5)
             safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
         else:
             safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
 
-        # C) Poll 6×5s = 30s
-        for _ in range(6):
-            time.sleep(5)
+        # Poll 5×2s = 10s (vừa thấy process nhảy lên là xong ngay, không chờ 30s)
+        for _ in range(5):
+            time.sleep(2)
             if _is_pkg_active(pkg):
                 return True
 
         if attempt < max_retries:
-            time.sleep(3)
+            time.sleep(1)
 
-    # Last resort
-    safe_root(f"su -c 'am force-stop {pkg}'")
-    time.sleep(2)
-    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
     return False
 
 def _boot_worker(pkg, states):
