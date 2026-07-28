@@ -568,9 +568,8 @@ _boot_threads = {}   # {pkg: Thread} — track boot threads
 
 def _check_pkg_alive_once(pkg):
     """Kiểm tra nhanh 1 lần xem pkg còn process không.
-    CHỈ dùng /proc scan + pidof — không gọi dumpsys hay am (chậm, sai scope).
-    Trả về: True (chắc chắn sống) | False (chắc chắn chết) | None (không chắc/timeout)."""
-    # Method 1: pidof — nhanh nhất (~50ms)
+    Trả về: True (chắc chắn sống) | False (chắc chắn chết)."""
+    # Method 1: pidof
     try:
         out = subprocess.check_output(
             f"su -c 'pidof {pkg} 2>/dev/null'",
@@ -578,38 +577,38 @@ def _check_pkg_alive_once(pkg):
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         ).strip()
         if out and any(p.isdigit() for p in out.split()):
-            return True  # Chắc sống
-        # pidof trả về rỗng → chết HOẶC lệnh không tồn tại
-    except subprocess.TimeoutExpired:
-        return None  # Timeout → không chắc
+            return True
     except:
-        pass  # pidof không có → fallback
+        pass
 
-    # Method 2: /proc/*/cmdline scan — chính xác nhất
+    # Method 2: ps -A | grep pkg
+    try:
+        out = subprocess.check_output(
+            f"su -c 'ps -A 2>/dev/null | grep \"{pkg}\"'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out:
+            for line in out.splitlines():
+                if pkg in line:
+                    return True
+    except:
+        pass
+
+    # Method 3: /proc scan
     try:
         cmd = ("su -c 'for p in /proc/[0-9]*; do "
                "[ -f \"$p/cmdline\" ] && "
-               "echo -n \"${p##*/}:\" && "
-               "tr -d \\\\0 < \"$p/cmdline\" 2>/dev/null && echo; done'")
+               "cat \"$p/cmdline\" 2>/dev/null && echo; done'")
         out = subprocess.check_output(
-            cmd, shell=True, text=True, timeout=5,
+            cmd, shell=True, text=True, timeout=4,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-        pkg_colon = pkg + ':'
-        for line in out.splitlines():
-            if ':' not in line:
-                continue
-            _, _, rest = line.partition(':')
-            # Lấy phần đầu (tên process, trước dấu : tiếp theo nếu có clone)
-            proc_name = rest.split(':')[0].strip() if ':' in rest else rest.strip()
-            # Match CHÍNH XÁC: đúng pkg hoặc pkg:thread_name
-            if proc_name == pkg or rest.strip() == pkg or rest.strip().startswith(pkg_colon):
-                return True
-        return False  # Đã scan xong, không tìm thấy → chết
-    except subprocess.TimeoutExpired:
-        return None  # Timeout → không chắc
+        if pkg in out:
+            return True
+        return False
     except:
-        return None  # Lỗi khác → không chắc
+        return False
 
 def _is_pkg_alive_confirmed(pkg, votes=2, interval=3.0):
     """Kiểm tra pkg có thực sự chết không bằng cách vote nhiều lần.
@@ -1122,42 +1121,28 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             current_time = time.time()
             state = states[pkg]
             session_uptime = current_time - state['session_start_time']
-            uptime_seconds = current_time - state['rejoin_time']
 
             # === KIỂM TRA ĐANG TRONG TIẾN TRÌNH BOOT ===
-            # PIP_WATCHDOG chịu trách nhiệm bật lại process
-            # monitor_package chỉ lo heartbeat + rejoin game
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
                 state['text'] = "Đang Khởi Động..."
                 state['color'] = Y
-                stop_event.wait(5)
+                stop_event.wait(3)
                 continue
 
             # === KIỂM TRA PROCESS CÒN SỐNG KHÔNG ===
-            # is_app_running dùng _check_pkg_alive_once (1 lần, nhanh)
-            # Nếu chết: hiển thị cảnh báo nhưng KHÔNG tự restart
-            # → PIP_WATCHDOG sẽ vote 3 lần rồi mới restart để tránh false-restart
+            # Nếu chết: tự động gọi force_restart_app bật lại ngay lập tức!
             if not is_app_running(pkg):
-                state['text'] = f"Chờ Watchdog bật lại..."
-                state['color'] = Y
-                stop_event.wait(10)
+                with pkg_restart_locks[pkg]:
+                    force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại ngay!", R, ignore_cooldown=True)
+                stop_event.wait(3)
                 continue
 
-            # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
+            # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime) ===
             if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
-                # Dùng lock riêng của pkg - tránh block luồng khác
                 with pkg_restart_locks[pkg]:
-                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
-                # Reset session timer sau khi auto restart
+                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M, ignore_cooldown=True)
                 state['session_start_time'] = current_time
                 last_ok_ping[pkg] = current_time
-                stop_event.wait(10)
-                continue
-
-            # === WARMUP ===
-            if current_time < state.get('warmup_until', 0):
-                state['text'] = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
-                state['color'] = Y
                 stop_event.wait(5)
                 continue
 
@@ -1169,57 +1154,43 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['display_name'] = found
 
             bound = state['bound_name']
-            is_grace = (uptime_seconds < 150)  # 150s thay vì 240s → detect fail nhanh hơn
+            last_r = last_restart_time.get(pkg, state['rejoin_time'])
+            elapsed = current_time - last_r
 
-            # === CHƯ A BIND ĐƯỢC TÊN ===
+            # === CHƯA BIND ĐƯỢC TÊN ===
             if not bound:
-                if is_grace:
-                    # Nếu app không chạy sau 30s warmup → restart ngay không chờ 180s
-                    if uptime_seconds > 30 and not is_app_running(pkg):
-                        with pkg_restart_locks[pkg]:
+                if elapsed >= 180:
+                    with pkg_restart_locks[pkg]:
+                        if is_app_running(pkg):
+                            rejoin_in_game(pkg, states, current_time, "Chưa Load → Rejoin!", R)
+                        else:
                             force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại!", R, ignore_cooldown=True)
-                        last_ok_ping[pkg] = current_time
-                    else:
-                        state['text'] = f"Đang Load ({int(150 - uptime_seconds)}s)"
-                        state['color'] = Y
+                    last_ok_ping[pkg] = current_time
                 else:
-                    can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
-                    if can_restart:
-                        with pkg_restart_locks[pkg]:
-                            if is_app_running(pkg):
-                                rejoin_in_game(pkg, states, current_time, "Chưa Load/Kẻ t Bind!", R)
-                            else:
-                                force_restart_app(pkg, states, current_time, "Chưa Load/Kẻ t Bind!", R, ignore_cooldown=True)
-                        last_ok_ping[pkg] = current_time
-                    else:
-                        wait_sec = int(180 - (current_time - last_restart_time.get(pkg, current_time)))
-                        state['text'] = f"Chờ Restart ({wait_sec}s)"
-                        state['color'] = R
-                stop_event.wait(10)
+                    wait_sec = int(180 - elapsed)
+                    state['text'] = f"Đang Nạp Data ({wait_sec}s)"
+                    state['color'] = Y
+                stop_event.wait(5)
                 continue
 
             # === CHECK HEARTBEAT ===
-            # Nếu pkg khác vừa restart (< 180s), cho thêm grace để tránh cascade
-            other_just_restarted = (current_time - last_any_restart_time < 180) and \
-                                   (last_any_restart_time != last_restart_time.get(pkg, 0))
-
             last_ping = get_heartbeat(bound, pkg)
             if last_ping == -1:
                 state['heartbeat_misses'] = state.get('heartbeat_misses', 0) + 1
                 misses = state['heartbeat_misses']
-                if is_grace or other_just_restarted:
-                    remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
-                    state['text'] = f"Đang Nạp Data ({max(0,remain)}s)"
-                    state['color'] = Y
-                elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
-                    # Cần 3 miss liên tiếp (~30s) mới restart/rejoin
-                    with pkg_restart_locks[pkg]:
-                        if is_app_running(pkg):
-                            rejoin_in_game(pkg, states, current_time, "Treo Màn/Rejoin Game!", R)
-                        else:
-                            force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại!", R, ignore_cooldown=True)
-                    last_ok_ping[pkg] = current_time
-                    state['heartbeat_misses'] = 0
+                if misses >= 3:
+                    if elapsed >= 180:
+                        with pkg_restart_locks[pkg]:
+                            if is_app_running(pkg):
+                                rejoin_in_game(pkg, states, current_time, "Treo Màn → Rejoin!", R)
+                            else:
+                                force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại!", R, ignore_cooldown=True)
+                        last_ok_ping[pkg] = current_time
+                        state['heartbeat_misses'] = 0
+                    else:
+                        wait_sec = int(180 - elapsed)
+                        state['text'] = f"Mất HB - Chờ ({wait_sec}s)"
+                        state['color'] = R
                 else:
                     state['text'] = f"Mất HB ({misses}/3 lần)..."
                     state['color'] = Y
@@ -1229,32 +1200,29 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 if diff <= 120:
                     last_ok_ping[pkg] = current_time
                 real_diff = current_time - last_ok_ping.get(pkg, current_time)
-                if diff > 120:
-                    if is_grace or other_just_restarted:
-                        remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
-                        state['text'] = f"Vào Server... ({max(0,remain)}s)"
-                        state['color'] = Y
-                    elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
+
+                if diff > 120 or real_diff >= 120:
+                    if elapsed >= 180:
                         with pkg_restart_locks[pkg]:
                             if is_app_running(pkg):
                                 rejoin_in_game(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
                             else:
-                                force_restart_app(pkg, states, current_time, f"Pip tắt → Bật lại!", R, ignore_cooldown=True)
+                                force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại!", R, ignore_cooldown=True)
                         last_ok_ping[pkg] = current_time
-                    elif real_diff < 120:
-                        state['text'] = f"Cảnh báo lag ({int(diff)}s)"
-                        state['color'] = Y
+                    else:
+                        wait_sec = int(180 - elapsed)
+                        state['text'] = f"Văng Game - Chờ ({wait_sec}s)"
+                        state['color'] = R
                 else:
                     state['text'] = f"Đang Farm ({int(diff)}s trước)"
                     state['color'] = G
         except Exception as e:
-            # Ghi lỗi nhưng không crash thread - quan trọng cho 24/7
             try:
                 states[pkg]['text'] = f"Lỗi ({str(e)[:15]})"
                 states[pkg]['color'] = R
             except:
                 pass
-        stop_event.wait(10)
+        stop_event.wait(5)
 
 
 # =====================================================================
@@ -1265,34 +1233,22 @@ _pip_watchdog_threads = {}  # {pkg: Thread}
 def _pip_watchdog_worker(pkg, states, last_ok_ping, stop_event):
     """PIP WATCHDOG — Giữ PIP luôn bật.
     Nếu PIP bị tắt process -> Bật lại ngay lập tức mà KHÔNG cần chờ 180s."""
-    stop_event.wait(10)
-    dead_votes = 0
+    stop_event.wait(3)
     while not stop_event.is_set():
         try:
-            # Đang trong boot → không cần kiểm tra
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
-                dead_votes = 0
-                stop_event.wait(5)
+                stop_event.wait(3)
                 continue
 
-            result = _check_pkg_alive_once(pkg)
-
-            if result is True or result is None:
-                dead_votes = 0
-            else:
-                dead_votes += 1
-
-            # 2 lần liên tiếp báo chết (~8s) -> PIP bị tắt -> Bật lại ngay không cần chờ 180s
-            if dead_votes >= 2:
+            if not _check_pkg_alive_once(pkg):
                 current_time = time.time()
                 existing = _boot_threads.get(pkg)
                 if not existing or not existing.is_alive():
                     with pkg_restart_locks[pkg]:
                         force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại ngay!", R, ignore_cooldown=True)
-                dead_votes = 0
         except Exception:
             pass
-        stop_event.wait(4)
+        stop_event.wait(3)
 
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
@@ -1330,7 +1286,6 @@ def start_auto_rejoin():
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': pkg_now,
             'session_start_time': pkg_now,
-            'warmup_until': pkg_now + 90,
             'heartbeat_misses': 0,
             'not_running_count': 0
         }
