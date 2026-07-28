@@ -1,6 +1,74 @@
-import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json
+import urllib.request, urllib.error
 from datetime import datetime
 import xml.etree.ElementTree as ET
+
+def get_auth_ticket(cookie):
+    """Tạo Authentication Ticket từ Cookie Roblox để đăng nhập trực tiếp vào Native App."""
+    try:
+        # Bước 1: Lấy X-CSRF-TOKEN
+        req = urllib.request.Request(
+            "https://auth.roblox.com/v1/authentication-ticket/",
+            data=b"{}",
+            headers={
+                "Cookie": f".ROBLOSECURITY={cookie}",
+                "Content-Type": "application/json",
+                "Referer": "https://www.roblox.com/"
+            },
+            method="POST"
+        )
+        csrf_token = None
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                csrf_token = resp.headers.get("x-csrf-token")
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                csrf_token = e.headers.get("x-csrf-token")
+        
+        if not csrf_token:
+            return None, "Không lấy được X-CSRF-Token"
+
+        # Bước 2: Yêu cầu sinh Auth Ticket
+        req2 = urllib.request.Request(
+            "https://auth.roblox.com/v1/authentication-ticket/",
+            data=b"{}",
+            headers={
+                "Cookie": f".ROBLOSECURITY={cookie}",
+                "Content-Type": "application/json",
+                "Referer": "https://www.roblox.com/",
+                "x-csrf-token": csrf_token
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req2, timeout=5) as resp2:
+            ticket = resp2.headers.get("rbx-authentication-ticket")
+            if ticket:
+                return ticket, "Thành công"
+    except Exception as e:
+        return None, str(e)
+    return None, "Không tạo được Auth Ticket"
+
+def verify_roblox_cookie(cookie):
+    """Kiểm tra Cookie có sống hay đã bị Roblox khóa/hết hạn qua Roblox API."""
+    try:
+        req = urllib.request.Request(
+            "https://users.roblox.com/v1/users/authenticated",
+            headers={
+                "Cookie": f".ROBLOSECURITY={cookie}",
+                "User-Agent": "Roblox/WinInet"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=8) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode('utf-8'))
+                return True, data.get('name', 'Unknown'), data.get('id', 0)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return False, "Cookie đã HẾT HẠN hoặc bị LOG OUT trên Web (401 Unauthorized)", 0
+        return False, f"Lỗi HTTP {e.code}", 0
+    except Exception as e:
+        return False, f"Không thể kiểm tra API (Bỏ qua kiểm tra): {str(e)}", -1
+    return False, "Không thể xác thực Cookie", 0
 
 # =====================================================================
 # ANTI-CRASH & FIX TERMINAL
@@ -88,6 +156,8 @@ R = '\033[91m'
 M = '\033[95m'
 RESET = '\033[0m'
 
+VERSION = "1.0.4"
+
 # =====================================================================
 # BIẾN TOÀN CỤC
 # =====================================================================
@@ -111,6 +181,18 @@ shared_lock = threading.Lock()       # bảo vệ CLAIMED_NAMES giữa các thre
 pkg_restart_locks = {}               # {pkg: Lock} - mỗi pkg 1 lock riêng
 global_restart_semaphore = threading.Semaphore(1)  # Chỉ serialize bước boot
 file_to_pkg_binding = {}             # {file_path: pkg} - ghi nhớ file json nào thuộc pkg nào
+
+ACTION_LOGS = []
+ACTION_LOGS_LOCK = threading.Lock()
+
+def log_action(msg):
+    global ACTION_LOGS
+    t_str = time.strftime("%H:%M:%S")
+    formatted = f"{C}[{t_str}]{RESET} {msg}"
+    with ACTION_LOGS_LOCK:
+        ACTION_LOGS.append(formatted)
+        if len(ACTION_LOGS) > 10:
+            ACTION_LOGS.pop(0)
 
 # =====================================================================
 # LẤY CPU & RAM
@@ -156,7 +238,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin v{VERSION}{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -178,10 +260,17 @@ def print_dashboard(states):
         s_name = states[pkg]['display_name']
         if len(s_name) > 15: s_name = s_name[:12] + "..."
         txt = states[pkg]['text']
-        # Truncate text để tránh tràn dòng dashboard
         if len(txt) > 24: txt = txt[:21] + "..."
         col = states[pkg]['color']
         print(f"{s_pkg:<20} | {s_name:<16} | {col}{txt:<25}{RESET}")
+    print("-" * 65)
+    print(f"{C}--- LỊCH SỬ THAO TÁC REAL-TIME (CONSOLE LOGS) ---{RESET}")
+    with ACTION_LOGS_LOCK:
+        if not ACTION_LOGS:
+            print(f"{Y}  (Chưa có nhật ký lệnh nào...){RESET}")
+        else:
+            for log in ACTION_LOGS[-8:]:
+                print(f"  {log}")
     print("-" * 65)
     print(f"{C} Đang chạy Live... (Bấm Ctrl+C để dừng){RESET}")
 
@@ -326,24 +415,23 @@ def extract_username_from_filename(filename):
     return base  # fallback
 
 def get_all_heartbeat_files_fast(pkg=None):
-    """Tìm file heartbeat bằng su find - giống hudy_2.py đã hoạt động."""
-    search_dirs = [
-        "/sdcard/Android/media",
-        "/sdcard/Android/data",
-        "/sdcard/Delta",
-        "/storage/emulated/0/Delta",
-        "/sdcard/DeltaQT",
-        "/storage/emulated/0/DeltaQT",
-        "/sdcard/ModWorkspace",
-    ]
+    """Tìm file heartbeat bằng su find - cách ly theo từng package để tránh check chéo."""
     if pkg:
         search_dirs = [
             f"/sdcard/Android/media/{pkg}",
             f"/sdcard/Android/data/{pkg}",
+            f"/storage/emulated/0/Android/media/{pkg}",
+            f"/storage/emulated/0/Android/data/{pkg}",
+        ]
+    else:
+        search_dirs = [
+            "/sdcard/Android/media",
+            "/sdcard/Android/data",
             "/sdcard/Delta",
             "/storage/emulated/0/Delta",
             "/sdcard/DeltaQT",
             "/storage/emulated/0/DeltaQT",
+            "/sdcard/ModWorkspace",
         ]
     results = []
     for d in search_dirs:
@@ -357,6 +445,22 @@ def get_all_heartbeat_files_fast(pkg=None):
                     results.append(line)
         except:
             pass
+
+    # Nếu tìm theo pkg mà chưa có file trong thư mục riêng, mới quét Delta làm fallback
+    if pkg and not results:
+        fallback_dirs = ["/sdcard/Delta", "/storage/emulated/0/Delta"]
+        for d in fallback_dirs:
+            try:
+                cmd = f"su -c 'find {d} -iname \"*_checkhudyhub.json\" -type f 2>/dev/null'"
+                out = subprocess.check_output(cmd, shell=True, text=True, timeout=5,
+                                               stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL).strip()
+                for line in out.splitlines():
+                    line = line.strip()
+                    if line and '_checkhudyhub.json' in line:
+                        results.append(line)
+            except:
+                pass
+
     return list(set(results))
 
 def get_heartbeat_files_for_pkg(pkg):
@@ -496,6 +600,91 @@ def discover_unbound_account(pkg, states):
 # =====================================================================
 _boot_threads = {}   # {pkg: Thread} — track boot threads
 
+def _check_pkg_alive_once(pkg):
+    """Kiểm tra chính xác và siêu nhanh xem process của pkg có đang chạy hay không.
+    Trả về: True (chắc chắn sống) | False (chắc chắn chết) | None (timeout/lỗi → coi như sống)."""
+    # 1. Check pgrep -f (Chính xác nhất cho full package name / clone Android)
+    try:
+        out = subprocess.check_output(
+            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=2,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out and any(p.isdigit() for p in out.split()):
+            return True
+    except subprocess.TimeoutExpired:
+        return None
+    except:
+        pass
+
+    # 2. Check pidof (cả full package name và 15 ký tự đầu - giới hạn Linux comm)
+    try:
+        short_pkg = pkg[:15]
+        out = subprocess.check_output(
+            f"su -c 'pidof {pkg} {short_pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=2,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out and any(p.isdigit() for p in out.split()):
+            return True
+    except subprocess.TimeoutExpired:
+        return None
+    except:
+        pass
+
+    # 3. Check ps -ef (in full commandline, tránh bị ngắt 15 ký tự như ps -A)
+    try:
+        out = subprocess.check_output(
+            f"su -c 'ps -ef 2>/dev/null | grep \"{pkg}\"'",
+            shell=True, text=True, timeout=2,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out:
+            for line in out.splitlines():
+                if pkg in line and "grep" not in line:
+                    return True
+    except subprocess.TimeoutExpired:
+        return None
+    except:
+        pass
+
+    # 4. Fast scan /proc với grep -l -z
+    try:
+        out = subprocess.check_output(
+            f"su -c 'grep -l -z \"{pkg}\" /proc/[0-9]*/cmdline 2>/dev/null'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out:
+            return True
+        return False
+    except subprocess.TimeoutExpired:
+        return None
+    except:
+        return None
+
+def _is_pkg_alive_confirmed(pkg, votes=2, interval=3.0):
+    """Kiểm tra pkg có thực sự chết không bằng cách vote nhiều lần.
+    Chỉ trả về False (chết) nếu `votes` lần liên tiếp đều báo chết.
+    Trả về True ngay khi 1 lần thấy sống (tránh false-negative).
+    Nếu có timeout thì coi là sống (an toàn hơn là restart nhầm)."""
+    dead_count = 0
+    for i in range(votes):
+        result = _check_pkg_alive_once(pkg)
+        if result is True or result is None:
+            return True   # Sống hoặc không chắc → dừng sớm (coi là sống)
+        else:
+            dead_count += 1
+        if i < votes - 1:
+            time.sleep(interval)
+    return dead_count < votes  # Nếu dead_count >= votes -> False (chết)
+
+# Alias cho monitor_package (dùng vote 1 lần để không chậm vòng lặp 10s)
+def _is_pkg_active(pkg):
+    """Alias nhanh: 1 lần check. Dùng cho watchdog."""
+    r = _check_pkg_alive_once(pkg)
+    return r is not False  # None hoặc True → coi là active
+
 def _pgrep_pkg(pkg, timeout=3):
     """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c để tránh va chạm clone."""
     pids = []
@@ -519,22 +708,6 @@ def _pgrep_pkg(pkg, timeout=3):
         pass
     return pids
 
-def _is_pkg_active(pkg):
-    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys (chính xác, không va chạm clone)."""
-    if _pgrep_pkg(pkg):
-        return True
-    try:
-        out = subprocess.check_output(
-            f"su -c 'dumpsys activity activities 2>/dev/null'",
-            shell=True, text=True, timeout=5,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        # So khớp package name chính xác với word boundary
-        pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
-        return bool(pattern.search(out))
-    except:
-        return False
-
 def _kill_pkg(pkg):
     """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
     pids = _pgrep_pkg(pkg)
@@ -545,38 +718,33 @@ def _kill_pkg(pkg):
         safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(1)
 
-def boot_pkg_with_verify(pkg, max_retries=4):
-    """Boot pkg với tối đa 4 lần thử. Mỗi lần: force-stop sạch → am start → poll 30s.
-    Dùng -p {pkg} để tránh hộp thoại 'Mở bằng...' (app chooser)."""
+def boot_pkg_with_verify(pkg, max_retries=2):
+    """Boot pkg tối ưu tốc độ: force-stop sạch → launch intent/monkey → poll 10s."""
+    log_action(f"{Y}[BOOT]{RESET} Dang Mo App -> {pkg[-15:]}")
     for attempt in range(1, max_retries + 1):
-        # A) Dọn process cũ hoàn toàn
         safe_root(f"su -c 'am force-stop {pkg}'")
-        time.sleep(2)
+        time.sleep(1)
 
-        # B) Launch đúng package, tránh dialog chọn app
         if target_place_id:
-            # -p {pkg}: buộc intent vào đúng package này, không hỏi
-            # -f 0x18000000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK tránh tắt tab khác
             safe_root(
-                f"su -c 'am start -p {pkg} -f 0x18000000 -a android.intent.action.VIEW "
-                f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
+                f"su -c 'am start -a android.intent.action.VIEW "
+                f"-d \"roblox://experiences/start?placeId={target_place_id}\" -f 0x18000000 {pkg} 2>/dev/null'"
             )
+            time.sleep(0.5)
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
         else:
-            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
 
-        # C) Poll 6×5s = 30s
-        for _ in range(6):
-            time.sleep(5)
+        for _ in range(5):
+            time.sleep(2)
             if _is_pkg_active(pkg):
+                log_action(f"{G}[SUCCESS]{RESET} Bat App Thanh Cong -> {pkg[-15:]}")
                 return True
 
         if attempt < max_retries:
-            time.sleep(3)
+            time.sleep(1)
 
-    # Last resort
-    safe_root(f"su -c 'am force-stop {pkg}'")
-    time.sleep(2)
-    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+    log_action(f"{R}[FAIL]{RESET} That bai khi mo app -> {pkg[-15:]}")
     return False
 
 def _boot_worker(pkg, states):
@@ -587,21 +755,30 @@ def _boot_worker(pkg, states):
     except Exception:
         pass
     finally:
+        states[pkg]['last_boot_finished'] = time.time() + 15
         if boot_acquired:
             global_restart_semaphore.release()
         _boot_threads.pop(pkg, None)
 
-def force_restart_app(pkg, states, current_time, reason, color):
+def force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=False):
     global last_restart_time, last_any_restart_time, file_to_pkg_binding
-    if pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
+
+    # ── B0: Đang boot → KHÔNG ĐƯỢC kill hay spawn thêm ────
+    existing = _boot_threads.get(pkg)
+    if existing and existing.is_alive():
         return
 
+    if not ignore_cooldown and pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
+        return
+
+    log_action(f"{R}[RESTART]{RESET} [{pkg[-15:]}] Ly do: {reason}")
     states[pkg]['text'] = reason
     states[pkg]['color'] = color
     last_restart_time[pkg] = current_time
     last_any_restart_time = current_time
+    states[pkg]['last_boot_finished'] = current_time + 30
 
-    # ── B1: Kill ngay (ngược lại với semaphore → không block pkg khác) ───
+    # ── B1: Kill ngay process cũ ───
     _kill_pkg(pkg)
 
     # ── Dọn file heartbeat + cache RAM ──────────────────────────
@@ -626,15 +803,12 @@ def force_restart_app(pkg, states, current_time, reason, color):
 
     # ── Reset state ──────────────────────────────────────────
     states[pkg]['rejoin_time'] = current_time
-    states[pkg]['warmup_until'] = current_time + 60
     states[pkg]['bound_name'] = None
     states[pkg]['display_name'] = 'Chờ Auto-Bind...'
     states[pkg]['heartbeat_misses'] = 0
+    states[pkg]['not_running_count'] = 0
 
     # ── B2: Boot trong background thread — monitor thread không bị block ────
-    existing = _boot_threads.get(pkg)
-    if existing and existing.is_alive():
-        return  # Đang boot rồi, không spawn thêm
     t = threading.Thread(
         target=_boot_worker, args=(pkg, states),
         daemon=True, name=f"boot_{pkg[-8:]}"
@@ -642,60 +816,137 @@ def force_restart_app(pkg, states, current_time, reason, color):
     _boot_threads[pkg] = t
     t.start()
 
+def rejoin_in_game(pkg, states, current_time, reason, color):
+    """Khi game văng / mất HB / treo màn:
+    Kill PIP -> Bật lại PIP -> Bắn Intent vào lại game."""
+    log_action(f"{Y}[REJOIN]{RESET} [{pkg[-15:]}] Ly do: {reason}")
+    force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=True)
+
 # =====================================================================
-# COOKIE INJECTION (giữ nguyên)
+# COOKIE INJECTION (TỐI ƯU SCAN TẤT CẢ DB VÀ XML)
 # =====================================================================
-def inject_cookie_webview(pkg, cookie):
-    webview_db = f"/data/data/{pkg}/app_webview/Default/Cookies"
+def find_all_cookie_dbs(pkg):
+    """Tìm tất cả các file Cookies SQLite trong /data/data/{pkg}."""
+    dbs = []
     try:
-        subprocess.check_output(f"su -c 'test -f {webview_db} && echo exists'", shell=True, text=True, timeout=5)
+        cmd = f"su -c 'find /data/data/{pkg}/ -name \"Cookies\" -o -iname \"*cookie*.db\" 2>/dev/null'"
+        out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
+        for line in out.splitlines():
+            line = line.strip()
+            if line:
+                dbs.append(line)
     except:
-        return False
-    tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
-    os.makedirs(tmp_dir, exist_ok=True)
-    local_db = os.path.join(tmp_dir, f"cookies_{pkg.split('.')[-1]}.db")
-    subprocess.run(f"su -c 'cp {webview_db} {local_db} && chmod 666 {local_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        conn = sqlite3.connect(local_db)
-        c = conn.cursor()
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
-        if not c.fetchone():
-            conn.close()
-            os.remove(local_db)
-            return False
-        c.execute("PRAGMA table_info(cookies)")
-        columns = [col[1] for col in c.fetchall()]
-        now = int(time.time())
-        data = {
-            'creation_utc': now, 'top_frame_site_key': '.roblox.com', 'host_key': '.roblox.com',
-            'name': '.ROBLOSECURITY', 'value': cookie, 'path': '/', 'expires_utc': 2147483647,
-            'is_secure': 1, 'is_httponly': 1, 'last_access_utc': now, 'has_expires': 1,
-            'is_permanent': 1, 'source_port': -1, 'is_same_party': 0
-        }
-        cols = [k for k in data if k in columns]
-        values = [data[k] for k in cols]
-        placeholders = ','.join(['?' for _ in cols])
-        c.execute("DELETE FROM cookies WHERE host_key=? AND name=?", ('.roblox.com', '.ROBLOSECURITY'))
-        sql = f"INSERT INTO cookies ({','.join(cols)}) VALUES ({placeholders})"
-        c.execute(sql, values)
-        conn.commit()
-        conn.close()
-        subprocess.run(f"su -c 'cp {local_db} {webview_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        os.remove(local_db)
-        return True
-    except Exception as e:
-        try:
-            conn.close()
-        except:
-            pass
-        try:
-            os.remove(local_db)
-        except:
-            pass
-        print(f"{R}    └─ Lỗi WebView: {str(e)[:80]}{RESET}")
+        pass
+    # Thêm đường dẫn mặc định nếu find không ra
+    default_paths = [
+        f"/data/data/{pkg}/app_webview/Default/Cookies",
+        f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
+        f"/data/data/{pkg}/app_webview/Cookies"
+    ]
+    for p in default_paths:
+        if p not in dbs:
+            try:
+                res = subprocess.check_output(f"su -c 'test -f {p} && echo exists'", shell=True, text=True, timeout=3).strip()
+                if "exists" in res:
+                    dbs.append(p)
+            except:
+                pass
+    return list(set(dbs))
+
+def inject_cookie_webview(pkg, cookie):
+    dbs = find_all_cookie_dbs(pkg)
+    if not dbs:
+        print(f"{R}    └─ Không tìm thấy file Cookies SQLite nào trong /data/data/{pkg}{RESET}")
         return False
 
-def inject_cookie_safe_xml(pkg, cookie):
+    uid = "10000"
+    try:
+        uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
+    except:
+        pass
+
+    tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
+    os.makedirs(tmp_dir, exist_ok=True)
+    
+    success_count = 0
+    for idx, webview_db in enumerate(dbs, 1):
+        local_db = os.path.join(tmp_dir, f"cookies_{pkg.split('.')[-1]}_{idx}.db")
+        # Copy file DB ra tmp
+        res_cp = subprocess.run(f"su -c 'cp \"{webview_db}\" \"{local_db}\" && chmod 666 \"{local_db}\"'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not os.path.exists(local_db):
+            continue
+
+        try:
+            conn = sqlite3.connect(local_db)
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+            if not c.fetchone():
+                conn.close()
+                os.remove(local_db)
+                continue
+
+            c.execute("PRAGMA table_info(cookies)")
+            columns = [col[1] for col in c.fetchall()]
+
+            # Epoch 1601 của Chromium (Microseconds kể từ 1601-01-01 UTC)
+            now_epoch_1601 = (int(time.time()) + 11644473600) * 1000000
+            expires_epoch_1601 = (int(time.time()) + 10 * 365 * 86400 + 11644473600) * 1000000
+
+            # Các host keys phổ biến
+            hosts = ['.roblox.com', 'www.roblox.com', 'roblox.com', '.www.roblox.com']
+            for hk in hosts:
+                data = {
+                    'creation_utc': now_epoch_1601,
+                    'top_frame_site_key': 'https://roblox.com',
+                    'host_key': hk,
+                    'name': '.ROBLOSECURITY',
+                    'value': cookie,
+                    'encrypted_value': b'',
+                    'path': '/',
+                    'expires_utc': expires_epoch_1601,
+                    'is_secure': 1,
+                    'is_httponly': 1,
+                    'last_access_utc': now_epoch_1601,
+                    'has_expires': 1,
+                    'is_persistent': 1,
+                    'priority': 1,
+                    'samesite': -1,
+                    'source_scheme': 2,
+                    'source_port': 443,
+                    'is_same_party': 0
+                }
+                cols = [k for k in data if k in columns]
+                values = [data[k] for k in cols]
+                placeholders = ','.join(['?' for _ in cols])
+                c.execute("DELETE FROM cookies WHERE (host_key=? OR host_key=? OR host_key=?) AND name=?", (hk, hk.lstrip('.'), '.' + hk.lstrip('.'), '.ROBLOSECURITY'))
+                sql = f"INSERT INTO cookies ({','.join(cols)}) VALUES ({placeholders})"
+                c.execute(sql, values)
+            
+            conn.commit()
+            conn.close()
+
+            # Chép đè DB đã inject trở lại + xóa file WAL/journal cũ + chown + chmod
+            cmd_return = (
+                f"su -c 'cp \"{local_db}\" \"{webview_db}\" && "
+                f"rm -f \"{webview_db}-wal\" \"{webview_db}-shm\" \"{webview_db}-journal\" 2>/dev/null || true && "
+                f"chown {uid}:{uid} \"{webview_db}\" && "
+                f"chmod 660 \"{webview_db}\" && "
+                f"restorecon \"{webview_db}\" 2>/dev/null || true'"
+            )
+            subprocess.run(cmd_return, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.remove(local_db)
+            print(f"{G}    ├─ [✓] DB: {os.path.basename(os.path.dirname(webview_db))}/{os.path.basename(webview_db)}{RESET}")
+            success_count += 1
+        except Exception as e:
+            try: conn.close()
+            except: pass
+            try: os.remove(local_db)
+            except: pass
+            print(f"{Y}    ├─ [!] Lỗi nạp DB ({os.path.basename(webview_db)}): {str(e)[:50]}{RESET}")
+
+    return success_count > 0
+
+def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
     shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
     try:
         files_str = subprocess.check_output(f"su -c 'ls {shared_prefs_dir}/*.xml 2>/dev/null'", shell=True, text=True, timeout=5).strip()
@@ -703,22 +954,37 @@ def inject_cookie_safe_xml(pkg, cookie):
         return False
     if not files_str:
         return False
-    xml_files = files_str.split('\n')
+
+    xml_files = files_str.splitlines()
     uid = "10000"
     try:
         uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
     except:
         pass
+
+    success_count = 0
     for xml_path in xml_files:
         xml_path = xml_path.strip()
         if not xml_path:
             continue
         try:
-            raw = subprocess.check_output(f"su -c 'cat {xml_path} 2>/dev/null'", shell=True, text=True, timeout=5)
+            raw = subprocess.check_output(f"su -c 'cat \"{xml_path}\" 2>/dev/null'", shell=True, text=True, timeout=5)
         except:
             continue
         if '<map>' not in raw:
             continue
+
+        # Ưu tiên các file XML chính: <package_name>_preferences.xml, APPS_FLYER_SHARED_PREFS, gms, locale và các file chứa token
+        xml_name = os.path.basename(xml_path).lower()
+        is_target_xml = (
+            f"{pkg.lower()}_preferences.xml" in xml_name or
+            "preferences.xml" in xml_name or
+            any(k in xml_name for k in ['roblox', 'auth', 'user', 'session', 'token', 'datastore', 'app', 'gms', 'locale', 'rate_me']) or
+            ('RobloxSecurityToken' in raw or 'ROBLOSECURITY' in raw)
+        )
+        if not is_target_xml:
+            continue
+
         existing = {}
         try:
             root_el = ET.fromstring(raw)
@@ -728,20 +994,46 @@ def inject_cookie_safe_xml(pkg, cookie):
                     existing[key] = string_tag.text
         except:
             pass
+
+        # Ghi các key Token bảo mật chính
+        existing['RobloxSecurityToken'] = cookie
         existing['ROBLOSECURITY'] = cookie
+        existing['.ROBLOSECURITY'] = cookie
+
+        if user_id:
+            existing['RBX_USER_ID'] = str(user_id)
+            existing['UserId'] = str(user_id)
+            existing['userId'] = str(user_id)
+            existing['RobloxUserId'] = str(user_id)
+        if user_name:
+            existing['RBX_USERNAME'] = str(user_name)
+            existing['Username'] = str(user_name)
+            existing['RobloxUsername'] = str(user_name)
+
         new_root = ET.Element('map')
         for k, v in existing.items():
             el = ET.SubElement(new_root, 'string', name=k)
-            el.text = v
+            el.text = v if v is not None else ""
+
         xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(new_root, encoding='unicode')
         tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
         os.makedirs(tmp_dir, exist_ok=True)
         fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(xml_output)
-        subprocess.run(f"su -c 'cp {temp_file} {xml_path} && chown {uid}:{uid} {xml_path} && chmod 660 {xml_path} && restorecon {xml_path} 2>/dev/null || true && touch {xml_path}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        cmd_xml = (
+            f"su -c 'cp \"{temp_file}\" \"{xml_path}\" && "
+            f"chown {uid}:{uid} \"{xml_path}\" && "
+            f"chmod 660 \"{xml_path}\" && "
+            f"restorecon \"{xml_path}\" 2>/dev/null || true'"
+        )
+        subprocess.run(cmd_xml, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         os.remove(temp_file)
-    return True
+        print(f"{G}    ├─ [✓] XML: {os.path.basename(xml_path)}{RESET}")
+        success_count += 1
+
+    return success_count > 0
 
 def login_via_cookie():
     global selected_packages
@@ -749,47 +1041,79 @@ def login_via_cookie():
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
         time.sleep(2)
         return
-    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG PHÁT HIỆN DB) ---{RESET}")
-    print(f"{Y}Tool sẽ thử WebView, nếu không có sẽ dùng XML shared_prefs.{RESET}")
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG QUÉT TOÀN BỘ DATA) ---{RESET}")
+    print(f"{Y}Tool sẽ quét toàn bộ SQLite DB & XML shared_prefs của app để nạp Cookie.{RESET}")
     try:
         test = subprocess.check_output("su -c 'echo testok'", shell=True, text=True, timeout=5)
         if "testok" not in test:
-            print(f"{R}[!] Không có quyền ROOT!{RESET}")
+            print(f"{R}[!] Không có quyền ROOT! Cần quyền ROOT để tiêm cookie.{RESET}")
             time.sleep(3)
             return
     except:
-        print(f"{R}[!] Lỗi kiểm tra SU.{RESET}")
+        print(f"{R}[!] Lỗi kiểm tra lệnh SU ROOT.{RESET}")
         time.sleep(3)
         return
+
     fix_tty()
-    cookie = safe_input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").replace('\r', '').replace('\n', '')
+    cookie = safe_input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").replace('\r', '').replace('\n', '').strip()
     if not cookie.startswith("_|WARNING"):
-        print(f"{R}[!] Cookie không hợp lệ!{RESET}")
+        print(f"{R}[!] Cookie không hợp lệ (Phải bắt đầu bằng _|WARNING)!{RESET}")
         time.sleep(2)
         return
-    print(f"\n{G}[+] Cookie hợp lệ! Đang inject...{RESET}")
+
+    print(f"\n{Y}[*] Đang kiểm tra trạng thái Cookie với Server Roblox...{RESET}")
+    is_valid, user_name, user_id = verify_roblox_cookie(cookie)
+    if is_valid:
+        print(f"{G}[✓] Cookie SỐNG! Tài khoản Roblox: {C}{user_name}{G} (ID: {user_id}){RESET}")
+    elif user_id == 0:
+        print(f"{R}[!] XÁC THỰC THẤT BẠI: {user_name}{RESET}")
+        print(f"{Y}[i] Cookie này đã hết hạn hoặc bị gỡ trên Web. Vui lòng lấy Cookie mới từ trình duyệt.{RESET}")
+        time.sleep(4)
+        return
+    else:
+        print(f"{Y}[!] Cảnh báo: {user_name}. Tiếp tục tiêm...{RESET}")
+
+    print(f"\n{G}[+] Đang xử lý tiêm cookie vào ứng dụng...{RESET}")
     time.sleep(1)
+
     for idx, item in enumerate(selected_packages, 1):
         pkg = item['pkg']
         print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
-        print(f"{Y}[{idx}/{len(selected_packages)}] {pkg}{RESET}")
+        print(f"{Y}[{idx}/{len(selected_packages)}] Package: {pkg}{RESET}")
+
+        # Stop app hoàn toàn trước khi sửa data
+        print(f"{Y}[*] Đang force-stop {pkg}...{RESET}")
         subprocess.run(f"su -c 'am force-stop {pkg}'", shell=True, stdout=subprocess.DEVNULL)
         time.sleep(1)
-        success = inject_cookie_webview(pkg, cookie)
-        if success:
-            print(f"{G}[✓] WebView Database thành công.{RESET}")
+
+        # Xóa cache app để tránh cache lại phiên cũ
+        print(f"{Y}[*] Dọn dẹp cache phiên cũ...{RESET}")
+        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/* /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
+
+        wv_success = inject_cookie_webview(pkg, cookie)
+        xml_success = inject_cookie_safe_xml(pkg, cookie, user_name, user_id)
+
+        if wv_success or xml_success:
+            print(f"{G}[✓] Tiêm Cookie thành công cho {pkg}!{RESET}")
         else:
-            print(f"{Y}[*] Thử XML shared_prefs...{RESET}")
-            if inject_cookie_safe_xml(pkg, cookie):
-                print(f"{G}[✓] XML shared_prefs thành công.{RESET}")
-            else:
-                print(f"{R}[✗] Không thể inject cookie.{RESET}")
-        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/*; rm -rf /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
-        print(f"{Y}[*] Mở app...{RESET}")
-        subprocess.run(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'", shell=True, stdout=subprocess.DEVNULL)
+            print(f"{R}[✗] Thất bại: Không thể tiêm vào DB hoặc XML nào của {pkg}.{RESET}")
+
+        print(f"{Y}[*] Đang kích hoạt tự động đăng nhập vào App...{RESET}")
+        ticket, err = get_auth_ticket(cookie)
+        if ticket:
+            print(f"{G}[✓] Tạo Auth Ticket thành công: {ticket[:20]}...{RESET}")
+            subprocess.run(f"su -c 'am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(1)
+
+        # Mở trực tiếp WebLoginActivity / Home Intent để WebView kích hoạt Cookie
+        print(f"{Y}[*] Mở giao diện kích thực WebView Cookie...{RESET}")
+        subprocess.run(f"su -c 'am start -n {pkg}/com.roblox.client.Activity.WebLoginActivity 2>/dev/null || am start -n {pkg}/com.roblox.client.Activity.LoginActivity 2>/dev/null || am start -a android.intent.action.VIEW -d \"roblox://navigation/home\" -p {pkg}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1)
-    print(f"\n{G}[+] HOÀN TẤT.{RESET}")
-    time.sleep(5)
+
+    print(f"\n{G}[+] HOÀN TẤT TIÊM COOKIE.{RESET}")
+    print(f"{Y}[i] NẾU APP HIỆN MÀN HÌNH \"Sign In\", HÃY BẤM NÚT [ Sign In ]: {RESET}")
+    print(f"{G}    App sẽ tự đọc Cookie đã tiêm trong WebView và VÀO THẲNG NICK!{RESET}")
+    time.sleep(4)
 
 # =====================================================================
 # AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
@@ -798,8 +1122,11 @@ def login_via_cookie():
 # MONITOR THREAD - Mỗi package chạy 1 thread riêng
 # =====================================================================
 def is_app_running(pkg):
-    """Kiểm tra process của package (chính xác, không va chạm clone)."""
-    return bool(_pgrep_pkg(pkg))
+    """Kiểm tra nhanh process của package.
+    Dùng _check_pkg_alive_once() — scope đúng pkg, không gây check chéo.
+    None (timeout) → coi là đang chạy để tránh false restart."""
+    r = _check_pkg_alive_once(pkg)
+    return r is not False  # True hoặc None → còn sống
 
 def monitor_package(pkg, states, last_ok_ping, stop_event):
     """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
@@ -808,46 +1135,29 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
         try:
             current_time = time.time()
             state = states[pkg]
-            # session_start_time: thời điểm start lần đầu, KHÔNG reset khi rejoin
-            # rejoin_time: chỉ dùng để tính warmup
             session_uptime = current_time - state['session_start_time']
-            uptime_seconds = current_time - state['rejoin_time']
 
             # === KIỂM TRA ĐANG TRONG TIẾN TRÌNH BOOT ===
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
                 state['text'] = "Đang Khởi Động..."
                 state['color'] = Y
+                stop_event.wait(3)
+                continue
+
+            # === KIỂM TRA PROCESS CÒN SỐNG KHÔNG ===
+            # monitor_package chỉ theo dõi heartbeat, PIP_WATCHDOG chịu trách nhiệm bật lại process
+            if not is_app_running(pkg):
+                state['text'] = "Chờ Watchdog..."
+                state['color'] = Y
                 stop_event.wait(5)
                 continue
 
-            # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
-            if uptime_seconds > 15 and not is_app_running(pkg):
-                can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
-                if can_restart:
-                    with pkg_restart_locks[pkg]:
-                        force_restart_app(pkg, states, current_time, "App không chạy!", R)
-                    last_ok_ping[pkg] = current_time
-                else:
-                    state['text'] = 'App tắt, chờ...'
-                    state['color'] = R
-                stop_event.wait(5)
-                continue
-
-            # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
+            # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime) ===
             if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
-                # Dùng lock riêng của pkg - tránh block luồng khác
                 with pkg_restart_locks[pkg]:
-                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
-                # Reset session timer sau khi auto restart
+                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M, ignore_cooldown=True)
                 state['session_start_time'] = current_time
                 last_ok_ping[pkg] = current_time
-                stop_event.wait(10)
-                continue
-
-            # === WARMUP ===
-            if current_time < state.get('warmup_until', 0):
-                state['text'] = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
-                state['color'] = Y
                 stop_event.wait(5)
                 continue
 
@@ -859,56 +1169,43 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['display_name'] = found
 
             bound = state['bound_name']
-            is_grace = (uptime_seconds < 150)  # 150s thay vì 240s → detect fail nhanh hơn
+            last_r = last_restart_time.get(pkg, state['rejoin_time'])
+            elapsed = current_time - last_r
 
-            # === CHƯ A BIND ĐƯỢC TÊN ===
+            # === CHƯA BIND ĐƯỢC TÊN ===
             if not bound:
-                if is_grace:
-                    # Nếu app không chạy sau 30s warmup → restart ngay
-                    if uptime_seconds > 30 and not is_app_running(pkg):
-                        can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
-                        if can_restart:
-                            with pkg_restart_locks[pkg]:
-                                force_restart_app(pkg, states, current_time, "App không mở được!", R)
-                            last_ok_ping[pkg] = current_time
+                if elapsed >= 180:
+                    with pkg_restart_locks[pkg]:
+                        if is_app_running(pkg):
+                            rejoin_in_game(pkg, states, current_time, "Chưa Load → Rejoin!", R)
                         else:
-                            state['text'] = 'App lỗi, đang chờ...'
-                            state['color'] = R
-                    else:
-                        state['text'] = f"Đang Load ({int(150 - uptime_seconds)}s)"
-                        state['color'] = Y
+                            force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại!", R, ignore_cooldown=True)
+                    last_ok_ping[pkg] = current_time
                 else:
-                    can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
-                    if can_restart:
-                        with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẻ t Bind!", R)
-                        last_ok_ping[pkg] = current_time
-                    else:
-                        wait_sec = int(180 - (current_time - last_restart_time.get(pkg, current_time)))
-                        state['text'] = f"Chờ Restart ({wait_sec}s)"
-                        state['color'] = R
-                stop_event.wait(10)
+                    wait_sec = int(180 - elapsed)
+                    state['text'] = f"Đang Nạp Data ({wait_sec}s)"
+                    state['color'] = Y
+                stop_event.wait(5)
                 continue
 
             # === CHECK HEARTBEAT ===
-            # Nếu pkg khác vừa restart (< 180s), cho thêm grace để tránh cascade
-            other_just_restarted = (current_time - last_any_restart_time < 180) and \
-                                   (last_any_restart_time != last_restart_time.get(pkg, 0))
-
             last_ping = get_heartbeat(bound, pkg)
             if last_ping == -1:
                 state['heartbeat_misses'] = state.get('heartbeat_misses', 0) + 1
                 misses = state['heartbeat_misses']
-                if is_grace or other_just_restarted:
-                    remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
-                    state['text'] = f"Đang Nạp Data ({max(0,remain)}s)"
-                    state['color'] = Y
-                elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
-                    # Cần 3 miss liên tiếp (~30s) mới restart - tránh false negative
-                    with pkg_restart_locks[pkg]:
-                        force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
-                    last_ok_ping[pkg] = current_time
-                    state['heartbeat_misses'] = 0
+                if misses >= 3:
+                    if elapsed >= 180:
+                        with pkg_restart_locks[pkg]:
+                            if is_app_running(pkg):
+                                rejoin_in_game(pkg, states, current_time, "Treo Màn → Rejoin!", R)
+                            else:
+                                force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại!", R, ignore_cooldown=True)
+                        last_ok_ping[pkg] = current_time
+                        state['heartbeat_misses'] = 0
+                    else:
+                        wait_sec = int(180 - elapsed)
+                        state['text'] = f"Mất HB - Chờ ({wait_sec}s)"
+                        state['color'] = R
                 else:
                     state['text'] = f"Mất HB ({misses}/3 lần)..."
                     state['color'] = Y
@@ -918,30 +1215,78 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 if diff <= 120:
                     last_ok_ping[pkg] = current_time
                 real_diff = current_time - last_ok_ping.get(pkg, current_time)
-                if diff > 120:
-                    if is_grace or other_just_restarted:
-                        remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
-                        state['text'] = f"Vào Server... ({max(0,remain)}s)"
-                        state['color'] = Y
-                    elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
+
+                if diff > 120 or real_diff >= 120:
+                    if elapsed >= 180:
                         with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                            if is_app_running(pkg):
+                                rejoin_in_game(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                            else:
+                                force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại!", R, ignore_cooldown=True)
                         last_ok_ping[pkg] = current_time
-                    elif real_diff < 120:
-                        state['text'] = f"Cảnh báo lag ({int(diff)}s)"
-                        state['color'] = Y
+                    else:
+                        wait_sec = int(180 - elapsed)
+                        state['text'] = f"Văng Game - Chờ ({wait_sec}s)"
+                        state['color'] = R
                 else:
                     state['text'] = f"Đang Farm ({int(diff)}s trước)"
                     state['color'] = G
         except Exception as e:
-            # Ghi lỗi nhưng không crash thread - quan trọng cho 24/7
             try:
                 states[pkg]['text'] = f"Lỗi ({str(e)[:15]})"
                 states[pkg]['color'] = R
             except:
                 pass
-        stop_event.wait(10)
+        stop_event.wait(5)
 
+
+# =====================================================================
+# PIP WATCHDOG — Thread riêng: bật lại app ngay khi phát hiện tắt
+# =====================================================================
+_pip_watchdog_threads = {}  # {pkg: Thread}
+
+def _pip_watchdog_worker(pkg, states, last_ok_ping, stop_event):
+    """PIP WATCHDOG — Giữ PIP luôn bật.
+    KHÔNG tự tắt app đang chạy. Chỉ khi app thực sự bị đóng process mới bật lại."""
+    stop_event.wait(5)
+    dead_votes = 0
+    while not stop_event.is_set():
+        try:
+            current_time = time.time()
+
+            # 1) Đang trong boot → bỏ qua, reset vote
+            if pkg in _boot_threads and _boot_threads[pkg].is_alive():
+                dead_votes = 0
+                stop_event.wait(3)
+                continue
+
+            # 2) Đang trong thời gian bảo vệ post-boot → bỏ qua, reset vote
+            if current_time < states[pkg].get('last_boot_finished', 0):
+                dead_votes = 0
+                stop_event.wait(3)
+                continue
+
+            result = _check_pkg_alive_once(pkg)
+            if result is False:
+                dead_votes += 1
+            else:
+                dead_votes = 0
+
+            # Cần ĐỦ 3 lần liên tiếp báo chết (~9s) mới xác nhận app thực sự bị đóng
+            if dead_votes >= 3:
+                existing = _boot_threads.get(pkg)
+                if not existing or not existing.is_alive():
+                    log_action(f"{Y}[WATCHDOG]{RESET} App [{pkg[-15:]}] bi dong -> Bat lai PIP!")
+                    t = threading.Thread(
+                        target=_boot_worker, args=(pkg, states),
+                        daemon=True, name=f"boot_{pkg[-8:]}"
+                    )
+                    _boot_threads[pkg] = t
+                    t.start()
+                dead_votes = 0
+        except Exception:
+            pass
+        stop_event.wait(3)
 
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
@@ -979,8 +1324,8 @@ def start_auto_rejoin():
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': pkg_now,
             'session_start_time': pkg_now,
-            'warmup_until': pkg_now + 90,
-            'heartbeat_misses': 0
+            'heartbeat_misses': 0,
+            'not_running_count': 0
         }
         last_ok_ping[pkg] = pkg_now
         last_restart_time.pop(pkg, None)
@@ -995,8 +1340,10 @@ def start_auto_rejoin():
 
     # Khởi thread riêng cho từng package
     monitor_threads = {}
+    pip_watchdog_threads = {}
     for item in selected_packages:
         pkg = item['pkg']
+        # Thread monitor chính
         t = threading.Thread(
             target=monitor_package,
             args=(pkg, states, last_ok_ping, stop_event),
@@ -1005,6 +1352,15 @@ def start_auto_rejoin():
         )
         t.start()
         monitor_threads[pkg] = t
+        # PIP Watchdog thread: bật lại ngay khi phát hiện app tắt
+        wd = threading.Thread(
+            target=_pip_watchdog_worker,
+            args=(pkg, states, last_ok_ping, stop_event),
+            daemon=True,
+            name=f"wd-{pkg[-12:]}"
+        )
+        wd.start()
+        pip_watchdog_threads[pkg] = wd
 
     # Main thread: hiển thị dashboard + watchdog tự khởi lại thread chết
     last_dashboard = 0
@@ -1018,6 +1374,7 @@ def start_auto_rejoin():
             # === WATCHDOG: phát hiện thread chết và khởi lại ===
             for item in selected_packages:
                 pkg = item['pkg']
+                # Restart monitor thread nếu chết
                 t = monitor_threads.get(pkg)
                 if t and not t.is_alive():
                     try:
@@ -1033,6 +1390,17 @@ def start_auto_rejoin():
                     )
                     new_t.start()
                     monitor_threads[pkg] = new_t
+                # Restart pip watchdog thread nếu chết
+                wd = pip_watchdog_threads.get(pkg)
+                if wd and not wd.is_alive():
+                    new_wd = threading.Thread(
+                        target=_pip_watchdog_worker,
+                        args=(pkg, states, last_ok_ping, stop_event),
+                        daemon=True,
+                        name=f"wd-{pkg[-12:]}"
+                    )
+                    new_wd.start()
+                    pip_watchdog_threads[pkg] = new_wd
 
             time.sleep(3)
     except KeyboardInterrupt:
