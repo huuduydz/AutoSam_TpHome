@@ -156,7 +156,7 @@ R = '\033[91m'
 M = '\033[95m'
 RESET = '\033[0m'
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 # =====================================================================
 # BIẾN TOÀN CỤC
@@ -710,12 +710,19 @@ def _boot_worker(pkg, states):
     except Exception:
         pass
     finally:
+        states[pkg]['last_boot_finished'] = time.time() + 15
         if boot_acquired:
             global_restart_semaphore.release()
         _boot_threads.pop(pkg, None)
 
 def force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=False):
     global last_restart_time, last_any_restart_time, file_to_pkg_binding
+
+    # ── B0: Đang boot → KHÔNG ĐƯỢC kill hay spawn thêm ────
+    existing = _boot_threads.get(pkg)
+    if existing and existing.is_alive():
+        return
+
     if not ignore_cooldown and pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
         return
 
@@ -723,8 +730,9 @@ def force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=
     states[pkg]['color'] = color
     last_restart_time[pkg] = current_time
     last_any_restart_time = current_time
+    states[pkg]['last_boot_finished'] = current_time + 30
 
-    # ── B1: Kill ngay (ngược lại với semaphore → không block pkg khác) ───
+    # ── B1: Kill ngay process cũ ───
     _kill_pkg(pkg)
 
     # ── Dọn file heartbeat + cache RAM ──────────────────────────
@@ -749,16 +757,12 @@ def force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=
 
     # ── Reset state ──────────────────────────────────────────
     states[pkg]['rejoin_time'] = current_time
-    states[pkg]['warmup_until'] = current_time + 60
     states[pkg]['bound_name'] = None
     states[pkg]['display_name'] = 'Chờ Auto-Bind...'
     states[pkg]['heartbeat_misses'] = 0
     states[pkg]['not_running_count'] = 0
 
     # ── B2: Boot trong background thread — monitor thread không bị block ────
-    existing = _boot_threads.get(pkg)
-    if existing and existing.is_alive():
-        return  # Đang boot rồi, không spawn thêm
     t = threading.Thread(
         target=_boot_worker, args=(pkg, states),
         daemon=True, name=f"boot_{pkg[-8:]}"
@@ -1130,11 +1134,11 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 continue
 
             # === KIỂM TRA PROCESS CÒN SỐNG KHÔNG ===
-            # Nếu chết: tự động gọi force_restart_app bật lại ngay lập tức!
+            # monitor_package chỉ theo dõi heartbeat, PIP_WATCHDOG chịu trách nhiệm bật lại process
             if not is_app_running(pkg):
-                with pkg_restart_locks[pkg]:
-                    force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại ngay!", R, ignore_cooldown=True)
-                stop_event.wait(3)
+                state['text'] = "Chờ Watchdog..."
+                state['color'] = Y
+                stop_event.wait(5)
                 continue
 
             # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime) ===
@@ -1232,20 +1236,38 @@ _pip_watchdog_threads = {}  # {pkg: Thread}
 
 def _pip_watchdog_worker(pkg, states, last_ok_ping, stop_event):
     """PIP WATCHDOG — Giữ PIP luôn bật.
-    Nếu PIP bị tắt process -> Bật lại ngay lập tức mà KHÔNG cần chờ 180s."""
-    stop_event.wait(3)
+    Nếu PIP bị tắt process -> Bật lại (dùng 2 vote xác nhận và bảo vệ post-boot)."""
+    stop_event.wait(5)
+    dead_votes = 0
     while not stop_event.is_set():
         try:
+            current_time = time.time()
+
+            # 1) Đang trong boot → bỏ qua, reset vote
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
+                dead_votes = 0
                 stop_event.wait(3)
                 continue
 
-            if not _check_pkg_alive_once(pkg):
-                current_time = time.time()
+            # 2) Đang trong thời gian bảo vệ post-boot → bỏ qua, reset vote
+            if current_time < states[pkg].get('last_boot_finished', 0):
+                dead_votes = 0
+                stop_event.wait(3)
+                continue
+
+            result = _check_pkg_alive_once(pkg)
+            if result is False:
+                dead_votes += 1
+            else:
+                dead_votes = 0
+
+            # Cần ĐỦ 2 lần liên tiếp báo chết (~6s) mới chắc chắn là app thực sự bị tắt
+            if dead_votes >= 2:
                 existing = _boot_threads.get(pkg)
                 if not existing or not existing.is_alive():
                     with pkg_restart_locks[pkg]:
                         force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại ngay!", R, ignore_cooldown=True)
+                dead_votes = 0
         except Exception:
             pass
         stop_event.wait(3)
