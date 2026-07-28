@@ -156,7 +156,7 @@ R = '\033[91m'
 M = '\033[95m'
 RESET = '\033[0m'
 
-VERSION = "1.0.5"
+VERSION = "1.0.4"
 
 # =====================================================================
 # BIẾN TOÀN CỤC
@@ -181,6 +181,18 @@ shared_lock = threading.Lock()       # bảo vệ CLAIMED_NAMES giữa các thre
 pkg_restart_locks = {}               # {pkg: Lock} - mỗi pkg 1 lock riêng
 global_restart_semaphore = threading.Semaphore(1)  # Chỉ serialize bước boot
 file_to_pkg_binding = {}             # {file_path: pkg} - ghi nhớ file json nào thuộc pkg nào
+
+ACTION_LOGS = []
+ACTION_LOGS_LOCK = threading.Lock()
+
+def log_action(msg):
+    global ACTION_LOGS
+    t_str = time.strftime("%H:%M:%S")
+    formatted = f"{C}[{t_str}]{RESET} {msg}"
+    with ACTION_LOGS_LOCK:
+        ACTION_LOGS.append(formatted)
+        if len(ACTION_LOGS) > 10:
+            ACTION_LOGS.pop(0)
 
 # =====================================================================
 # LẤY CPU & RAM
@@ -248,10 +260,17 @@ def print_dashboard(states):
         s_name = states[pkg]['display_name']
         if len(s_name) > 15: s_name = s_name[:12] + "..."
         txt = states[pkg]['text']
-        # Truncate text để tránh tràn dòng dashboard
         if len(txt) > 24: txt = txt[:21] + "..."
         col = states[pkg]['color']
         print(f"{s_pkg:<20} | {s_name:<16} | {col}{txt:<25}{RESET}")
+    print("-" * 65)
+    print(f"{C}--- LỊCH SỬ THAO TÁC REAL-TIME (CONSOLE LOGS) ---{RESET}")
+    with ACTION_LOGS_LOCK:
+        if not ACTION_LOGS:
+            print(f"{Y}  (Chưa có nhật ký lệnh nào...){RESET}")
+        else:
+            for log in ACTION_LOGS[-8:]:
+                print(f"  {log}")
     print("-" * 65)
     print(f"{C} Đang chạy Live... (Bấm Ctrl+C để dừng){RESET}")
 
@@ -686,6 +705,7 @@ def _kill_pkg(pkg):
 
 def boot_pkg_with_verify(pkg, max_retries=2):
     """Boot pkg tối ưu tốc độ: force-stop sạch → launch intent/monkey → poll 10s."""
+    log_action(f"{Y}[BOOT]{RESET} Dang Mo App -> {pkg[-15:]}")
     for attempt in range(1, max_retries + 1):
         safe_root(f"su -c 'am force-stop {pkg}'")
         time.sleep(1)
@@ -700,15 +720,16 @@ def boot_pkg_with_verify(pkg, max_retries=2):
         else:
             safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
 
-        # Poll 5×2s = 10s (vừa thấy process nhảy lên là xong ngay, không chờ 30s)
         for _ in range(5):
             time.sleep(2)
             if _is_pkg_active(pkg):
+                log_action(f"{G}[SUCCESS]{RESET} Bat App Thanh Cong -> {pkg[-15:]}")
                 return True
 
         if attempt < max_retries:
             time.sleep(1)
 
+    log_action(f"{R}[FAIL]{RESET} That bai khi mo app -> {pkg[-15:]}")
     return False
 
 def _boot_worker(pkg, states):
@@ -735,6 +756,7 @@ def force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=
     if not ignore_cooldown and pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
         return
 
+    log_action(f"{R}[RESTART]{RESET} [{pkg[-15:]}] Ly do: {reason}")
     states[pkg]['text'] = reason
     states[pkg]['color'] = color
     last_restart_time[pkg] = current_time
@@ -788,6 +810,7 @@ def rejoin_in_game(pkg, states, current_time, reason, color):
         force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=True)
         return
 
+    log_action(f"{Y}[REJOIN]{RESET} [{pkg[-15:]}] Ly do: {reason}")
     states[pkg]['text'] = reason
     states[pkg]['color'] = color
     last_restart_time[pkg] = current_time
@@ -816,7 +839,6 @@ def rejoin_in_game(pkg, states, current_time, reason, color):
         heartbeat_last_check.pop(pkg, None)
 
     states[pkg]['rejoin_time'] = current_time
-    states[pkg]['warmup_until'] = current_time + 45
     states[pkg]['heartbeat_misses'] = 0
     states[pkg]['not_running_count'] = 0
 
