@@ -601,12 +601,13 @@ def discover_unbound_account(pkg, states):
 _boot_threads = {}   # {pkg: Thread} — track boot threads
 
 def _check_pkg_alive_once(pkg):
-    """Kiểm tra chính xác và siêu nhanh xem process của pkg có đang chạy hay không.
-    Trả về: True (chắc chắn sống) | False (chắc chắn chết) | None (timeout/lỗi → coi như sống)."""
-    # 1. Check pgrep -f (Chính xác nhất cho full package name / clone Android)
+    """Kiểm tra chính xác 100% xem process của pkg có đang chạy hay không.
+    Loại bỏ hoàn toàn false-positive từ các lệnh shell/grep/rm/find.
+    Trả về: True (chắc chắn sống) | False (chắc chắn chết) | None (timeout → tạm coi sống để an toàn)."""
+    # 1. Check pidof (Nhanh và chính exact tên process trong kernel)
     try:
         out = subprocess.check_output(
-            f"su -c 'pgrep -f {pkg} 2>/dev/null'",
+            f"su -c 'pidof {pkg} 2>/dev/null'",
             shell=True, text=True, timeout=2,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         ).strip()
@@ -617,51 +618,16 @@ def _check_pkg_alive_once(pkg):
     except:
         pass
 
-    # 2. Check pidof (cả full package name và 15 ký tự đầu - giới hạn Linux comm)
+    # 2. Check qua _pgrep_pkg (Quét /proc/[0-9]*/cmdline loại bỏ lệnh shell phụ)
     try:
-        short_pkg = pkg[:15]
-        out = subprocess.check_output(
-            f"su -c 'pidof {pkg} {short_pkg} 2>/dev/null'",
-            shell=True, text=True, timeout=2,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
-        if out and any(p.isdigit() for p in out.split()):
-            return True
-    except subprocess.TimeoutExpired:
-        return None
-    except:
-        pass
-
-    # 3. Check ps -ef (in full commandline, tránh bị ngắt 15 ký tự như ps -A)
-    try:
-        out = subprocess.check_output(
-            f"su -c 'ps -ef 2>/dev/null | grep \"{pkg}\"'",
-            shell=True, text=True, timeout=2,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
-        if out:
-            for line in out.splitlines():
-                if pkg in line and "grep" not in line:
-                    return True
-    except subprocess.TimeoutExpired:
-        return None
-    except:
-        pass
-
-    # 4. Fast scan /proc với grep -l -z
-    try:
-        out = subprocess.check_output(
-            f"su -c 'grep -l -z \"{pkg}\" /proc/[0-9]*/cmdline 2>/dev/null'",
-            shell=True, text=True, timeout=3,
-            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).strip()
-        if out:
+        pids = _pgrep_pkg(pkg, timeout=3)
+        if pids:
             return True
         return False
     except subprocess.TimeoutExpired:
         return None
     except:
-        return None
+        return False
 
 def _is_pkg_alive_confirmed(pkg, votes=2, interval=3.0):
     """Kiểm tra pkg có thực sự chết không bằng cách vote nhiều lần.
