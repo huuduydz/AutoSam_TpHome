@@ -783,10 +783,46 @@ def force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=
     t.start()
 
 def rejoin_in_game(pkg, states, current_time, reason, color):
-    """Khi game văng / mất HB / treo màn:
-    Kill PIP -> Bật lại PIP -> Bắn Intent vào lại game."""
+    """Khi PIP còn sống nhưng văng game/treo:
+    Chỉ bắn lệnh Intent vào lại game mà KHÔNG kill PIP.
+    Nếu PIP đã bị tắt process: Mới force-restart lại PIP."""
+    global last_restart_time, last_any_restart_time, json_path_cache, heartbeat_last_check
+
+    # Nếu PIP process đã thực sự bị đóng -> Buộc phải boot lại app từ đầu
+    if not is_app_running(pkg):
+        force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=True)
+        return
+
     log_action(f"{Y}[REJOIN]{RESET} [{pkg[-15:]}] Ly do: {reason}")
-    force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=True)
+    states[pkg]['text'] = reason
+    states[pkg]['color'] = color
+    last_restart_time[pkg] = current_time
+    last_any_restart_time = current_time
+
+    # Bắn Intent trực tiếp vào game (không kill PIP)
+    if target_place_id:
+        safe_root(
+            f"su -c 'am start -a android.intent.action.VIEW "
+            f"-d \"roblox://experiences/start?placeId={target_place_id}\" -p {pkg} -f 0x18000000 2>/dev/null'"
+        )
+    else:
+        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+
+    # Reset cache và misses
+    bound_name = states[pkg].get('bound_name')
+    if bound_name:
+        safe_root(
+            f"su -c 'rm -f "
+            f"/sdcard/Android/media/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+            f"2>/dev/null'"
+        )
+        json_path_cache.pop(pkg, None)
+        heartbeat_last_check.pop(pkg, None)
+
+    states[pkg]['rejoin_time'] = current_time
+    states[pkg]['heartbeat_misses'] = 0
+    states[pkg]['not_running_count'] = 0
 
 # =====================================================================
 # COOKIE INJECTION (TỐI ƯU SCAN TẤT CẢ DB VÀ XML)
