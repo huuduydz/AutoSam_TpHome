@@ -1069,8 +1069,71 @@ class RootRobloxCookieInjector:
 
         return success_count > 0
 
+    def get_auth_ticket(self) -> tuple[str, str]:
+        """Tạo Auth Ticket từ Roblox API server thông qua Cookie .ROBLOSECURITY."""
+        url = "https://auth.roblox.com/v1/authentication-ticket/"
+        headers = {
+            "Cookie": f".ROBLOSECURITY={self.cookie}",
+            "Referer": "https://www.roblox.com/",
+            "Content-Type": "application/json",
+            "User-Agent": "Roblox/WinInet"
+        }
+        csrf_token = ""
+        req1 = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req1, timeout=10) as resp:
+                pass
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                csrf_token = e.headers.get("x-csrf-token", "")
+            else:
+                return "", f"Lỗi HTTP {e.code}"
+        except Exception as e:
+            return "", str(e)
+
+        if not csrf_token:
+            return "", "Không có CSRF Token"
+
+        headers["X-CSRF-TOKEN"] = csrf_token
+        req2 = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req2, timeout=10) as resp:
+                ticket = resp.headers.get("rbx-authentication-ticket", "")
+                if ticket:
+                    return ticket, ""
+                data = json.loads(resp.read().decode('utf-8'))
+                return data.get("authTicket", ""), ""
+        except urllib.error.HTTPError as e:
+            ticket = e.headers.get("rbx-authentication-ticket", "")
+            if ticket:
+                return ticket, ""
+            return "", f"Lỗi HTTP {e.code}"
+        except Exception as e:
+            return "", str(e)
+
     def launch_app(self, place_id: str = "", job_id: str = "") -> bool:
-        """Kích hoạt ứng dụng chuẩn sẵn sàng đã đăng nhập."""
+        """Kích hoạt ứng dụng chuẩn đăng nhập tự động bằng Auth Ticket hoặc Deeplink."""
+        ticket, err = self.get_auth_ticket()
+        if ticket:
+            print(f"{G}     [✓] Tạo thành công Roblox Auth Ticket: {ticket[:20]}...{RESET}")
+            if place_id:
+                if job_id:
+                    deeplink = f"roblox://experiences/start?placeId={place_id}&gameInstanceId={job_id}&authTicket={ticket}"
+                else:
+                    deeplink = f"roblox://experiences/start?placeId={place_id}&authTicket={ticket}"
+            else:
+                deeplink = f"roblox://navigation?authTicket={ticket}"
+
+            cmd1 = (
+                f"am start -n {self.package_name}/com.roblox.client.ActivityProtocolLaunch "
+                f"-a android.intent.action.VIEW -d '{deeplink}' -f 0x14000000"
+            )
+            cmd2 = f"am start -a android.intent.action.VIEW -d 'roblox://navigation?authTicket={ticket}' -p {self.package_name}"
+            code1, _, _ = self.run_root_cmd(cmd1)
+            self.run_root_cmd(cmd2)
+            if code1 == 0:
+                return True
+
         if place_id:
             if job_id:
                 deeplink = f"roblox://experiences/start?placeId={place_id}&gameInstanceId={job_id}"
