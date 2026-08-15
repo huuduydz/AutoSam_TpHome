@@ -156,7 +156,7 @@ R = '\033[91m'
 M = '\033[95m'
 RESET = '\033[0m'
 
-VERSION = "2.0.2-PRO"
+VERSION = "2.0.0-PRO"
 
 # =====================================================================
 # BIẾN TOÀN CỤC
@@ -1324,6 +1324,158 @@ def login_via_cookie():
     time.sleep(4)
 
 # =====================================================================
+# ROOT CONFIG MANAGER (ĐỒNG BỘ CONFIG & TOKEN NỘI BỘ APP)
+# =====================================================================
+class RootConfigManager:
+    """Class quản lý đồng bộ cấu hình, token và phân quyền dữ liệu nội bộ ứng dụng."""
+    def __init__(self, target_package: str, custom_config_dir: str = None):
+        self.target_package = target_package
+        self.internal_dir = f"/data/data/{target_package}"
+        self.external_dir = custom_config_dir or f"/sdcard/AppConfig/{target_package}"
+        self.uid = None
+        self.gid = None
+
+    def run_root_cmd(self, cmd: str, timeout: int = 15) -> tuple[int, str, str]:
+        """Thực thi câu lệnh shell thông qua su -c."""
+        safe_cmd = cmd.replace("'", "'\\''")
+        full_cmd = f"su -c '{safe_cmd}'"
+        try:
+            process = subprocess.Popen(
+                full_cmd, shell=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            stdout, stderr = process.communicate(timeout=timeout)
+            return process.returncode, stdout.strip(), stderr.strip()
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            return -1, "", f"Timeout ({timeout}s)"
+        except Exception as e:
+            return -1, "", str(e)
+
+    def check_root_access(self) -> bool:
+        """Kiểm tra quyền root (su)."""
+        code, stdout, _ = self.run_root_cmd("id")
+        return code == 0 and "uid=0" in stdout
+
+    def get_package_ownership(self) -> tuple[int, int]:
+        """Lấy UID và GID của package ứng dụng."""
+        code, stdout, _ = self.run_root_cmd(f"stat -c '%u %g' '{self.internal_dir}'")
+        if code == 0 and stdout:
+            parts = stdout.split()
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                self.uid = int(parts[0])
+                self.gid = int(parts[1])
+                return self.uid, self.gid
+        self.uid, self.gid = 10000, 10000
+        return self.uid, self.gid
+
+    def inject_config_file(self, target_path: str, content: str, is_json: bool = False) -> bool:
+        """Ghi dữ liệu cấu hình vào file đích với đúng phân quyền UID/GID."""
+        if self.uid is None or self.gid is None:
+            self.get_package_ownership()
+
+        dir_path = os.path.dirname(target_path)
+        self.run_root_cmd(f"mkdir -p '{dir_path}'")
+
+        tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_file = os.path.join(tmp_dir, f"tmp_cfg_{int(time.time())}.tmp")
+
+        try:
+            if is_json and isinstance(content, (dict, list)):
+                formatted_content = json.dumps(content, indent=4)
+            else:
+                formatted_content = str(content)
+
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                f.write(formatted_content)
+
+            inject_cmd = (
+                f"cp '{tmp_file}' '{target_path}' && "
+                f"chown {self.uid}:{self.gid} '{target_path}' && "
+                f"chmod 660 '{target_path}' && "
+                f"restorecon '{target_path}' 2>/dev/null || true && "
+                f"sync"
+            )
+            code, _, _ = self.run_root_cmd(inject_cmd)
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
+            return code == 0
+        except Exception:
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
+            return False
+
+    def force_stop_app(self) -> bool:
+        """Buộc dừng ứng dụng."""
+        code, _, _ = self.run_root_cmd(f"am force-stop {self.target_package}")
+        time.sleep(0.5)
+        return code == 0
+
+    def launch_app(self, main_activity: str = "") -> bool:
+        """Khởi chạy lại ứng dụng bằng Intent."""
+        if main_activity:
+            cmd = f"am start -n {self.target_package}/{main_activity} -f 0x14000000"
+        else:
+            cmd = f"monkey -p {self.target_package} -c android.intent.category.LAUNCHER 1"
+        code, _, _ = self.run_root_cmd(cmd)
+        return code == 0
+
+def sync_app_config_menu():
+    global selected_packages
+    if not selected_packages:
+        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
+        time.sleep(2)
+        return
+
+    print(f"\n{C}--- ROOT CONFIG & TOKEN MANAGER ---{RESET}")
+    print(f"{Y}Tính năng đồng bộ file cấu hình Token/License vào thư mục nội bộ App.{RESET}")
+
+    fix_tty()
+    config_name = safe_input(f"{M}Nhập tên file config (Mặc định: key.txt): {RESET}").strip()
+    if not config_name:
+        config_name = "key.txt"
+
+    fix_tty()
+    token_value = safe_input(f"{M}Nhập Token / Nội dung Key: {RESET}").strip()
+    if not token_value:
+        print(f"{R}[!] Nội dung Token không được để trống!{RESET}")
+        time.sleep(2)
+        return
+
+    for idx, item in enumerate(selected_packages, 1):
+        pkg = item['pkg']
+        print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
+        print(f"{Y}[{idx}/{len(selected_packages)}] Package: {pkg}{RESET}")
+
+        cfg_mgr = RootConfigManager(target_package=pkg)
+        if not cfg_mgr.check_root_access():
+            print(f"{R}[!] Không có quyền ROOT!{RESET}")
+            time.sleep(2)
+            return
+
+        print(f"{Y}  └─ [KILL] Force stop app {pkg}...{RESET}")
+        cfg_mgr.force_stop_app()
+
+        target_path = f"/data/data/{pkg}/files/{config_name}"
+        print(f"{Y}  └─ [INJECT] Nạp dữ liệu vào {target_path}...{RESET}")
+        is_json = config_name.endswith(".json")
+        success = cfg_mgr.inject_config_file(target_path, token_value, is_json=is_json)
+
+        if success:
+            print(f"{G}     [✓] Đã nạp thành công & Fix quyền UID/GID!{RESET}")
+        else:
+            print(f"{R}     [!] Nạp file cấu hình thất bại.{RESET}")
+
+        print(f"{Y}  └─ [LAUNCH] Khởi chạy lại app...{RESET}")
+        cfg_mgr.launch_app()
+        time.sleep(1)
+
+    print(f"\n{G}[+] HOÀN TẤT ĐỒNG BỘ CONFIG CHO TOÀN BỘ PACKAGE.{RESET}")
+    time.sleep(3)
+
+# =====================================================================
 # AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
 # =====================================================================
 # =====================================================================
@@ -1656,7 +1808,8 @@ def main():
         print(f"[{C}2{RESET}] Cài đặt Game ID & Time Kill All")
         print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
         print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
-        print(f"[{C}5{RESET}] Thoát")
+        print(f"[{C}5{RESET}] Đồng bộ Config & Token App (Root Config Manager)")
+        print(f"[{C}6{RESET}] Thoát")
         try:
             fix_tty()
             choice = safe_input(f"\n{M}HuDy > {RESET}")
@@ -1672,6 +1825,8 @@ def main():
         elif choice == '4':
             login_via_cookie()
         elif choice == '5':
+            sync_app_config_menu()
+        elif choice == '6':
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
             fix_tty()
