@@ -1,62 +1,30 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-# Setup TERMUX_APP_PACKAGE_MANAGER
-source "/data/data/com.termux/files/usr/bin/termux-setup-package-manager" || exit 1
+echo -e "\033[1;34m[*] Đang cấu hình Termux & Mirror...\033[0m"
 
-MIRROR_BASE_DIR="/data/data/com.termux/files/usr/etc/termux/mirrors"
-
-if [ "$1" == "--help" ] || [ "$1" == "-help" ]; then
-    echo "Script for choosing a group of mirrors to use."
-    echo "All mirrors are listed at"
-    echo "https://github.com/termux/termux-packages/wiki/Mirrors"
-    exit 0
+# 1. Tự động chuyển Mirror sang nhóm All (tránh lỗi kết nối repo)
+MIRROR_DIR="/data/data/com.termux/files/usr/etc/termux"
+if [ -d "$MIRROR_DIR/mirrors/all" ]; then
+    [ -L "$MIRROR_DIR/chosen_mirrors" ] && unlink "$MIRROR_DIR/chosen_mirrors"
+    ln -s "$MIRROR_DIR/mirrors/all" "$MIRROR_DIR/chosen_mirrors"
 fi
 
-unlink_and_link() {
-    MIRROR_GROUP="$1"
-    if [ -L "/data/data/com.termux/files/usr/etc/termux/chosen_mirrors" ]; then
-        unlink "/data/data/com.termux/files/usr/etc/termux/chosen_mirrors"
-    fi
-    ln -s "${MIRROR_GROUP}" "/data/data/com.termux/files/usr/etc/termux/chosen_mirrors"
-}
+# 2. Cấp quyền bộ nhớ không hiện prompt đơ máy
+termux-setup-storage >/dev/null 2>&1
 
-select_repository_group() {
-    unlink_and_link ${MIRROR_BASE_DIR}/all
-}
+# 3. Cập nhật Package & Cài đặt thư viện cần thiết
+export DEBIAN_FRONTEND=noninteractive
+pkg update -y -o Dpkg::Options::="--force-confold" --check-mirror
+pkg upgrade -y -o Dpkg::Options::="--force-confold"
+pkg install python root-repo tsu -y -o Dpkg::Options::="--force-confold"
 
-get_mirror_url() {
-    basename "$1"
-}
+# 4. Tải tool Python về thư mục gốc
+echo -e "\033[1;34m[*] Đang tải script ToolRejoin...\033[0m"
+curl -Ls https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/ToolRejoin -o ~/hudy.py
 
-get_mirror_description() {
-    head -n 2 "$1" | tail -n 1 | cut -d" " -f2-
-}
-
-usage() {
-   echo "Usage: termux-change-repo"
-   echo ""
-   echo "termux-change-repo is a utility used to simplify which mirror(s)"
-   echo "pkg (our apt wrapper) should use."
-}
-
-if [ $# -gt 0 ]; then
-    usage
+# 5. Gán Alias (phòng hờ chạy lệnh ngắn hudy)
+if ! grep -q 'alias hudy=' ~/.bashrc 2>/dev/null; then
+    echo 'alias hudy="python ~/hudy.py"' >> ~/.bashrc
 fi
 
-if ! command -v apt 1>/dev/null; then
-    echo "Error: Cannot change mirrors since apt is not installed." >&2
-    exit 1
-fi
-
-if [ "$TERMUX_APP_PACKAGE_MANAGER" = "pacman" ]; then
-    read -p "Warning: termux-change-repo can only change mirrors for apt, is that what you intended? [y|n] " -n 1 -r
-    echo
-    [[ ${REPLY} =~ ^[Nn]$ ]] && exit
-fi
-
-mkdir -p "/data/data/com.termux/files/usr/tmp" || exit $?
-
-select_repository_group
-
-echo "[*] pkg --check-mirror update"
-TERMUX_APP_PACKAGE_MANAGER=apt pkg --check-mirror update
+echo -e "\n\033[1;32m[✓] Cài đặt thành công! Dùng lệnh bên dưới để chạy tool.\033[0m\n"
