@@ -1,30 +1,29 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-echo -e "\033[1;34m[*] Đang cấu hình Termux & Mirror...\033[0m"
+echo -e "\033[1;34m[*] Đang cấu hình Mirror và Package...\033[0m"
 
-# 1. Tự động chuyển Mirror sang nhóm All (tránh lỗi kết nối repo)
-MIRROR_DIR="/data/data/com.termux/files/usr/etc/termux"
-if [ -d "$MIRROR_DIR/mirrors/all" ]; then
-    [ -L "$MIRROR_DIR/chosen_mirrors" ] && unlink "$MIRROR_DIR/chosen_mirrors"
-    ln -s "$MIRROR_DIR/mirrors/all" "$MIRROR_DIR/chosen_mirrors"
+# 1. Bỏ qua setup storage nếu đã có hoặc chạy ngầm không chặn luồng
+if [ ! -d "$HOME/storage" ]; then
+    (termux-setup-storage >/dev/null 2>&1 &)
 fi
 
-# 2. Cấp quyền bộ nhớ không hiện prompt đơ máy
-termux-setup-storage >/dev/null 2>&1
+# 2. Đổi repo trực tiếp sang mirror Grimler/Main (Nhanh và không bị hỏi hay ping nghẽn)
+mkdir -p /data/data/com.termux/files/usr/etc/apt/sources.list.d
+echo "deb https://packages.termux.dev/apt/termux-main stable main" > /data/data/com.termux/files/usr/etc/apt/sources.list
 
-# 3. Cập nhật Package & Cài đặt thư viện cần thiết
+# 3. Chạy update tĩnh, ép cờ non-interactive triệt để
 export DEBIAN_FRONTEND=noninteractive
-pkg update -y -o Dpkg::Options::="--force-confold" --check-mirror
-pkg upgrade -y -o Dpkg::Options::="--force-confold"
-pkg install python root-repo tsu -y -o Dpkg::Options::="--force-confold"
+apt update -y -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef"
+apt upgrade -y -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef"
+apt install python tsu -y -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef"
 
-# 4. Tải tool Python về thư mục gốc
-echo -e "\033[1;34m[*] Đang tải script ToolRejoin...\033[0m"
+# 4. Tải file script về máy
+echo -e "\033[1;34m[*] Đang tải ToolRejoin...\033[0m"
 curl -Ls https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/ToolRejoin -o ~/hudy.py
 
-# 5. Gán Alias (phòng hờ chạy lệnh ngắn hudy)
+# 5. Tạo alias
 if ! grep -q 'alias hudy=' ~/.bashrc 2>/dev/null; then
     echo 'alias hudy="python ~/hudy.py"' >> ~/.bashrc
 fi
 
-echo -e "\n\033[1;32m[✓] Cài đặt thành công! Dùng lệnh bên dưới để chạy tool.\033[0m\n"
+echo -e "\n\033[1;32m[✓] Cài đặt hoàn tất! Chạy tool bằng lệnh bên dưới.\033[0m\n"
