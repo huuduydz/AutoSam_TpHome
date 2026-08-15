@@ -156,16 +156,18 @@ R = '\033[91m'
 M = '\033[95m'
 RESET = '\033[0m'
 
-VERSION = "1.0.3"
+VERSION = "2.0.0-PRO"
 
 # =====================================================================
 # BIẾN TOÀN CỤC
 # =====================================================================
 selected_packages = []
 target_place_id = "4520749081"
+target_job_id = ""
 kill_all_time = 0
 json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
 heartbeat_last_check = {}     # {pkg: {acc_name: last_check_time}}
+pkg_pid_cache = {}            # {pkg: pid_int} — cache PID để tránh spam lệnh root
 CLAIMED_NAMES = set()
 
 # Tùy chọn giao diện
@@ -181,6 +183,24 @@ shared_lock = threading.Lock()       # bảo vệ CLAIMED_NAMES giữa các thre
 pkg_restart_locks = {}               # {pkg: Lock} - mỗi pkg 1 lock riêng
 global_restart_semaphore = threading.Semaphore(1)  # Chỉ serialize bước boot
 file_to_pkg_binding = {}             # {file_path: pkg} - ghi nhớ file json nào thuộc pkg nào
+
+import socket
+
+def is_network_available():
+    """Kiểm tra kết nối mạng bằng kết nối socket TCP tới DNS Server (1.1.1.1:53 / 8.8.8.8:53)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            s.connect(("1.1.1.1", 53))
+        return True
+    except Exception:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(2.0)
+                s.connect(("8.8.8.8", 53))
+            return True
+        except Exception:
+            return False
 
 ACTION_LOGS = []
 ACTION_LOGS_LOCK = threading.Lock()
@@ -278,8 +298,8 @@ def print_dashboard(states):
 # CÀI ĐẶT
 # =====================================================================
 def settings_menu():
-    global target_place_id, kill_all_time
-    print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
+    global target_place_id, target_job_id, kill_all_time
+    print(f"\n{C}--- CÀI ĐẶT GAME ID, JOB ID & TIME KILL ALL ---{RESET}")
     fix_tty()
     p_id_raw = safe_input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}")
     if p_id_raw == "":
@@ -295,6 +315,14 @@ def settings_menu():
             print(f"{G}[+] Đã lưu Place ID: {target_place_id}{RESET}")
         else:
             print(f"{R}[!] ID không hợp lệ.{RESET}")
+    fix_tty()
+    j_id_raw = safe_input(f"{M}Nhập Job ID / Server Job ID (bỏ trống để ngẫu nhiên): {RESET}")
+    if j_id_raw != "":
+        target_job_id = j_id_raw.strip()
+        print(f"{G}[+] Đã lưu Job ID: {target_job_id}{RESET}")
+    else:
+        target_job_id = ""
+        print(f"{Y}[*] Không dùng Job ID cụ thể.{RESET}")
     fix_tty()
     k_time_raw = safe_input(f"{M}Nhập thời gian Auto Restart (phút, 0 để tắt): {RESET}")
     if k_time_raw != "":
@@ -366,25 +394,31 @@ repeat task.wait() until game:IsLoaded() and Players.LocalPlayer
 local LocalPlayer = Players.LocalPlayer
 local fileName = "rj_" .. LocalPlayer.Name .. "_checkhudyhub.json"
 local sWF = true
+
 task.spawn(function()
     while sWF do
         task.wait(3)
+        local status = "farming"
+        local errVal = 0
         pcall(function()
             local errorCode = GuiService:GetErrorCode().Value
             if errorCode == 1 or errorCode == 773 or errorCode == 772 or errorCode == 769 or (errorCode >= DisconnectErrors and errorCode < PlaceLaunchOtherError) then
                 sWF = false
+                status = "disconnected"
+                errVal = errorCode
             end
         end)
-        if sWF then
-            local pidOk, pid = pcall(function() return game.PlaceId end)
-            local humOk, hum = pcall(function() return LocalPlayer.Character.Humanoid end)
-            if not (pidOk and pid == 0 and not (humOk and hum)) then
-                pcall(function()
-                    -- Ghi Unix timestamp số nguyên (không dùng string date) để Python đọc chính xác
-                    writefile(fileName, string.format('{"playerName":"%s","timestamp":%d}', LocalPlayer.Name, math.floor(workspace:GetServerTimeNow())))
-                end)
-            end
-        end
+        
+        local pid = 0
+        local job = ""
+        pcall(function() pid = game.PlaceId end)
+        pcall(function() job = game.JobId end)
+        
+        pcall(function()
+            -- Ghi Unix timestamp & status (farming / disconnected), errorCode, placeId, jobId
+            writefile(fileName, string.format('{"playerName":"%s","timestamp":%d,"status":"%s","errorCode":%d,"placeId":%d,"jobId":"%s"}', 
+                LocalPlayer.Name, math.floor(workspace:GetServerTimeNow()), status, errVal, pid or 0, job or ""))
+        end)
     end
 end)"""
     safe_root("su -c 'find /sdcard/ -maxdepth 4 -type f -name \"*checkhudyhub.lua\" -delete 2>/dev/null'")
@@ -486,17 +520,14 @@ def _get_file_mtime(filepath):
 
 import json as _json_mod
 
-def _read_json_timestamp(filepath):
-    """Đọc nội dung JSON, trả về Unix timestamp. -1 nếu lỗi.
-    Hỗ trợ format mới {timestamp:N} và format cũ {time:string}."""
+def _read_json_data(filepath):
+    """Đọc nội dung JSON heartbeat, trả về dict {timestamp, status, errorCode, placeId, jobId} hoặc None."""
     raw = None
-    # Ưu tiên đọc trực tiếp (Delta ở /storage/emulated/0/ không cần root)
     try:
         with open(filepath, 'r', encoding='utf-8') as fh:
             raw = fh.read().strip()
     except:
         pass
-    # Fallback: đọc qua su -c cat (file trong /sdcard/Android/ cần root)
     if not raw:
         try:
             raw = subprocess.check_output(
@@ -507,22 +538,27 @@ def _read_json_timestamp(filepath):
         except:
             pass
     if not raw:
-        return -1
+        return None
     try:
         data = _json_mod.loads(raw)
-        if 'timestamp' in data:
-            return float(data['timestamp'])
-        if 'time' in data:
-            # Format cũ: "2024-05-01T12:00:00Z" → parse thành epoch
+        res = {
+            'timestamp': float(data.get('timestamp', -1)),
+            'status': str(data.get('status', 'farming')),
+            'errorCode': int(data.get('errorCode', 0)),
+            'placeId': str(data.get('placeId', '')),
+            'jobId': str(data.get('jobId', ''))
+        }
+        if res['timestamp'] == -1 and 'time' in data:
             from datetime import datetime, timezone
             dt = datetime.strptime(data['time'], '%Y-%m-%dT%H:%M:%SZ')
-            return dt.replace(tzinfo=timezone.utc).timestamp()
+            res['timestamp'] = dt.replace(tzinfo=timezone.utc).timestamp()
+        return res
     except:
         pass
-    return -1
+    return None
 
-def get_heartbeat(acc_name, pkg):
-    """Trả về mtime của file heartbeat - giống hudy_2.py đã hoạt động."""
+def get_heartbeat_data(acc_name, pkg):
+    """Lấy dữ liệu JSON heartbeat của acc_name thuộc package pkg."""
     global json_path_cache, heartbeat_last_check, file_to_pkg_binding
     now = time.time()
     if pkg not in json_path_cache:
@@ -532,35 +568,46 @@ def get_heartbeat(acc_name, pkg):
     last_check = heartbeat_last_check[pkg]
 
     if acc_name in cache:
-        cached_path, cached_mtime = cache[acc_name]
+        cached_path, cached_data = cache[acc_name]
         if os.path.exists(cached_path):
-            if now - last_check.get(acc_name, 0) < 15:
-                return cached_mtime
-            mtime = _get_file_mtime(cached_path)
-            if mtime > 0:
-                cache[acc_name] = (cached_path, mtime)
+            if now - last_check.get(acc_name, 0) < 5:
+                return cached_data
+            data = _read_json_data(cached_path)
+            if data:
+                cache[acc_name] = (cached_path, data)
                 last_check[acc_name] = now
                 with shared_lock:
                     file_to_pkg_binding[cached_path] = pkg
-                return mtime
+                return data
         del cache[acc_name]
 
     all_files = get_all_heartbeat_files_fast(pkg)
-    best_mtime = 0
     best_file = None
+    best_mtime = 0
+    best_data = None
     for f in all_files:
         name_in_file = extract_username_from_filename(f)
         if name_in_file == acc_name:
             mtime = _get_file_mtime(f)
             if mtime > best_mtime:
-                best_mtime = mtime
-                best_file = f
-    if best_file and best_mtime > 0:
-        cache[acc_name] = (best_file, best_mtime)
+                data = _read_json_data(f)
+                if data:
+                    best_mtime = mtime
+                    best_file = f
+                    best_data = data
+    if best_file and best_data:
+        cache[acc_name] = (best_file, best_data)
         last_check[acc_name] = now
         with shared_lock:
             file_to_pkg_binding[best_file] = pkg
-        return best_mtime
+        return best_data
+    return None
+
+def get_heartbeat(acc_name, pkg):
+    """Trả về timestamp của file heartbeat."""
+    hb_data = get_heartbeat_data(acc_name, pkg)
+    if hb_data and 'timestamp' in hb_data:
+        return hb_data['timestamp']
     return -1
 
 def discover_unbound_account(pkg, states):
@@ -600,59 +647,71 @@ def discover_unbound_account(pkg, states):
 # =====================================================================
 _boot_threads = {}   # {pkg: Thread} — track boot threads
 
-def _check_pkg_alive_once(pkg):
-    """Kiểm tra chính xác 100% xem process của pkg có đang chạy hay không.
-    Loại bỏ hoàn toàn false-positive từ các lệnh shell/grep/rm/find.
-    Trả về: True (chắc chắn sống) | False (chắc chắn chết) | None (timeout → tạm coi sống để an toàn)."""
-    # 1. Check pidof (Nhanh và chính exact tên process trong kernel)
+def get_pkg_pid(pkg):
+    """Lấy PID của package với caching và kiểm tra trực tiếp qua /proc.
+    TRÁNH SPAM LỆNH SHELL SU -> GIẢM 90% CPU TERMUX."""
+    pid = pkg_pid_cache.get(pkg)
+    if pid:
+        proc_path = f"/proc/{pid}"
+        if os.path.exists(proc_path):
+            try:
+                cmdline_file = f"{proc_path}/cmdline"
+                if os.path.exists(cmdline_file):
+                    with open(cmdline_file, "rb") as f:
+                        cmd = f.read().split(b'\x00')[0].decode('utf-8', errors='ignore').strip()
+                        if cmd == pkg or cmd.startswith(pkg + ':'):
+                            return pid
+            except Exception:
+                pass
+        pkg_pid_cache.pop(pkg, None)
+
+    # 1. Thử pidof qua su (khi chưa cache hoặc PID đã đổi)
     try:
         out = subprocess.check_output(
             f"su -c 'pidof {pkg} 2>/dev/null'",
             shell=True, text=True, timeout=2,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         ).strip()
-        if out and any(p.isdigit() for p in out.split()):
-            return True
-    except subprocess.TimeoutExpired:
-        return None
-    except:
+        if out:
+            for p_str in out.split():
+                if p_str.isdigit():
+                    p_num = int(p_str)
+                    pkg_pid_cache[pkg] = p_num
+                    return p_num
+    except Exception:
         pass
 
-    # 2. Check qua _pgrep_pkg (Quét /proc/[0-9]*/cmdline loại bỏ lệnh shell phụ)
-    try:
-        pids = _pgrep_pkg(pkg, timeout=3)
-        if pids:
-            return True
-        return False
-    except subprocess.TimeoutExpired:
-        return None
-    except:
-        return False
+    # 2. Thử pgrep qua su
+    pids = _pgrep_pkg(pkg, timeout=2)
+    if pids and pids[0].isdigit():
+        p_num = int(pids[0])
+        pkg_pid_cache[pkg] = p_num
+        return p_num
+
+    return None
+
+def _check_pkg_alive_once(pkg):
+    """Kiểm tra xem process của pkg có đang chạy hay không."""
+    return get_pkg_pid(pkg) is not None
 
 def _is_pkg_alive_confirmed(pkg, votes=2, interval=3.0):
-    """Kiểm tra pkg có thực sự chết không bằng cách vote nhiều lần.
-    Chỉ trả về False (chết) nếu `votes` lần liên tiếp đều báo chết.
-    Trả về True ngay khi 1 lần thấy sống (tránh false-negative).
-    Nếu có timeout thì coi là sống (an toàn hơn là restart nhầm)."""
+    """Kiểm tra pkg có thực sự chết không bằng cách vote nhiều lần."""
     dead_count = 0
     for i in range(votes):
-        result = _check_pkg_alive_once(pkg)
-        if result is True or result is None:
-            return True   # Sống hoặc không chắc → dừng sớm (coi là sống)
+        if _check_pkg_alive_once(pkg):
+            return True
         else:
             dead_count += 1
         if i < votes - 1:
             time.sleep(interval)
-    return dead_count < votes  # Nếu dead_count >= votes -> False (chết)
+    return dead_count < votes
 
-# Alias cho monitor_package (dùng vote 1 lần để không chậm vòng lặp 10s)
 def _is_pkg_active(pkg):
-    """Alias nhanh: 1 lần check. Dùng cho watchdog."""
-    r = _check_pkg_alive_once(pkg)
-    return r is not False  # None hoặc True → coi là active
+    """Alias nhanh: check process active."""
+    return _check_pkg_alive_once(pkg)
 
 def _pgrep_pkg(pkg, timeout=3):
-    """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c để tránh va chạm clone."""
+    """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c."""
     pids = []
     try:
         cmd = "su -c 'for p in /proc/[0-9]*; do [ -d \"$p\" ] && echo -n \"${p##*/}:\" && cat \"$p/cmdline\" 2>/dev/null && echo; done'"
@@ -676,6 +735,7 @@ def _pgrep_pkg(pkg, timeout=3):
 
 def _kill_pkg(pkg):
     """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
+    pkg_pid_cache.pop(pkg, None)
     pids = _pgrep_pkg(pkg)
     if pids:
         pid_str = ' '.join(pids)
@@ -685,16 +745,24 @@ def _kill_pkg(pkg):
     time.sleep(1)
 
 def boot_pkg_with_verify(pkg, max_retries=2):
-    """Boot pkg tối ưu tốc độ: force-stop sạch → launch intent/monkey → poll 10s."""
+    """Boot pkg tối ưu tốc độ với Intent Deeplink (PlaceId/JobId) + intent flags 0x14000000."""
     log_action(f"{Y}[BOOT]{RESET} Dang Mo App -> {pkg[-15:]}")
+    pid = target_place_id
+    jid = target_job_id
+
     for attempt in range(1, max_retries + 1):
         safe_root(f"su -c 'am force-stop {pkg}'")
         time.sleep(1)
 
-        if target_place_id:
+        if pid:
+            if jid:
+                intent_url = f"roblox://experiences/start?placeId={pid}&gameInstanceId={jid}"
+            else:
+                intent_url = f"roblox://experiences/start?placeId={pid}"
+
             safe_root(
                 f"su -c 'am start -a android.intent.action.VIEW "
-                f"-d \"roblox://experiences/start?placeId={target_place_id}\" -f 0x18000000 {pkg} 2>/dev/null'"
+                f"-d \"{intent_url}\" -p {pkg} -f 0x14000000 2>/dev/null'"
             )
             time.sleep(0.5)
             safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
@@ -703,7 +771,7 @@ def boot_pkg_with_verify(pkg, max_retries=2):
 
         for _ in range(5):
             time.sleep(2)
-            if _is_pkg_active(pkg):
+            if is_app_running(pkg):
                 log_action(f"{G}[SUCCESS]{RESET} Bat App Thanh Cong -> {pkg[-15:]}")
                 return True
 
@@ -782,13 +850,12 @@ def force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=
     _boot_threads[pkg] = t
     t.start()
 
-def rejoin_in_game(pkg, states, current_time, reason, color):
+def rejoin_in_game(pkg, states, current_time, reason, color, place_id=None, job_id=None):
     """Khi PIP còn sống nhưng văng game/treo:
     Chỉ bắn lệnh Intent vào lại game mà KHÔNG kill PIP.
-    Nếu PIP đã bị tắt process: Mới force-restart lại PIP."""
+    Tự động hỗ trợ PlaceId và JobId với intent flags 0x14000000."""
     global last_restart_time, last_any_restart_time, json_path_cache, heartbeat_last_check
 
-    # Nếu PIP process đã thực sự bị đóng -> Buộc phải boot lại app từ đầu
     if not is_app_running(pkg):
         force_restart_app(pkg, states, current_time, reason, color, ignore_cooldown=True)
         return
@@ -799,11 +866,17 @@ def rejoin_in_game(pkg, states, current_time, reason, color):
     last_restart_time[pkg] = current_time
     last_any_restart_time = current_time
 
-    # Bắn Intent trực tiếp vào game (không kill PIP)
-    if target_place_id:
+    pid = place_id or target_place_id
+    jid = job_id or target_job_id
+
+    if pid:
+        if jid:
+            intent_url = f"roblox://experiences/start?placeId={pid}&gameInstanceId={jid}"
+        else:
+            intent_url = f"roblox://experiences/start?placeId={pid}"
         safe_root(
             f"su -c 'am start -a android.intent.action.VIEW "
-            f"-d \"roblox://experiences/start?placeId={target_place_id}\" -p {pkg} -f 0x18000000 2>/dev/null'"
+            f"-d \"{intent_url}\" -p {pkg} -f 0x14000000 2>/dev/null'"
         )
     else:
         safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
@@ -825,47 +898,206 @@ def rejoin_in_game(pkg, states, current_time, reason, color):
     states[pkg]['not_running_count'] = 0
 
 # =====================================================================
-# COOKIE INJECTION (TỐI ƯU SCAN TẤT CẢ DB VÀ XML)
+# ROOT ROBLOX COOKIE INJECTOR ENGINE (TÍNH NĂNG COOKIE INJECTION ROOT)
 # =====================================================================
-def find_all_cookie_dbs(pkg):
-    """Tìm tất cả các file Cookies SQLite trong /data/data/{pkg}."""
-    dbs = []
-    try:
-        cmd = f"su -c 'find /data/data/{pkg}/ -name \"Cookies\" -o -iname \"*cookie*.db\" 2>/dev/null'"
-        out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
-        for line in out.splitlines():
-            line = line.strip()
-            if line:
-                dbs.append(line)
-    except:
-        pass
-    # Thêm đường dẫn mặc định nếu find không ra
-    default_paths = [
-        f"/data/data/{pkg}/app_webview/Default/Cookies",
-        f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
-        f"/data/data/{pkg}/app_webview/Cookies"
-    ]
-    for p in default_paths:
-        if p not in dbs:
-            try:
-                res = subprocess.check_output(f"su -c 'test -f {p} && echo exists'", shell=True, text=True, timeout=3).strip()
-                if "exists" in res:
+class RootRobloxCookieInjector:
+    """Class xử lý tiêm Cookie .ROBLOSECURITY trực tiếp vào SQLite WebView DB với quyền ROOT."""
+    def __init__(self, cookie: str, package_name: str = "com.roblox.client"):
+        self.cookie = cookie.strip().replace('\r', '').replace('\n', '')
+        self.package_name = package_name
+        self.user_id = 0
+        self.username = "Unknown"
+        self.uid = 10000
+        self.gid = 10000
+
+    def run_root_cmd(self, cmd: str, timeout: int = 15) -> tuple[int, str, str]:
+        """Thực thi lệnh shell root su -c với bắt stdout/stderr."""
+        safe_cmd = cmd.replace("'", "'\\''")
+        full_cmd = f"su -c '{safe_cmd}'"
+        try:
+            process = subprocess.Popen(
+                full_cmd, shell=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            stdout, stderr = process.communicate(timeout=timeout)
+            return process.returncode, stdout.strip(), stderr.strip()
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            return -1, "", f"Timeout ({timeout}s)"
+        except Exception as e:
+            return -1, "", str(e)
+
+    def get_package_ownership(self) -> tuple[int, int]:
+        """Lấy UID và GID nội bộ của package qua stat hoặc packages.xml."""
+        app_dir = f"/data/data/{self.package_name}"
+        code, out, _ = self.run_root_cmd(f"stat -c '%u %g' {app_dir}")
+        if code == 0 and out:
+            parts = out.split()
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                self.uid = int(parts[0])
+                self.gid = int(parts[1])
+                return self.uid, self.gid
+        
+        code_xml, out_xml, _ = self.run_root_cmd(f"cat /data/system/packages.xml | grep -i '{self.package_name}'")
+        if code_xml == 0 and out_xml:
+            import re
+            match = re.search(r'userId="(\d+)"', out_xml) or re.search(r'appId="(\d+)"', out_xml)
+            if match:
+                u_id = int(match.group(1))
+                self.uid, self.gid = u_id, u_id
+                return self.uid, self.gid
+
+        self.uid, self.gid = 10000, 10000
+        return self.uid, self.gid
+
+    def force_stop_app(self) -> bool:
+        """Force stop app bằng am force-stop."""
+        code, _, _ = self.run_root_cmd(f"am force-stop {self.package_name}")
+        return code == 0
+
+    def find_webview_databases(self) -> list[str]:
+        """Quét tìm file SQLite Cookies DB trong /data/data/{pkg}."""
+        dbs = []
+        code, out, _ = self.run_root_cmd(
+            f"find /data/data/{self.package_name}/ -name 'Cookies' -o -iname '*cookie*.db' 2>/dev/null"
+        )
+        if code == 0 and out:
+            for line in out.splitlines():
+                line = line.strip()
+                if line and line not in dbs:
+                    dbs.append(line)
+
+        default_paths = [
+            f"/data/data/{self.package_name}/app_webview/Default/Cookies",
+            f"/data/data/{self.package_name}/app_webview/Default/Network/Cookies",
+            f"/data/data/{self.package_name}/app_webview/Cookies"
+        ]
+        for p in default_paths:
+            if p not in dbs:
+                chk_code, chk_out, _ = self.run_root_cmd(f"test -f '{p}' && echo exists")
+                if chk_code == 0 and "exists" in chk_out:
                     dbs.append(p)
-            except:
-                pass
-    return list(set(dbs))
+        return list(set(dbs))
+
+    def inject_sqlite_cookie(self) -> bool:
+        """Tiêm .ROBLOSECURITY cookie vào SQLite WebView DB với đầy đủ 1601 Epoch & Fix Permissions."""
+        dbs = self.find_webview_databases()
+        if not dbs:
+            return False
+
+        self.get_package_ownership()
+        tmp_dir = os.path.join(tempfile.gettempdir(), "hudy_injector")
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        success_count = 0
+        for idx, webview_db in enumerate(dbs, 1):
+            local_db = os.path.join(tmp_dir, f"cookies_{self.package_name.split('.')[-1]}_{idx}.db")
+            cp_code, _, _ = self.run_root_cmd(f"cp '{webview_db}' '{local_db}' && chmod 666 '{local_db}'")
+            if cp_code != 0 or not os.path.exists(local_db):
+                continue
+
+            try:
+                conn = sqlite3.connect(local_db)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+                if not cursor.fetchone():
+                    conn.close()
+                    os.remove(local_db)
+                    continue
+
+                cursor.execute("PRAGMA table_info(cookies)")
+                columns = [col[1] for col in cursor.fetchall()]
+
+                current_epoch_sec = int(time.time())
+                epoch_1601_offset = 11644473600
+                now_epoch_1601 = (current_epoch_sec + epoch_1601_offset) * 1000000
+                expires_epoch_1601 = (current_epoch_sec + (10 * 365 * 86400) + epoch_1601_offset) * 1000000
+
+                hosts = ['.roblox.com', 'www.roblox.com', 'roblox.com', '.www.roblox.com']
+
+                for hk in hosts:
+                    cookie_data = {
+                        'creation_utc': now_epoch_1601,
+                        'top_frame_site_key': 'https://roblox.com',
+                        'host_key': hk,
+                        'name': '.ROBLOSECURITY',
+                        'value': self.cookie,
+                        'encrypted_value': b'',
+                        'path': '/',
+                        'expires_utc': expires_epoch_1601,
+                        'is_secure': 1,
+                        'is_httponly': 1,
+                        'last_access_utc': now_epoch_1601,
+                        'has_expires': 1,
+                        'is_persistent': 1,
+                        'priority': 1,
+                        'samesite': -1,
+                        'source_scheme': 2,
+                        'source_port': 443,
+                        'is_same_party': 0
+                    }
+                    valid_cols = [col for col in cookie_data if col in columns]
+                    valid_vals = [cookie_data[col] for col in valid_cols]
+                    placeholders = ','.join(['?' for _ in valid_cols])
+
+                    cursor.execute(
+                        "DELETE FROM cookies WHERE (host_key=? OR host_key=? OR host_key=?) AND name=?",
+                        (hk, hk.lstrip('.'), '.' + hk.lstrip('.'), '.ROBLOSECURITY')
+                    )
+                    sql = f"INSERT INTO cookies ({','.join(valid_cols)}) VALUES ({placeholders})"
+                    cursor.execute(sql, valid_vals)
+
+                conn.commit()
+                conn.close()
+
+                fix_cmd = (
+                    f"cp '{local_db}' '{webview_db}' && "
+                    f"rm -f '{webview_db}-wal' '{webview_db}-shm' '{webview_db}-journal' 2>/dev/null || true && "
+                    f"chown {self.uid}:{self.gid} '{webview_db}' && "
+                    f"chmod 660 '{webview_db}' && "
+                    f"restorecon '{webview_db}' 2>/dev/null || true"
+                )
+                res_code, _, _ = self.run_root_cmd(fix_cmd)
+                os.remove(local_db)
+
+                if res_code == 0:
+                    success_count += 1
+            except Exception:
+                if os.path.exists(local_db):
+                    os.remove(local_db)
+
+        return success_count > 0
+
+    def launch_app(self, place_id: str = "", job_id: str = "") -> bool:
+        """Kích hoạt ứng dụng chuẩn sẵn sàng đã đăng nhập."""
+        if place_id:
+            if job_id:
+                deeplink = f"roblox://experiences/start?placeId={place_id}&gameInstanceId={job_id}"
+            else:
+                deeplink = f"roblox://experiences/start?placeId={place_id}"
+            cmd = (
+                f"am start -n {self.package_name}/com.roblox.client.ActivityProtocolLaunch "
+                f"-a android.intent.action.VIEW -d '{deeplink}' -f 0x14000000"
+            )
+        else:
+            cmd = (
+                f"am start -n {self.package_name}/com.roblox.client.Activity.WebLoginActivity 2>/dev/null || "
+                f"am start -a android.intent.action.VIEW -d 'roblox://navigation/home' -p {self.package_name}"
+            )
+        code, _, _ = self.run_root_cmd(cmd)
+        if code != 0:
+            fb_cmd = f"monkey -p {self.package_name} -c android.intent.category.LAUNCHER 1"
+            code, _, _ = self.run_root_cmd(fb_cmd)
+        return code == 0
+
+def find_all_cookie_dbs(pkg):
+    injector = RootRobloxCookieInjector("", pkg)
+    return injector.find_webview_databases()
 
 def inject_cookie_webview(pkg, cookie):
-    dbs = find_all_cookie_dbs(pkg)
-    if not dbs:
-        print(f"{R}    └─ Không tìm thấy file Cookies SQLite nào trong /data/data/{pkg}{RESET}")
-        return False
-
-    uid = "10000"
-    try:
-        uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
-    except:
-        pass
+    injector = RootRobloxCookieInjector(cookie, pkg)
+    return injector.inject_sqlite_cookie()
 
     tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
     os.makedirs(tmp_dir, exist_ok=True)
@@ -1038,21 +1270,19 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
     return success_count > 0
 
 def login_via_cookie():
-    global selected_packages
+    global selected_packages, target_place_id, target_job_id
     if not selected_packages:
         print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
         time.sleep(2)
         return
-    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG QUÉT TOÀN BỘ DATA) ---{RESET}")
-    print(f"{Y}Tool sẽ quét toàn bộ SQLite DB & XML shared_prefs của app để nạp Cookie.{RESET}")
-    try:
-        test = subprocess.check_output("su -c 'echo testok'", shell=True, text=True, timeout=5)
-        if "testok" not in test:
-            print(f"{R}[!] Không có quyền ROOT! Cần quyền ROOT để tiêm cookie.{RESET}")
-            time.sleep(3)
-            return
-    except:
-        print(f"{R}[!] Lỗi kiểm tra lệnh SU ROOT.{RESET}")
+    print(f"\n{C}--- ROOT ROBLOX COOKIE INJECTOR (NẠP COOKIE TỰ ĐỘNG) ---{RESET}")
+    print(f"{Y}Tính năng nạp trực tiếp Cookie .ROBLOSECURITY vào SQLite DB & SharedPrefs XML.{RESET}")
+
+    # Check root permission
+    injector_test = RootRobloxCookieInjector("", "com.roblox.client")
+    code, out, _ = injector_test.run_root_cmd("id")
+    if code != 0 or "uid=0" not in out:
+        print(f"{R}[!] Không có quyền ROOT! Vui lòng cấp quyền `su` trong Magisk/KernelSU.{RESET}")
         time.sleep(3)
         return
 
@@ -1069,13 +1299,13 @@ def login_via_cookie():
         print(f"{G}[✓] Cookie SỐNG! Tài khoản Roblox: {C}{user_name}{G} (ID: {user_id}){RESET}")
     elif user_id == 0:
         print(f"{R}[!] XÁC THỰC THẤT BẠI: {user_name}{RESET}")
-        print(f"{Y}[i] Cookie này đã hết hạn hoặc bị gỡ trên Web. Vui lòng lấy Cookie mới từ trình duyệt.{RESET}")
+        print(f"{Y}[i] Cookie này đã hết hạn hoặc bị Log Out trên Web. Vui lòng lấy Cookie mới từ trình duyệt.{RESET}")
         time.sleep(4)
         return
     else:
-        print(f"{Y}[!] Cảnh báo: {user_name}. Tiếp tục tiêm...{RESET}")
+        print(f"{Y}[!] Cảnh báo xác thực: {user_name}. Tiếp tục tiêm...{RESET}")
 
-    print(f"\n{G}[+] Đang xử lý tiêm cookie vào ứng dụng...{RESET}")
+    print(f"\n{G}[+] Tiến hành tiêm Cookie vào {len(selected_packages)} package...{RESET}")
     time.sleep(1)
 
     for idx, item in enumerate(selected_packages, 1):
@@ -1083,38 +1313,38 @@ def login_via_cookie():
         print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
         print(f"{Y}[{idx}/{len(selected_packages)}] Package: {pkg}{RESET}")
 
-        # Stop app hoàn toàn trước khi sửa data
-        print(f"{Y}[*] Đang force-stop {pkg}...{RESET}")
-        subprocess.run(f"su -c 'am force-stop {pkg}'", shell=True, stdout=subprocess.DEVNULL)
-        time.sleep(1)
+        inj = RootRobloxCookieInjector(cookie=cookie, package_name=pkg)
+        inj.username = user_name
+        inj.user_id = user_id
 
-        # Xóa cache app để tránh cache lại phiên cũ
-        print(f"{Y}[*] Dọn dẹp cache phiên cũ...{RESET}")
-        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/* /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
+        # 1. Force stop app
+        print(f"{Y}  └─ [KILL] Force stop app {pkg}...{RESET}")
+        inj.force_stop_app()
+        time.sleep(0.5)
 
-        wv_success = inject_cookie_webview(pkg, cookie)
+        # 2. Clean cache
+        print(f"{Y}  └─ [CLEAN] Dọn dẹp cache phiên cũ...{RESET}")
+        inj.run_root_cmd(f"rm -rf /data/data/{pkg}/cache/* /data/data/{pkg}/code_cache/*")
+
+        # 3. Inject SQLite DB via Root Engine
+        print(f"{Y}  └─ [INJECT] Tiêm SQLite WebView Cookie DB (chmod 660, chown UID/GID)...{RESET}")
+        wv_success = inj.inject_sqlite_cookie()
+        if wv_success:
+            print(f"{G}     [✓] SQLite DB Cookie Injected & Perms Fixed!{RESET}")
+        else:
+            print(f"{Y}     [!] Không tìm thấy DB Cookies WebView chuẩn.{RESET}")
+
+        # 4. Inject XML SharedPrefs Fallback
+        print(f"{Y}  └─ [XML] Nạp bổ sung SharedPrefs XML...{RESET}")
         xml_success = inject_cookie_safe_xml(pkg, cookie, user_name, user_id)
 
-        if wv_success or xml_success:
-            print(f"{G}[✓] Tiêm Cookie thành công cho {pkg}!{RESET}")
-        else:
-            print(f"{R}[✗] Thất bại: Không thể tiêm vào DB hoặc XML nào của {pkg}.{RESET}")
-
-        print(f"{Y}[*] Đang kích hoạt tự động đăng nhập vào App...{RESET}")
-        ticket, err = get_auth_ticket(cookie)
-        if ticket:
-            print(f"{G}[✓] Tạo Auth Ticket thành công: {ticket[:20]}...{RESET}")
-            subprocess.run(f"su -c 'am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(1)
-
-        # Mở trực tiếp WebLoginActivity / Home Intent để WebView kích hoạt Cookie
-        print(f"{Y}[*] Mở giao diện kích thực WebView Cookie...{RESET}")
-        subprocess.run(f"su -c 'am start -n {pkg}/com.roblox.client.Activity.WebLoginActivity 2>/dev/null || am start -n {pkg}/com.roblox.client.Activity.LoginActivity 2>/dev/null || am start -a android.intent.action.VIEW -d \"roblox://navigation/home\" -p {pkg}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # 5. Launch Intent
+        print(f"{Y}  └─ [LAUNCH] Kích hoạt khởi động ứng dụng...{RESET}")
+        inj.launch_app(place_id=target_place_id, job_id=target_job_id)
         time.sleep(1)
 
-    print(f"\n{G}[+] HOÀN TẤT TIÊM COOKIE.{RESET}")
-    print(f"{Y}[i] NẾU APP HIỆN MÀN HÌNH \"Sign In\", HÃY BẤM NÚT [ Sign In ]: {RESET}")
-    print(f"{G}    App sẽ tự đọc Cookie đã tiêm trong WebView và VÀO THẲNG NICK!{RESET}")
+    print(f"\n{G}[+] HOÀN TẤT NẠP COOKIE TOÀN BỘ PACKAGE.{RESET}")
+    print(f"{Y}[i] App Roblox sẽ tự động mở ở trạng thái đã đăng nhập nick: {C}{user_name}{RESET}")
     time.sleep(4)
 
 # =====================================================================
@@ -1131,13 +1361,20 @@ def is_app_running(pkg):
     return r is not False  # True hoặc None → còn sống
 
 def monitor_package(pkg, states, last_ok_ping, stop_event):
-    """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
+    """Thread độc lập cho từng package - phát hiện Disconnect tức thì & kiểm tra mạng."""
     global kill_all_time, last_restart_time, CLAIMED_NAMES
     while not stop_event.is_set():
         try:
             current_time = time.time()
             state = states[pkg]
             session_uptime = current_time - state['session_start_time']
+
+            # === KIỂM TRA KẾT NỐI MẠNG ===
+            if not is_network_available():
+                state['text'] = "Mất Mạng (Chờ Wifi/4G...)"
+                state['color'] = R
+                stop_event.wait(5)
+                continue
 
             # === KIỂM TRA ĐANG TRONG TIẾN TRÌNH BOOT ===
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
@@ -1147,7 +1384,6 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 continue
 
             # === KIỂM TRA PROCESS CÒN SỐNG KHÔNG ===
-            # monitor_package chỉ theo dõi heartbeat, PIP_WATCHDOG chịu trách nhiệm bật lại process
             if not is_app_running(pkg):
                 state['text'] = "Chờ Watchdog..."
                 state['color'] = Y
@@ -1190,9 +1426,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 stop_event.wait(5)
                 continue
 
-            # === CHECK HEARTBEAT ===
-            last_ping = get_heartbeat(bound, pkg)
-            if last_ping == -1:
+            # === CHECK HEARTBEAT & JSON DATA ===
+            hb_data = get_heartbeat_data(bound, pkg)
+            if not hb_data:
                 state['heartbeat_misses'] = state.get('heartbeat_misses', 0) + 1
                 misses = state['heartbeat_misses']
                 if misses >= 3:
@@ -1213,6 +1449,20 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['color'] = Y
             else:
                 state['heartbeat_misses'] = 0  # Reset khi có heartbeat
+                last_ping = hb_data.get('timestamp', 0)
+                status = hb_data.get('status', 'farming')
+                err_code = hb_data.get('errorCode', 0)
+                job_id = hb_data.get('jobId', '')
+                place_id = hb_data.get('placeId', '')
+
+                # 1) BẮT LỖI DISCONNECT TỨC THÌ (<3s)
+                if status == "disconnected" or err_code > 0:
+                    with pkg_restart_locks[pkg]:
+                        rejoin_in_game(pkg, states, current_time, f"Bắt Lỗi ({err_code}) → Rejoin!", R, place_id=place_id, job_id=job_id)
+                    last_ok_ping[pkg] = current_time
+                    stop_event.wait(5)
+                    continue
+
                 diff = current_time - last_ping
                 if diff <= 120:
                     last_ok_ping[pkg] = current_time
@@ -1222,7 +1472,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     if elapsed >= 180:
                         with pkg_restart_locks[pkg]:
                             if is_app_running(pkg):
-                                rejoin_in_game(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                                rejoin_in_game(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R, place_id=place_id, job_id=job_id)
                             else:
                                 force_restart_app(pkg, states, current_time, "Pip tắt → Bật lại!", R, ignore_cooldown=True)
                         last_ok_ping[pkg] = current_time
