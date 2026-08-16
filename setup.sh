@@ -25,7 +25,11 @@ if [ ! -d "$HOME/storage" ]; then
     sleep 2
 fi
 
-# 3. Cập nhật gói hệ thống bằng 'pkg' (Tự động chọn Mirror nhanh nhất & hiển thị tiến trình live)
+# 3. Chạy script đổi mirror Termux
+echo -e "${C_CYAN}[*] Đang thiết lập mirror Termux tối ưu...${C_RESET}"
+. <(curl -Ls https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/termux-change-repo.sh)
+
+# 4. Cập nhật gói hệ thống & cài đặt phụ thuộc
 export DEBIAN_FRONTEND=noninteractive
 echo -e "${C_CYAN}[*] Đang tải & cài đặt gói phụ thuộc (python, sqlite, tsu, curl, procps)...${C_RESET}"
 echo -e "${C_YELLOW}[i] Quá trình này tải khoảng 30-50MB, vui lòng chờ trong giây lát...${C_RESET}"
@@ -33,12 +37,12 @@ echo -e "${C_YELLOW}[i] Quá trình này tải khoảng 30-50MB, vui lòng chờ
 pkg update -y -o Dpkg::Options::="--force-confold"
 pkg install python sqlite tsu curl ncurses-utils procps -y -o Dpkg::Options::="--force-confold"
 
-# 4. Tải Tool Rejoin mới nhất
+# 5. Tải Tool Rejoin mới nhất
 echo -e "${C_CYAN}[*] Đang tải file script Tool Rejoin (hudy.py)...${C_RESET}"
 curl -Ls https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/ToolRejoin -o ~/hudy.py
 chmod +x ~/hudy.py
 
-# 5. Thiết lập Alias tự động
+# 6. Thiết lập Alias tự động
 if ! grep -q 'alias hudy=' ~/.bashrc 2>/dev/null; then
     echo 'alias hudy="python ~/hudy.py"' >> ~/.bashrc
     echo 'alias hudy4="python ~/hudy.py"' >> ~/.bashrc
