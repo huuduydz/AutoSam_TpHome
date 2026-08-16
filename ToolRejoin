@@ -1,55 +1,1086 @@
-#!/data/data/com.termux/files/usr/bin/bash
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading
+from datetime import datetime
+import xml.etree.ElementTree as ET
 
 # =====================================================================
-# TOOL REJOIN SETUP SCRIPT FOR TERMUX (HIGH-SPEED & VISIBLE PROGRESS)
+# ANTI-CRASH & FIX TERMINAL
 # =====================================================================
+_original_print = builtins.print
+def safe_print(*args, **kwargs):
+    if 'end' not in kwargs:
+        kwargs['end'] = '\r\n'
+    _original_print(*args, **kwargs)
+builtins.print = safe_print
 
-C_CYAN="\033[1;36m"
-C_GREEN="\033[1;32m"
-C_YELLOW="\033[1;33m"
-C_RED="\033[1;31m"
-C_RESET="\033[0m"
+try:
+    import termios
+    OLD_TTY = termios.tcgetattr(sys.stdin.fileno())
+except:
+    OLD_TTY = None
 
-echo -e "${C_CYAN}[*] Đang kiểm tra & khởi tạo môi trường Termux...${C_RESET}"
+def fix_tty():
+    # Chỉ fix TTY từ main thread - tránh bg thread corrupt terminal
+    if threading.current_thread() is not threading.main_thread():
+        return
+    try:
+        if OLD_TTY:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, OLD_TTY)
+        else:
+            os.system("stty sane 2>/dev/null")
+    except:
+        pass
+    # Tắt bracketed paste mode để tránh lỗi gõ phím ra ^[1
+    try:
+        sys.stdout.write('\033[?2004l')
+        sys.stdout.flush()
+    except:
+        pass
 
-# 1. Dọn dẹp tiến trình apt/dpkg bị treo & xóa file lock cũ
-killall -9 apt apt-get dpkg dpkg-deb >/dev/null 2>&1 || true
-rm -f /data/data/com.termux/files/usr/var/lib/dpkg/lock*
-rm -f /data/data/com.termux/files/usr/var/cache/apt/archives/lock
-rm -f /data/data/com.termux/files/usr/var/lib/apt/lists/lock
+def safe_input(prompt=''):
+    """Input wrapper: fix TTY trước, sau đó lọc escape sequence ra khỏi kết quả."""
+    fix_tty()
+    try:
+        val = input(prompt)
+    except EOFError:
+        fix_tty()
+        return ''
+    # Lọc bỏ escape sequence dạng ^[ (ESC) và ^[[...~ (bracketed paste markers)
+    val = re.sub(r'\x1b\[\?2004[hl]', '', val)  # bracketed paste on/off
+    val = re.sub(r'\x1b\[200~|\x1b\[201~', '', val)  # paste start/end markers
+    val = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', val)  # các escape sequence khác
+    val = re.sub(r'\x1b.', '', val)  # ESC + ký tự bất kỳ còn sót
+    return val.strip()
 
-# 2. Yêu cầu quyền bộ nhớ (Thông báo rõ ràng tránh treo chờ popup)
-if [ ! -d "$HOME/storage" ]; then
-    echo -e "${C_YELLOW}[!] NẾU HỆ ĐIỀU HÀNH HIỆN POPUP HỎI QUYỀN BỘ NHỚ -> HÃY BẤM 'CHO PHÉP' (ALLOW)...${C_RESET}"
-    termux-setup-storage
-    sleep 2
-fi
+def safe_root(cmd, timeout=15):
+    """Chạy lệnh root với timeout - tránh subprocess treo mãi khi 24/7."""
+    try:
+        subprocess.run(
+            cmd, shell=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        pass
+    except:
+        pass
+    # KHÔNG gọi fix_tty() từ background thread - tránh corrupt terminal
 
-# 3. Chạy script đổi mirror Termux
-echo -e "${C_CYAN}[*] Đang thiết lập mirror Termux tối ưu...${C_RESET}"
-. <(curl -Ls https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/termux-change-repo.sh)
+def clear_screen():
+    fix_tty()
+    # Dùng clear system command thay vì ANSI escape sequence
+    # Để tránh tạo tab mới hoặc scroll lạ trên terminal Android/Cloud Phone
+    try:
+        os.system('clear 2>/dev/null || cls 2>/dev/null')
+    except:
+        sys.stdout.write('\033[2J\033[H\r')
+        sys.stdout.flush()
 
-# 4. Cập nhật gói hệ thống & cài đặt phụ thuộc
-export DEBIAN_FRONTEND=noninteractive
-echo -e "${C_CYAN}[*] Đang tải & cài đặt gói phụ thuộc (python, sqlite, tsu, curl, procps)...${C_RESET}"
-echo -e "${C_YELLOW}[i] Quá trình này tải khoảng 30-50MB, vui lòng chờ trong giây lát...${C_RESET}"
+# =====================================================================
+# MÀU SẮC
+# =====================================================================
+C = '\033[96m'
+G = '\033[92m'
+Y = '\033[93m'
+R = '\033[91m'
+M = '\033[95m'
+RESET = '\033[0m'
 
-pkg update -y -o Dpkg::Options::="--force-confold"
-pkg install python sqlite tsu curl ncurses-utils procps -y -o Dpkg::Options::="--force-confold"
+# =====================================================================
+# BIẾN TOÀN CỤC
+# =====================================================================
+selected_packages = []
+target_place_id = "4520749081"
+kill_all_time = 0
+json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
+heartbeat_last_check = {}     # {pkg: {acc_name: last_check_time}}
+CLAIMED_NAMES = set()
 
-# 5. Tải Tool Rejoin mới nhất
-echo -e "${C_CYAN}[*] Đang tải file script Tool Rejoin (hudy.py)...${C_RESET}"
-curl -Ls https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/ToolRejoin -o ~/hudy.py
-chmod +x ~/hudy.py
+# Tùy chọn giao diện
+CHECK_EXECUTOR_METHOD = "Disable"
+CHANGE_ACCOUNTS = "Disable"
+CHANGE_ACCOUNTS_CUSTOM = "Disable"
+CHECK_UI_TIME = 180
+AUTO_BLOCK = "Disable"
 
-# 6. Thiết lập Alias tự động
-if ! grep -q 'alias hudy=' ~/.bashrc 2>/dev/null; then
-    echo 'alias hudy="python ~/hudy.py"' >> ~/.bashrc
-    echo 'alias hudy4="python ~/hudy.py"' >> ~/.bashrc
-fi
+last_restart_time = {}
+last_any_restart_time = 0            # Thời điểm bất kỳ pkg nào restart gần nhất
+shared_lock = threading.Lock()       # bảo vệ CLAIMED_NAMES giữa các thread
+pkg_restart_locks = {}               # {pkg: Lock} - mỗi pkg 1 lock riêng
+global_restart_semaphore = threading.Semaphore(1)  # Chỉ serialize bước boot
+file_to_pkg_binding = {}             # {file_path: pkg} - ghi nhớ file json nào thuộc pkg nào
 
-# Nạp alias vào phiên làm việc hiện tại
-alias hudy="python ~/hudy.py" 2>/dev/null || true
+# =====================================================================
+# LẤY CPU & RAM
+# =====================================================================
+def get_cpu_usage():
+    try:
+        with open("/proc/stat", "r") as f:
+            line = f.readline()
+            parts = line.split()
+            if len(parts) >= 5:
+                total = sum(int(x) for x in parts[1:])
+                idle = int(parts[4])
+                return f"{((total - idle) / total * 100):.2f}%"
+    except:
+        return "N/A"
 
-echo -e "\n${C_GREEN}[✓] SETUP THÀNH CÔNG HOÀN TẤT!${C_RESET}"
-echo -e "${C_YELLOW}[i] Bạn có thể gõ ngay lệnh: ${C_CYAN}hudy${C_YELLOW} hoặc ${C_CYAN}python ~/hudy.py${C_YELLOW} để mở tool.${C_RESET}\n"
+def get_memory_usage():
+    try:
+        with open("/proc/meminfo", "r") as f:
+            lines = f.readlines()
+        total = free = 0
+        for line in lines:
+            if line.startswith("MemTotal:"):
+                total = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                free = int(line.split()[1])
+        if total > 0:
+            used = total - free
+            return f"{(used / total * 100):.1f}%"
+    except:
+        return "N/A"
+
+# =====================================================================
+# GIAO DIỆN DASHBOARD
+# =====================================================================
+def print_banner():
+    banner = f"""{C}
+ ██░ ██  █    ██  ██▓███ ▓██   ██▓
+▓██░ ██▒ ██  ▓██▒▓██░  ██▒▒██  ██▒
+▒██▀▀██░▓██  ▒██░▓██░ ██▓▒ ▒██ ██░
+░▓█ ░██ ▓▓█  ░██░▒██▄█▓▒ ▒ ░ ▐██▓░
+░▓█▒░██▓▒▒█████▓ ▒██▒ ░  ░ ░ ██▒▓░
+{RESET}"""
+    print(banner)
+    print(f"{G}Developer: {Y}HuDy{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3{RESET}")
+    print("-" * 65)
+
+def print_dashboard(states):
+    clear_screen()
+    print_banner()
+    print(f"{C}CPU: {G}{get_cpu_usage()}{RESET} | {C}RAM: {G}{get_memory_usage()}{RESET}")
+    print("-" * 65)
+    print(f"{C}Check executor method: {Y}{CHECK_EXECUTOR_METHOD}{RESET}")
+    print(f"{C}Change accounts: {Y}{CHANGE_ACCOUNTS}{RESET}")
+    print(f"{C}Change accounts custom: {Y}{CHANGE_ACCOUNTS_CUSTOM}{RESET}")
+    print(f"{C}Check UI time: {Y}{CHECK_UI_TIME}{RESET}")
+    print(f"{C}Auto block: {Y}{AUTO_BLOCK}{RESET}")
+    print("-" * 65)
+    print(f"{C}{'Package':<20} | {'Username':<16} | {'Status':<25}{RESET}")
+    print("-" * 65)
+    for item in selected_packages:
+        pkg = item['pkg']
+        s_pkg = pkg if len(pkg) <= 19 else pkg[:16] + "..."
+        s_name = states[pkg]['display_name']
+        if len(s_name) > 15: s_name = s_name[:12] + "..."
+        txt = states[pkg]['text']
+        # Truncate text để tránh tràn dòng dashboard
+        if len(txt) > 24: txt = txt[:21] + "..."
+        col = states[pkg]['color']
+        print(f"{s_pkg:<20} | {s_name:<16} | {col}{txt:<25}{RESET}")
+    print("-" * 65)
+    print(f"{C} Đang chạy Live... (Bấm Ctrl+C để dừng){RESET}")
+
+# =====================================================================
+# CÀI ĐẶT
+# =====================================================================
+def settings_menu():
+    global target_place_id, kill_all_time
+    print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
+    fix_tty()
+    p_id_raw = safe_input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}")
+    if p_id_raw == "":
+        target_place_id = "4520749081"
+        print(f"{Y}[*] Place ID mặc định: {target_place_id}{RESET}")
+    elif p_id_raw == "0":
+        target_place_id = ""
+        print(f"{Y}[*] Đã xóa Place ID, app mở vào sảnh chính.{RESET}")
+    else:
+        nums = re.findall(r'\d+', p_id_raw)
+        if nums:
+            target_place_id = nums[0]
+            print(f"{G}[+] Đã lưu Place ID: {target_place_id}{RESET}")
+        else:
+            print(f"{R}[!] ID không hợp lệ.{RESET}")
+    fix_tty()
+    k_time_raw = safe_input(f"{M}Nhập thời gian Auto Restart (phút, 0 để tắt): {RESET}")
+    if k_time_raw != "":
+        nums = re.findall(r'\d+', k_time_raw)
+        if nums:
+            kill_all_time = int(nums[0])
+            if kill_all_time > 0:
+                print(f"{G}[+] Auto Restart mỗi {kill_all_time} phút.{RESET}")
+            else:
+                print(f"{Y}[*] Đã tắt Auto Restart.{RESET}")
+        else:
+            print(f"{R}[!] Số phút không hợp lệ.{RESET}")
+    time.sleep(2)
+
+def scan_packages():
+    packages = []
+    try:
+        output = subprocess.check_output("pm list packages -3", shell=True, text=True, stderr=subprocess.DEVNULL)
+    except:
+        try:
+            output = subprocess.check_output("su -c 'pm list packages -3'", shell=True, text=True, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+        except:
+            output = ""
+    fix_tty()
+    for line in output.splitlines():
+        if "package:" in line:
+            packages.append(line.replace("package:", "").strip())
+    return list(set(packages))
+
+def select_package_menu():
+    global selected_packages
+    packages = scan_packages()
+    if not packages:
+        print(f"{R}[!] Không tìm thấy app nào!{RESET}")
+        time.sleep(2)
+        return
+    print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
+    for i, pkg in enumerate(packages, 1):
+        print(f"[{i}] {pkg}")
+    try:
+        fix_tty()
+        print(f"\n{C}💡 Nhập số thứ tự cách nhau khoảng trắng (VD: 1 3 5){RESET}")
+        choice_str = safe_input(f"{M}Chọn số: {RESET}")
+        choices = [int(x) for x in re.findall(r'\d+', choice_str)]
+        selected_packages.clear()
+        for choice in set(choices):
+            if 1 <= choice <= len(packages):
+                pkg_name = packages[choice - 1]
+                fix_tty()
+                acc_name = safe_input(f"\n{C}[?] Tên In-game cho {Y}{pkg_name}{C} (bỏ trống để auto): {RESET}")
+                selected_packages.append({"pkg": pkg_name, "name": acc_name})
+        if selected_packages:
+            print(f"\n{G}[+] Đã chọn {len(selected_packages)} package.{RESET}")
+            time.sleep(1)
+    except:
+        pass
+
+# =====================================================================
+# INJECT SCRIPT UNIVERSAL (giữ nguyên)
+# =====================================================================
+def inject_universal_lua():
+    lua_code = """
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
+local Players = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
+local DisconnectErrors = Enum.ConnectionError.DisconnectErrors.Value
+local PlaceLaunchOtherError = Enum.ConnectionError.PlacelaunchOtherError.Value
+repeat task.wait() until game:IsLoaded() and Players.LocalPlayer
+local LocalPlayer = Players.LocalPlayer
+local fileName = "rj_" .. LocalPlayer.Name .. "_checkhudyhub.json"
+local sWF = true
+task.spawn(function()
+    while sWF do
+        task.wait(3)
+        pcall(function()
+            local errorCode = GuiService:GetErrorCode().Value
+            if errorCode == 1 or errorCode == 773 or errorCode == 772 or errorCode == 769 or (errorCode >= DisconnectErrors and errorCode < PlaceLaunchOtherError) then
+                sWF = false
+            end
+        end)
+        if sWF then
+            local pidOk, pid = pcall(function() return game.PlaceId end)
+            local humOk, hum = pcall(function() return LocalPlayer.Character.Humanoid end)
+            if not (pidOk and pid == 0 and not (humOk and hum)) then
+                pcall(function()
+                    -- Ghi Unix timestamp số nguyên (không dùng string date) để Python đọc chính xác
+                    writefile(fileName, string.format('{"playerName":"%s","timestamp":%d}', LocalPlayer.Name, math.floor(workspace:GetServerTimeNow())))
+                end)
+            end
+        end
+    end
+end)"""
+    safe_root("su -c 'find /sdcard/ -maxdepth 4 -type f -name \"*checkhudyhub.lua\" -delete 2>/dev/null'")
+    temp_lua = "/sdcard/Download/universal_checkhudyhub.lua"
+    with open(temp_lua, "w", encoding="utf-8") as f:
+        f.write(lua_code)
+    root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/universal_checkhudyhub.lua\\" && chmod 777 \\"\\$dir/universal_checkhudyhub.lua\\"; done; rm {temp_lua}" """
+    safe_root(root_cmd)
+
+# =====================================================================
+# HEARTBEAT & ACCOUNT DISCOVERY (ĐÃ SỬA TÌM ĐÚNG FILE)
+# =====================================================================
+def extract_username_from_filename(filename):
+    """Lấy tên ingame từ tên file kiểu rj_TEN_checkhudyhub.json hoặc r_j_TEN_checkhudyhub.json..."""
+    base = os.path.basename(filename)
+    # Xóa đuôi _checkhudyhub.json
+    if base.endswith('_checkhudyhub.json'):
+        base = base[:-len('_checkhudyhub.json')]
+    else:
+        # Không đúng định dạng, thử tách phần trước đuôi .json
+        base = os.path.splitext(base)[0]
+    # Tách bởi dấu gạch dưới, lấy phần tử cuối cùng (sau khi đã bỏ hậu tố) làm tên
+    # Với rj_TEN -> parts = ['rj', 'TEN'] -> lấy parts[-1]
+    # Với r_j_TEN -> parts = ['r', 'j', 'TEN'] -> lấy parts[-1]
+    parts = base.split('_')
+    if len(parts) >= 2:
+        return parts[-1]  # Phần cuối là tên
+    return base  # fallback
+
+def get_all_heartbeat_files_fast(pkg=None):
+    """Tìm file heartbeat bằng su find - giống hudy_2.py đã hoạt động."""
+    search_dirs = [
+        "/sdcard/Android/media",
+        "/sdcard/Android/data",
+        "/sdcard/Delta",
+        "/storage/emulated/0/Delta",
+        "/sdcard/DeltaQT",
+        "/storage/emulated/0/DeltaQT",
+        "/sdcard/ModWorkspace",
+    ]
+    if pkg:
+        search_dirs = [
+            f"/sdcard/Android/media/{pkg}",
+            f"/sdcard/Android/data/{pkg}",
+            "/sdcard/Delta",
+            "/storage/emulated/0/Delta",
+            "/sdcard/DeltaQT",
+            "/storage/emulated/0/DeltaQT",
+        ]
+    results = []
+    for d in search_dirs:
+        try:
+            cmd = f"su -c 'find {d} -iname \"*_checkhudyhub.json\" -type f 2>/dev/null'"
+            out = subprocess.check_output(cmd, shell=True, text=True, timeout=5,
+                                           stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL).strip()
+            for line in out.splitlines():
+                line = line.strip()
+                if line and '_checkhudyhub.json' in line:
+                    results.append(line)
+        except:
+            pass
+    return list(set(results))
+
+def get_heartbeat_files_for_pkg(pkg):
+    return get_all_heartbeat_files_fast(pkg)
+
+def _get_file_mtime(filepath):
+    """Lấy mtime - thử getmtime trước, fallback su stat cho file cần root."""
+    try:
+        return os.path.getmtime(filepath)
+    except:
+        pass
+    try:
+        out = subprocess.check_output(
+            f"su -c 'stat -c %Y \"{filepath}\" 2>/dev/null'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out.isdigit():
+            return float(out)
+    except:
+        pass
+    return -1
+
+import json as _json_mod
+
+def _read_json_timestamp(filepath):
+    """Đọc nội dung JSON, trả về Unix timestamp. -1 nếu lỗi.
+    Hỗ trợ format mới {timestamp:N} và format cũ {time:string}."""
+    raw = None
+    # Ưu tiên đọc trực tiếp (Delta ở /storage/emulated/0/ không cần root)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as fh:
+            raw = fh.read().strip()
+    except:
+        pass
+    # Fallback: đọc qua su -c cat (file trong /sdcard/Android/ cần root)
+    if not raw:
+        try:
+            raw = subprocess.check_output(
+                f"su -c 'cat \"{filepath}\" 2>/dev/null'",
+                shell=True, text=True, timeout=3,
+                stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            ).strip()
+        except:
+            pass
+    if not raw:
+        return -1
+    try:
+        data = _json_mod.loads(raw)
+        if 'timestamp' in data:
+            return float(data['timestamp'])
+        if 'time' in data:
+            # Format cũ: "2024-05-01T12:00:00Z" → parse thành epoch
+            from datetime import datetime, timezone
+            dt = datetime.strptime(data['time'], '%Y-%m-%dT%H:%M:%SZ')
+            return dt.replace(tzinfo=timezone.utc).timestamp()
+    except:
+        pass
+    return -1
+
+def get_heartbeat(acc_name, pkg):
+    """Trả về mtime của file heartbeat - giống hudy_2.py đã hoạt động."""
+    global json_path_cache, heartbeat_last_check, file_to_pkg_binding
+    now = time.time()
+    if pkg not in json_path_cache:
+        json_path_cache[pkg] = {}
+        heartbeat_last_check[pkg] = {}
+    cache = json_path_cache[pkg]
+    last_check = heartbeat_last_check[pkg]
+
+    if acc_name in cache:
+        cached_path, cached_mtime = cache[acc_name]
+        if os.path.exists(cached_path):
+            if now - last_check.get(acc_name, 0) < 15:
+                return cached_mtime
+            mtime = _get_file_mtime(cached_path)
+            if mtime > 0:
+                cache[acc_name] = (cached_path, mtime)
+                last_check[acc_name] = now
+                with shared_lock:
+                    file_to_pkg_binding[cached_path] = pkg
+                return mtime
+        del cache[acc_name]
+
+    all_files = get_all_heartbeat_files_fast(pkg)
+    best_mtime = 0
+    best_file = None
+    for f in all_files:
+        name_in_file = extract_username_from_filename(f)
+        if name_in_file == acc_name:
+            mtime = _get_file_mtime(f)
+            if mtime > best_mtime:
+                best_mtime = mtime
+                best_file = f
+    if best_file and best_mtime > 0:
+        cache[acc_name] = (best_file, best_mtime)
+        last_check[acc_name] = now
+        with shared_lock:
+            file_to_pkg_binding[best_file] = pkg
+        return best_mtime
+    return -1
+
+def discover_unbound_account(pkg, states):
+    """Tìm acc chưa được claim. Dùng mtime giống hudy_2.py (đã hoạt động)."""
+    global CLAIMED_NAMES, file_to_pkg_binding
+
+    active_names_other_pkgs = {
+        s['bound_name'] for p, s in states.items()
+        if p != pkg and s.get('bound_name')
+    }
+    with shared_lock:
+        blocked_files = {fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg != pkg}
+
+    all_files = get_all_heartbeat_files_fast(pkg)
+    candidates = []
+    now = time.time()
+    for f in all_files:
+        if f in blocked_files:
+            continue
+        mtime = _get_file_mtime(f)
+        if mtime > 0 and now - mtime < 300:
+            name = extract_username_from_filename(f)
+            if name:
+                candidates.append((name, mtime, f))
+    candidates.sort(key=lambda x: x[1], reverse=True)
+
+    with shared_lock:
+        for name, mtime, fpath in candidates:
+            if name not in CLAIMED_NAMES and name not in active_names_other_pkgs:
+                CLAIMED_NAMES.add(name)
+                file_to_pkg_binding[fpath] = pkg
+                return name
+    return None
+
+# =====================================================================
+# BOOT & RESTART
+# =====================================================================
+_boot_threads = {}   # {pkg: Thread} — track boot threads
+
+def _pgrep_pkg(pkg, timeout=3):
+    """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c để tránh va chạm clone."""
+    pids = []
+    try:
+        cmd = "su -c 'for p in /proc/[0-9]*; do [ -d \"$p\" ] && echo -n \"${p##*/}:\" && cat \"$p/cmdline\" 2>/dev/null && echo; done'"
+        out = subprocess.check_output(
+            cmd, shell=True, timeout=timeout,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        for line in out.split(b'\n'):
+            if b':' not in line:
+                continue
+            parts = line.split(b':', 1)
+            pid_str = parts[0].strip()
+            if not pid_str.isdigit():
+                continue
+            cmdline = parts[1].split(b'\x00')[0].decode('utf-8', errors='ignore').strip()
+            if cmdline == pkg or cmdline.startswith(pkg + ':'):
+                pids.append(pid_str.decode('utf-8'))
+    except:
+        pass
+    return pids
+
+def _is_pkg_active(pkg):
+    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys (chính xác, không va chạm clone)."""
+    if _pgrep_pkg(pkg):
+        return True
+    try:
+        out = subprocess.check_output(
+            f"su -c 'dumpsys activity activities 2>/dev/null'",
+            shell=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        # So khớp package name chính xác với word boundary
+        pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
+        return bool(pattern.search(out))
+    except:
+        return False
+
+def _kill_pkg(pkg):
+    """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
+    pids = _pgrep_pkg(pkg)
+    if pids:
+        pid_str = ' '.join(pids)
+        safe_root(f"su -c 'kill -9 {pid_str} 2>/dev/null'")
+    else:
+        safe_root(f"su -c 'am force-stop {pkg}'")
+    time.sleep(1)
+
+def boot_pkg_with_verify(pkg, max_retries=4):
+    """Boot pkg với tối đa 4 lần thử. Mỗi lần: force-stop sạch → am start → poll 30s.
+    Dùng -p {pkg} để tránh hộp thoại 'Mở bằng...' (app chooser)."""
+    for attempt in range(1, max_retries + 1):
+        # A) Dọn process cũ hoàn toàn
+        safe_root(f"su -c 'am force-stop {pkg}'")
+        time.sleep(2)
+
+        # B) Launch đúng package, tránh dialog chọn app
+        if target_place_id:
+            # -p {pkg}: buộc intent vào đúng package này, không hỏi
+            # -f 0x18000000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK tránh tắt tab khác
+            safe_root(
+                f"su -c 'am start -p {pkg} -f 0x18000000 -a android.intent.action.VIEW "
+                f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
+            )
+        else:
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+
+        # C) Poll 6×5s = 30s
+        for _ in range(6):
+            time.sleep(5)
+            if _is_pkg_active(pkg):
+                return True
+
+        if attempt < max_retries:
+            time.sleep(3)
+
+    # Last resort
+    safe_root(f"su -c 'am force-stop {pkg}'")
+    time.sleep(2)
+    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+    return False
+
+def _boot_worker(pkg, states):
+    """Background thread: boot pkg không block monitor thread."""
+    boot_acquired = global_restart_semaphore.acquire(timeout=60)
+    try:
+        boot_pkg_with_verify(pkg)
+    except Exception:
+        pass
+    finally:
+        if boot_acquired:
+            global_restart_semaphore.release()
+        _boot_threads.pop(pkg, None)
+
+def force_restart_app(pkg, states, current_time, reason, color):
+    global last_restart_time, last_any_restart_time, file_to_pkg_binding
+    if pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
+        return
+
+    states[pkg]['text'] = reason
+    states[pkg]['color'] = color
+    last_restart_time[pkg] = current_time
+    last_any_restart_time = current_time
+
+    # ── B1: Kill ngay (ngược lại với semaphore → không block pkg khác) ───
+    _kill_pkg(pkg)
+
+    # ── Dọn file heartbeat + cache RAM ──────────────────────────
+    bound_name = states[pkg].get('bound_name')
+    if bound_name:
+        safe_root(
+            f"su -c 'rm -f "
+            f"/sdcard/Android/media/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/media/{pkg}/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Delta/*_{bound_name}_checkhudyhub.json "
+            f"2>/dev/null'"
+        )
+        json_path_cache.pop(pkg, None)
+        heartbeat_last_check.pop(pkg, None)
+        with shared_lock:
+            CLAIMED_NAMES.discard(bound_name)
+            stale_fps = [fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg == pkg]
+            for fp in stale_fps:
+                del file_to_pkg_binding[fp]
+
+    # ── Reset state ──────────────────────────────────────────
+    states[pkg]['rejoin_time'] = current_time
+    states[pkg]['warmup_until'] = current_time + 60
+    states[pkg]['bound_name'] = None
+    states[pkg]['display_name'] = 'Chờ Auto-Bind...'
+    states[pkg]['heartbeat_misses'] = 0
+
+    # ── B2: Boot trong background thread — monitor thread không bị block ────
+    existing = _boot_threads.get(pkg)
+    if existing and existing.is_alive():
+        return  # Đang boot rồi, không spawn thêm
+    t = threading.Thread(
+        target=_boot_worker, args=(pkg, states),
+        daemon=True, name=f"boot_{pkg[-8:]}"
+    )
+    _boot_threads[pkg] = t
+    t.start()
+
+# =====================================================================
+# COOKIE INJECTION (giữ nguyên)
+# =====================================================================
+def inject_cookie_webview(pkg, cookie):
+    webview_db = f"/data/data/{pkg}/app_webview/Default/Cookies"
+    try:
+        subprocess.check_output(f"su -c 'test -f {webview_db} && echo exists'", shell=True, text=True, timeout=5)
+    except:
+        return False
+    tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
+    os.makedirs(tmp_dir, exist_ok=True)
+    local_db = os.path.join(tmp_dir, f"cookies_{pkg.split('.')[-1]}.db")
+    subprocess.run(f"su -c 'cp {webview_db} {local_db} && chmod 666 {local_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        conn = sqlite3.connect(local_db)
+        c = conn.cursor()
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+        if not c.fetchone():
+            conn.close()
+            os.remove(local_db)
+            return False
+        c.execute("PRAGMA table_info(cookies)")
+        columns = [col[1] for col in c.fetchall()]
+        now = int(time.time())
+        data = {
+            'creation_utc': now, 'top_frame_site_key': '.roblox.com', 'host_key': '.roblox.com',
+            'name': '.ROBLOSECURITY', 'value': cookie, 'path': '/', 'expires_utc': 2147483647,
+            'is_secure': 1, 'is_httponly': 1, 'last_access_utc': now, 'has_expires': 1,
+            'is_permanent': 1, 'source_port': -1, 'is_same_party': 0
+        }
+        cols = [k for k in data if k in columns]
+        values = [data[k] for k in cols]
+        placeholders = ','.join(['?' for _ in cols])
+        c.execute("DELETE FROM cookies WHERE host_key=? AND name=?", ('.roblox.com', '.ROBLOSECURITY'))
+        sql = f"INSERT INTO cookies ({','.join(cols)}) VALUES ({placeholders})"
+        c.execute(sql, values)
+        conn.commit()
+        conn.close()
+        subprocess.run(f"su -c 'cp {local_db} {webview_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.remove(local_db)
+        return True
+    except Exception as e:
+        try:
+            conn.close()
+        except:
+            pass
+        try:
+            os.remove(local_db)
+        except:
+            pass
+        print(f"{R}    └─ Lỗi WebView: {str(e)[:80]}{RESET}")
+        return False
+
+def inject_cookie_safe_xml(pkg, cookie):
+    shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
+    try:
+        files_str = subprocess.check_output(f"su -c 'ls {shared_prefs_dir}/*.xml 2>/dev/null'", shell=True, text=True, timeout=5).strip()
+    except:
+        return False
+    if not files_str:
+        return False
+    xml_files = files_str.split('\n')
+    uid = "10000"
+    try:
+        uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
+    except:
+        pass
+    for xml_path in xml_files:
+        xml_path = xml_path.strip()
+        if not xml_path:
+            continue
+        try:
+            raw = subprocess.check_output(f"su -c 'cat {xml_path} 2>/dev/null'", shell=True, text=True, timeout=5)
+        except:
+            continue
+        if '<map>' not in raw:
+            continue
+        existing = {}
+        try:
+            root_el = ET.fromstring(raw)
+            for string_tag in root_el.findall('string'):
+                key = string_tag.get('name')
+                if key:
+                    existing[key] = string_tag.text
+        except:
+            pass
+        existing['ROBLOSECURITY'] = cookie
+        new_root = ET.Element('map')
+        for k, v in existing.items():
+            el = ET.SubElement(new_root, 'string', name=k)
+            el.text = v
+        xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(new_root, encoding='unicode')
+        tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+        fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(xml_output)
+        subprocess.run(f"su -c 'cp {temp_file} {xml_path} && chown {uid}:{uid} {xml_path} && chmod 660 {xml_path} && restorecon {xml_path} 2>/dev/null || true && touch {xml_path}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.remove(temp_file)
+    return True
+
+def login_via_cookie():
+    global selected_packages
+    if not selected_packages:
+        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
+        time.sleep(2)
+        return
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG PHÁT HIỆN DB) ---{RESET}")
+    print(f"{Y}Tool sẽ thử WebView, nếu không có sẽ dùng XML shared_prefs.{RESET}")
+    try:
+        test = subprocess.check_output("su -c 'echo testok'", shell=True, text=True, timeout=5)
+        if "testok" not in test:
+            print(f"{R}[!] Không có quyền ROOT!{RESET}")
+            time.sleep(3)
+            return
+    except:
+        print(f"{R}[!] Lỗi kiểm tra SU.{RESET}")
+        time.sleep(3)
+        return
+    fix_tty()
+    cookie = safe_input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").replace('\r', '').replace('\n', '')
+    if not cookie.startswith("_|WARNING"):
+        print(f"{R}[!] Cookie không hợp lệ!{RESET}")
+        time.sleep(2)
+        return
+    print(f"\n{G}[+] Cookie hợp lệ! Đang inject...{RESET}")
+    time.sleep(1)
+    for idx, item in enumerate(selected_packages, 1):
+        pkg = item['pkg']
+        print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
+        print(f"{Y}[{idx}/{len(selected_packages)}] {pkg}{RESET}")
+        subprocess.run(f"su -c 'am force-stop {pkg}'", shell=True, stdout=subprocess.DEVNULL)
+        time.sleep(1)
+        success = inject_cookie_webview(pkg, cookie)
+        if success:
+            print(f"{G}[✓] WebView Database thành công.{RESET}")
+        else:
+            print(f"{Y}[*] Thử XML shared_prefs...{RESET}")
+            if inject_cookie_safe_xml(pkg, cookie):
+                print(f"{G}[✓] XML shared_prefs thành công.{RESET}")
+            else:
+                print(f"{R}[✗] Không thể inject cookie.{RESET}")
+        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/*; rm -rf /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
+        print(f"{Y}[*] Mở app...{RESET}")
+        subprocess.run(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'", shell=True, stdout=subprocess.DEVNULL)
+        time.sleep(1)
+    print(f"\n{G}[+] HOÀN TẤT.{RESET}")
+    time.sleep(5)
+
+# =====================================================================
+# AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
+# =====================================================================
+# =====================================================================
+# MONITOR THREAD - Mỗi package chạy 1 thread riêng
+# =====================================================================
+def is_app_running(pkg):
+    """Kiểm tra process của package (chính xác, không va chạm clone)."""
+    return bool(_pgrep_pkg(pkg))
+
+def monitor_package(pkg, states, last_ok_ping, stop_event):
+    """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
+    global kill_all_time, last_restart_time, CLAIMED_NAMES
+    while not stop_event.is_set():
+        try:
+            current_time = time.time()
+            state = states[pkg]
+            # session_start_time: thời điểm start lần đầu, KHÔNG reset khi rejoin
+            # rejoin_time: chỉ dùng để tính warmup
+            session_uptime = current_time - state['session_start_time']
+            uptime_seconds = current_time - state['rejoin_time']
+
+            # === KIỂM TRA ĐANG TRONG TIẾN TRÌNH BOOT ===
+            if pkg in _boot_threads and _boot_threads[pkg].is_alive():
+                state['text'] = "Đang Khởi Động..."
+                state['color'] = Y
+                stop_event.wait(5)
+                continue
+
+            # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
+            if uptime_seconds > 15 and not is_app_running(pkg):
+                can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                if can_restart:
+                    with pkg_restart_locks[pkg]:
+                        force_restart_app(pkg, states, current_time, "App không chạy!", R)
+                    last_ok_ping[pkg] = current_time
+                else:
+                    state['text'] = 'App tắt, chờ...'
+                    state['color'] = R
+                stop_event.wait(5)
+                continue
+
+            # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
+            if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
+                # Dùng lock riêng của pkg - tránh block luồng khác
+                with pkg_restart_locks[pkg]:
+                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
+                # Reset session timer sau khi auto restart
+                state['session_start_time'] = current_time
+                last_ok_ping[pkg] = current_time
+                stop_event.wait(10)
+                continue
+
+            # === WARMUP ===
+            if current_time < state.get('warmup_until', 0):
+                state['text'] = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
+                state['color'] = Y
+                stop_event.wait(5)
+                continue
+
+            # === TÌM TÊN NẾU CHƯA BIND ===
+            if not state['bound_name']:
+                found = discover_unbound_account(pkg, states)
+                if found:
+                    state['bound_name'] = found
+                    state['display_name'] = found
+
+            bound = state['bound_name']
+            is_grace = (uptime_seconds < 150)  # 150s thay vì 240s → detect fail nhanh hơn
+
+            # === CHƯ A BIND ĐƯỢC TÊN ===
+            if not bound:
+                if is_grace:
+                    # Nếu app không chạy sau 30s warmup → restart ngay
+                    if uptime_seconds > 30 and not is_app_running(pkg):
+                        can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                        if can_restart:
+                            with pkg_restart_locks[pkg]:
+                                force_restart_app(pkg, states, current_time, "App không mở được!", R)
+                            last_ok_ping[pkg] = current_time
+                        else:
+                            state['text'] = 'App lỗi, đang chờ...'
+                            state['color'] = R
+                    else:
+                        state['text'] = f"Đang Load ({int(150 - uptime_seconds)}s)"
+                        state['color'] = Y
+                else:
+                    can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                    if can_restart:
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẻ t Bind!", R)
+                        last_ok_ping[pkg] = current_time
+                    else:
+                        wait_sec = int(180 - (current_time - last_restart_time.get(pkg, current_time)))
+                        state['text'] = f"Chờ Restart ({wait_sec}s)"
+                        state['color'] = R
+                stop_event.wait(10)
+                continue
+
+            # === CHECK HEARTBEAT ===
+            # Nếu pkg khác vừa restart (< 180s), cho thêm grace để tránh cascade
+            other_just_restarted = (current_time - last_any_restart_time < 180) and \
+                                   (last_any_restart_time != last_restart_time.get(pkg, 0))
+
+            last_ping = get_heartbeat(bound, pkg)
+            if last_ping == -1:
+                state['heartbeat_misses'] = state.get('heartbeat_misses', 0) + 1
+                misses = state['heartbeat_misses']
+                if is_grace or other_just_restarted:
+                    remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
+                    state['text'] = f"Đang Nạp Data ({max(0,remain)}s)"
+                    state['color'] = Y
+                elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
+                    # Cần 3 miss liên tiếp (~30s) mới restart - tránh false negative
+                    with pkg_restart_locks[pkg]:
+                        force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
+                    last_ok_ping[pkg] = current_time
+                    state['heartbeat_misses'] = 0
+                else:
+                    state['text'] = f"Mất HB ({misses}/3 lần)..."
+                    state['color'] = Y
+            else:
+                state['heartbeat_misses'] = 0  # Reset khi có heartbeat
+                diff = current_time - last_ping
+                if diff <= 120:
+                    last_ok_ping[pkg] = current_time
+                real_diff = current_time - last_ok_ping.get(pkg, current_time)
+                if diff > 120:
+                    if is_grace or other_just_restarted:
+                        remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
+                        state['text'] = f"Vào Server... ({max(0,remain)}s)"
+                        state['color'] = Y
+                    elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                        last_ok_ping[pkg] = current_time
+                    elif real_diff < 120:
+                        state['text'] = f"Cảnh báo lag ({int(diff)}s)"
+                        state['color'] = Y
+                else:
+                    state['text'] = f"Đang Farm ({int(diff)}s trước)"
+                    state['color'] = G
+        except Exception as e:
+            # Ghi lỗi nhưng không crash thread - quan trọng cho 24/7
+            try:
+                states[pkg]['text'] = f"Lỗi ({str(e)[:15]})"
+                states[pkg]['color'] = R
+            except:
+                pass
+        stop_event.wait(10)
+
+
+def start_auto_rejoin():
+    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
+    if not selected_packages:
+        print(f"{R}[!] Chọn package trước!{RESET}")
+        time.sleep(2)
+        return
+
+    last_restart_time = {}
+    last_any_restart_time = 0
+    json_path_cache = {}
+    heartbeat_last_check = {}
+    CLAIMED_NAMES = set()
+    pkg_restart_locks = {}
+    global_restart_semaphore = threading.Semaphore(1)
+    file_to_pkg_binding = {}
+
+    print(f"\n{Y}[*] Inject script universal...{RESET}")
+    inject_universal_lua()
+
+    states = {}
+    last_ok_ping = {}
+    stop_event = threading.Event()
+    now = time.time()
+
+    # Bật từng tab theo thứ tự, cách nhau 5s để hệ thống ổn định
+    for i, item in enumerate(selected_packages):
+        pkg = item['pkg']
+        pkg_restart_locks[pkg] = threading.Lock()
+        pkg_now = time.time()  # Dùng thời gian thực tế cho từng pkg, không dùng `now` chung
+        states[pkg] = {
+            'text': 'Đang Mở Sảnh...',
+            'color': Y,
+            'bound_name': item['name'] if item['name'] else None,
+            'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
+            'rejoin_time': pkg_now,
+            'session_start_time': pkg_now,
+            'warmup_until': pkg_now + 90,
+            'heartbeat_misses': 0
+        }
+        last_ok_ping[pkg] = pkg_now
+        last_restart_time.pop(pkg, None)
+        force_restart_app(pkg, states, pkg_now, 'Đang Mở Sảnh...', Y)
+        if i < len(selected_packages) - 1:
+            print(f"{Y}[*] Chờ 5s trước khi bật tab tiếp theo...{RESET}")
+            time.sleep(5)
+
+    os.system("stty sane < /dev/tty > /dev/null 2>&1")
+    # Đợi thêm 2s cho các shell command sau safe_root hoàn tất
+    time.sleep(2)
+
+    # Khởi thread riêng cho từng package
+    monitor_threads = {}
+    for item in selected_packages:
+        pkg = item['pkg']
+        t = threading.Thread(
+            target=monitor_package,
+            args=(pkg, states, last_ok_ping, stop_event),
+            daemon=True,
+            name=f"mon-{pkg[-12:]}"
+        )
+        t.start()
+        monitor_threads[pkg] = t
+
+    # Main thread: hiển thị dashboard + watchdog tự khởi lại thread chết
+    last_dashboard = 0
+    try:
+        while True:
+            current_time = time.time()
+            if current_time - last_dashboard >= 5:
+                print_dashboard(states)
+                last_dashboard = current_time
+
+            # === WATCHDOG: phát hiện thread chết và khởi lại ===
+            for item in selected_packages:
+                pkg = item['pkg']
+                t = monitor_threads.get(pkg)
+                if t and not t.is_alive():
+                    try:
+                        states[pkg]['text'] = 'Watchdog: khởi lại...'
+                        states[pkg]['color'] = M
+                    except:
+                        pass
+                    new_t = threading.Thread(
+                        target=monitor_package,
+                        args=(pkg, states, last_ok_ping, stop_event),
+                        daemon=True,
+                        name=f"mon-{pkg[-12:]}"
+                    )
+                    new_t.start()
+                    monitor_threads[pkg] = new_t
+
+            time.sleep(3)
+    except KeyboardInterrupt:
+        stop_event.set()
+        time.sleep(1.5)  # Đợi thread dừng hết
+        fix_tty()
+        print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
+        print("-" * 65)
+        print(f"{Y}[*] Bấm Enter để về menu...{RESET}")
+        try:
+            input()  # Chờ người dùng bấm Enter trước khi về menu
+        except:
+            pass
+        fix_tty()
+
+# =====================================================================
+# MAIN
+# =====================================================================
+def main():
+    fix_tty()
+    while True:
+        clear_screen()
+        print_banner()
+        print(f"[{C}1{RESET}] Quét và Chọn Package Roblox")
+        print(f"[{C}2{RESET}] Cài đặt Game ID & Time Kill All")
+        print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
+        print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
+        print(f"[{C}5{RESET}] Thoát")
+        try:
+            fix_tty()
+            choice = safe_input(f"\n{M}HuDy > {RESET}")
+        except EOFError:
+            fix_tty()
+            continue
+        if choice == '1':
+            select_package_menu()
+        elif choice == '2':
+            settings_menu()
+        elif choice == '3':
+            start_auto_rejoin()
+        elif choice == '4':
+            login_via_cookie()
+        elif choice == '5':
+            clear_screen()
+            print(f"{G}Tạm biệt!{RESET}")
+            fix_tty()
+            break
+
+if __name__ == "__main__":
+    fix_tty()
+    main()
