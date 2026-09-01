@@ -972,7 +972,7 @@ def delta_license_sync_thread(stop_event):
         try:
             if getattr(sys.modules[__name__], 'AUTO_RESTORE_DELTA_KEY', "Disable") == "Enable":
                 # 1. Quét tìm file license gốc từ game
-                find_cmd = "su -c 'find /storage/emulated/0/ /sdcard/ -maxdepth 5 -type f -path "*/Delta*/Internals/license" 2>/dev/null'"
+                find_cmd = "su -c 'find /storage/emulated/0/ /sdcard/ -maxdepth 5 -type f -path \"*/Delta*/Internals/license\" 2>/dev/null'"
                 try:
                     out = subprocess.check_output(find_cmd, shell=True, text=True, timeout=5, stderr=subprocess.DEVNULL)
                     licenses = [p.strip() for p in out.splitlines() if p.strip()]
@@ -992,7 +992,7 @@ def delta_license_sync_thread(stop_event):
                 
                 if best_lic and best_mtime > backup_mtime:
                     # Có file mới hơn -> backup nó lại
-                    subprocess.run(f"su -c 'cp "{best_lic}" "{backup_file}" && chmod 777 "{backup_file}"'", shell=True, stderr=subprocess.DEVNULL)
+                    subprocess.run(f"su -c 'cp \"{best_lic}\" \"{backup_file}\" && chmod 777 \"{backup_file}\"'", shell=True, stderr=subprocess.DEVNULL)
                     backup_mtime = best_mtime
                 
                 # 3. Nếu game lỡ xóa mất license, hãy copy từ backup trả về
@@ -1012,7 +1012,7 @@ def delta_license_sync_thread(stop_event):
                         lic_path = f"{d}/license"
                         curr_mtime = _get_file_mtime(lic_path)
                         if curr_mtime <= 0:
-                            subprocess.run(f"su -c 'mkdir -p "{d}" && cp "{backup_file}" "{lic_path}" && chmod 777 "{lic_path}"'", shell=True, stderr=subprocess.DEVNULL)
+                            subprocess.run(f"su -c 'mkdir -p \"{d}\" && cp \"{backup_file}\" \"{lic_path}\" && chmod 777 \"{lic_path}\"'", shell=True, stderr=subprocess.DEVNULL)
         except:
             pass
         stop_event.wait(5)
@@ -1156,16 +1156,14 @@ def main():
             start_auto_rejoin()
         elif choice == '4':
             login_via_cookie()
-                elif choice == '5':
+        elif choice == '5':
             global AUTO_RESTORE_DELTA_KEY
             if getattr(sys.modules[__name__], 'AUTO_RESTORE_DELTA_KEY', "Disable") == "Disable":
                 AUTO_RESTORE_DELTA_KEY = "Enable"
-                print(f"
-{G}[+] Đã BẬT Auto Restore Delta Key!{RESET}")
+                print(f"\n{G}[+] Đã BẬT Auto Restore Delta Key!{RESET}")
             else:
                 AUTO_RESTORE_DELTA_KEY = "Disable"
-                print(f"
-{Y}[*] Đã TẮT Auto Restore Delta Key!{RESET}")
+                print(f"\n{Y}[*] Đã TẮT Auto Restore Delta Key!{RESET}")
             time.sleep(1)
         elif choice == '6':
             clear_screen()
