@@ -1141,6 +1141,56 @@ def start_auto_rejoin():
 
 
 
+
+def test_delta_license():
+    clear_screen()
+    print(f"\n{C}--- KIỂM TRA FILE DELTA LICENSE ---{RESET}")
+    dirs_to_check = [
+        "/storage/emulated/0/Delta/Internals",
+        "/sdcard/Delta/Internals"
+    ]
+    if selected_packages:
+        for item in selected_packages:
+            pkg = item['pkg']
+            dirs_to_check.extend([
+                f"/sdcard/Android/media/{pkg}/Delta/Internals",
+                f"/sdcard/Android/data/{pkg}/Delta/Internals"
+            ])
+    
+    dirs_to_check = list(set(dirs_to_check))
+    found = False
+    
+    print(f"{Y}[*] Đang quét {len(dirs_to_check)} thư mục Delta...{RESET}\n")
+    for d in dirs_to_check:
+        lic_path = f"{d}/license"
+        mtime = _get_file_mtime(lic_path)
+        if mtime > 0:
+            found = True
+            t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))
+            print(f"{G}[✓] Đã tìm thấy: {lic_path}{RESET}")
+            print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
+            
+    backup_path = "/sdcard/Delta_license_backup_v2"
+    backup_mtime = _get_file_mtime(backup_path)
+    print(f"\n{M}--- KIỂM TRA FILE BACKUP ---{RESET}")
+    if backup_mtime > 0:
+        t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(backup_mtime))
+        print(f"{G}[Backup] Đang lưu trữ tại: {backup_path}{RESET}")
+        print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
+    else:
+        print(f"{R}[!] Chưa có file Backup nào được tạo ra.{RESET}")
+        
+    if not found:
+        print(f"\n{R}[✗] KHÔNG tìm thấy bất kỳ file license nào từ game.{RESET}")
+        print(f"{Y}Hãy thử vào game bằng tay và Get Key 1 lần để tạo file.{RESET}")
+        
+    fix_tty()
+    print(f"\n{Y}Bấm Enter để quay lại Menu...{RESET}")
+    try:
+        input()
+    except:
+        pass
+
 def main():
     fix_tty()
     while True:
@@ -1151,7 +1201,8 @@ def main():
         print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
         print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
         print(f"[{C}5{RESET}] Bypass Delta Key (Auto Backup/Restore)")
-        print(f"[{C}6{RESET}] Thoát")
+        print(f"[{C}6{RESET}] Kiểm tra file Delta License (Test)")
+        print(f"[{C}7{RESET}] Thoát")
         try:
             fix_tty()
             choice = safe_input(f"\n{M}HuDy > {RESET}")
@@ -1176,6 +1227,8 @@ def main():
                 print(f"\n{Y}[*] Đã TẮT Auto Restore Delta Key!{RESET}")
             time.sleep(1)
         elif choice == '6':
+            test_delta_license()
+        elif choice == '7':
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
             fix_tty()
