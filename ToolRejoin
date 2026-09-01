@@ -167,7 +167,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.2{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.1{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -1157,46 +1157,54 @@ def start_auto_rejoin():
 
 def test_delta_license():
     clear_screen()
-    print(f"\n{C}--- KIỂM TRA FILE DELTA LICENSE ---{RESET}")
-    dirs_to_check = [
-        "/storage/emulated/0/Delta/Internals",
-        "/sdcard/Delta/Internals"
-    ]
-    if selected_packages:
-        for item in selected_packages:
-            pkg = item['pkg']
-            dirs_to_check.extend([
-                f"/sdcard/Android/media/{pkg}/Delta/Internals",
-                f"/sdcard/Android/data/{pkg}/Delta/Internals"
-            ])
+    print(f"\n{C}--- DIAGNOSTIC MODE: KIỂM TRA QUYỀN TRUY CẬP ROOT ---{RESET}")
+    filepath = "/storage/emulated/0/Delta/Internals/license"
+    print(f"{Y}Đang test đọc file: {filepath}{RESET}\n")
     
-    dirs_to_check = list(set(dirs_to_check))
-    found = False
+    import subprocess, os
     
-    print(f"{Y}[*] Đang quét {len(dirs_to_check)} thư mục Delta...{RESET}\n")
-    for d in dirs_to_check:
-        lic_path = f"{d}/license"
-        mtime = _get_file_mtime_root(lic_path)
-        if mtime > 0:
-            found = True
-            t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))
-            print(f"{G}[✓] Đã tìm thấy: {lic_path}{RESET}")
-            print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
-            
-    backup_path = "/sdcard/Delta_license_backup_v2"
-    backup_mtime = _get_file_mtime_root(backup_path)
-    print(f"\n{M}--- KIỂM TRA FILE BACKUP ---{RESET}")
-    if backup_mtime > 0:
-        t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(backup_mtime))
-        print(f"{G}[Backup] Đang lưu trữ tại: {backup_path}{RESET}")
-        print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
-    else:
-        print(f"{R}[!] Chưa có file Backup nào được tạo ra.{RESET}")
+    # 1. Native
+    print(f"{C}1. Đọc bằng Python thường (Không Root):{RESET}")
+    print(f"   Tồn tại: {os.path.exists(filepath)}")
+    try:
+        print(f"   Mtime: {os.path.getmtime(filepath)}")
+    except Exception as e:
+        print(f"   Lỗi: {e}")
         
-    if not found:
-        print(f"\n{R}[✗] KHÔNG tìm thấy bất kỳ file license nào từ game.{RESET}")
-        print(f"{Y}Hãy thử vào game bằng tay và Get Key 1 lần để tạo file.{RESET}")
+    # 2. su stat
+    print(f"\n{C}2. Đọc bằng lệnh 'stat' qua Root:{RESET}")
+    try:
+        cmd = f"su -c 'stat -c %Y \"{filepath}\"'"
+        out = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.STDOUT)
+        print(f"   Kết quả: {out.strip()}")
+    except subprocess.CalledProcessError as e:
+        print(f"   {R}Thất bại (Mã lỗi {e.returncode}): {e.output.strip()}{RESET}")
+    except Exception as e:
+        print(f"   {R}Lỗi: {e}{RESET}")
         
+    # 3. su ls
+    print(f"\n{C}3. Đọc bằng lệnh 'ls' qua Root:{RESET}")
+    try:
+        cmd = f"su -c 'ls -l \"/storage/emulated/0/Delta/Internals/\"'"
+        out = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.STDOUT)
+        print(f"   Kết quả:\n{out.strip()}")
+    except subprocess.CalledProcessError as e:
+        print(f"   {R}Thất bại (Mã lỗi {e.returncode}): {e.output.strip()}{RESET}")
+    except Exception as e:
+        print(f"   {R}Lỗi: {e}{RESET}")
+        
+    # 4. su python
+    print(f"\n{C}4. Đọc bằng Python nhúng trong Root:{RESET}")
+    try:
+        python_bin = "/data/data/com.termux/files/usr/bin/python"
+        cmd = f"su -c '{python_bin} -c \"import os; print(os.path.getmtime(\'{filepath}\'))\"'"
+        out = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.STDOUT)
+        print(f"   Kết quả: {out.strip()}")
+    except subprocess.CalledProcessError as e:
+        print(f"   {R}Thất bại (Mã lỗi {e.returncode}): {e.output.strip()}{RESET}")
+    except Exception as e:
+        print(f"   {R}Lỗi: {e}{RESET}")
+
     fix_tty()
     print(f"\n{Y}Bấm Enter để quay lại Menu...{RESET}")
     try:
