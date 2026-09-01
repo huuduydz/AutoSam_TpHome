@@ -68,6 +68,16 @@ def safe_root(cmd, timeout=15):
         pass
     # KHÔNG gọi fix_tty() từ background thread - tránh corrupt terminal
 
+
+system_logs = []
+def add_log(msg):
+    global system_logs
+    import time
+    t_str = time.strftime("%H:%M:%S")
+    system_logs.append(f"[{t_str}] {msg}")
+    if len(system_logs) > 5:
+        system_logs.pop(0)
+
 def clear_screen():
     fix_tty()
     # Dùng clear system command thay vì ANSI escape sequence
@@ -186,6 +196,11 @@ def print_dashboard(states):
         print(f"{s_pkg:<20} | {s_name:<16} | {col}{txt:<25}{RESET}")
     print("-" * 65)
     print(f"{C} Đang chạy Live... (Bấm Ctrl+C để dừng){RESET}")
+    if system_logs:
+        print("-" * 65)
+        print(f"{Y}--- HỆ THỐNG LOG ---{RESET}")
+        for log in system_logs:
+            print(log)
 
 # =====================================================================
 # CÀI ĐẶT
@@ -880,7 +895,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['display_name'] = found
 
             bound = state['bound_name']
-            is_grace = (uptime_seconds < 150)  # 150s thay vì 240s → detect fail nhanh hơn
+            is_grace = (uptime_seconds < 120)  # 150s thay vì 240s → detect fail nhanh hơn
 
             # === CHƯ A BIND ĐƯỢC TÊN ===
             if not bound:
@@ -913,7 +928,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
             # === CHECK HEARTBEAT ===
             # Nếu pkg khác vừa restart (< 180s), cho thêm grace để tránh cascade
-            other_just_restarted = (current_time - last_any_restart_time < 180) and \
+            other_just_restarted = (current_time - last_any_restart_time < 90) and \
                                    (last_any_restart_time != last_restart_time.get(pkg, 0))
 
             last_ping = get_heartbeat(bound, pkg)
@@ -924,7 +939,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
                     state['text'] = f"Đang Nạp Data ({max(0,remain)}s)"
                     state['color'] = Y
-                elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
+                elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90):
                     # Cần 3 miss liên tiếp (~30s) mới restart - tránh false negative
                     with pkg_restart_locks[pkg]:
                         force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
@@ -944,7 +959,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                         remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
                         state['text'] = f"Vào Server... ({max(0,remain)}s)"
                         state['color'] = Y
-                    elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180):
+                    elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90):
                         with pkg_restart_locks[pkg]:
                             force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
                         last_ok_ping[pkg] = current_time
@@ -971,18 +986,23 @@ def delta_license_sync_thread(stop_event):
     while not stop_event.is_set():
         try:
             if getattr(sys.modules[__name__], 'AUTO_RESTORE_DELTA_KEY', "Disable") == "Enable":
-                # 1. Quét tìm file license gốc từ game
-                find_cmd = "su -c 'find /storage/emulated/0/ /sdcard/ -maxdepth 5 -type f -path \"*/Delta*/Internals/license\" 2>/dev/null'"
-                try:
-                    out = subprocess.check_output(find_cmd, shell=True, text=True, timeout=5, stderr=subprocess.DEVNULL)
-                    licenses = [p.strip() for p in out.splitlines() if p.strip()]
-                except:
-                    licenses = []
+                dirs_to_check = [
+                    "/storage/emulated/0/Delta/Internals",
+                    "/sdcard/Delta/Internals"
+                ]
+                for item in selected_packages:
+                    pkg = item['pkg']
+                    dirs_to_check.extend([
+                        f"/sdcard/Android/media/{pkg}/Delta/Internals",
+                        f"/sdcard/Android/data/{pkg}/Delta/Internals"
+                    ])
+                dirs_to_check = list(set(dirs_to_check))
                 
-                # 2. Nếu tìm thấy license thật trong thư mục game, hãy backup lại nó nếu nó mới hơn
+                # Tìm license mới nhất hiện có trong các thư mục game
                 best_mtime = 0
                 best_lic = None
-                for lic in licenses:
+                for d in dirs_to_check:
+                    lic = f"{d}/license"
                     mtime = _get_file_mtime(lic)
                     if mtime > best_mtime:
                         best_mtime = mtime
@@ -991,29 +1011,19 @@ def delta_license_sync_thread(stop_event):
                 backup_mtime = _get_file_mtime(backup_file)
                 
                 if best_lic and best_mtime > backup_mtime:
-                    # Có file mới hơn -> backup nó lại
                     subprocess.run(f"su -c 'cp \"{best_lic}\" \"{backup_file}\" && chmod 777 \"{backup_file}\"'", shell=True, stderr=subprocess.DEVNULL)
                     backup_mtime = best_mtime
+                    add_log(f"Đã Backup Key Delta mới nhất")
                 
-                # 3. Nếu game lỡ xóa mất license, hãy copy từ backup trả về
+                # Khôi phục nếu thiếu
                 if backup_mtime > 0:
-                    dirs_to_check = [
-                        "/storage/emulated/0/Delta/Internals",
-                        "/sdcard/Delta/Internals"
-                    ]
-                    for item in selected_packages:
-                        pkg = item['pkg']
-                        dirs_to_check.extend([
-                            f"/sdcard/Android/media/{pkg}/Delta/Internals",
-                            f"/sdcard/Android/data/{pkg}/Delta/Internals"
-                        ])
-                    
-                    for d in set(dirs_to_check):
+                    for d in dirs_to_check:
                         lic_path = f"{d}/license"
                         curr_mtime = _get_file_mtime(lic_path)
                         if curr_mtime <= 0:
                             subprocess.run(f"su -c 'mkdir -p \"{d}\" && cp \"{backup_file}\" \"{lic_path}\" && chmod 777 \"{lic_path}\"'", shell=True, stderr=subprocess.DEVNULL)
-        except:
+                            add_log(f"Đã Restore Key cho thư mục {d.split('/')[-3][:10]}")
+        except Exception as e:
             pass
         stop_event.wait(5)
 
