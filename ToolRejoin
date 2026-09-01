@@ -167,7 +167,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.2{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.1{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -1008,17 +1008,17 @@ def delta_license_sync_thread(stop_event):
         try:
             if getattr(sys.modules[__name__], 'AUTO_RESTORE_DELTA_KEY', "Disable") == "Enable":
                 dirs_to_check = [
-                    "/storage/emulated/0/Delta/Internals",
-                    "/data/media/0/Delta/Internals",
-                    "/sdcard/Delta/Internals"
+                    "/storage/emulated/0/Delta/Internals/Cache",
+                    "/data/media/0/Delta/Internals/Cache",
+                    "/sdcard/Delta/Internals/Cache"
                 ]
                 for item in selected_packages:
                     pkg = item['pkg']
                     dirs_to_check.extend([
-                        f"/sdcard/Android/media/{pkg}/Delta/Internals",
-                        f"/data/media/0/Android/media/{pkg}/Delta/Internals",
-                        f"/sdcard/Android/data/{pkg}/Delta/Internals",
-                        f"/data/media/0/Android/data/{pkg}/Delta/Internals"
+                        f"/sdcard/Android/media/{pkg}/Delta/Internals/Cache",
+                        f"/data/media/0/Android/media/{pkg}/Delta/Internals/Cache",
+                        f"/sdcard/Android/data/{pkg}/Delta/Internals/Cache",
+                        f"/data/media/0/Android/data/{pkg}/Delta/Internals/Cache"
                     ])
                 dirs_to_check = list(set(dirs_to_check))
                 
@@ -1172,18 +1172,18 @@ def test_delta_license():
     
     # Tạo danh sách các đường dẫn thật (bỏ qua ảo hóa mount của Android)
     dirs_to_check = [
-        "/storage/emulated/0/Delta/Internals",
-        "/sdcard/Delta/Internals",
-        "/data/media/0/Delta/Internals"  # Đường dẫn vật lý tuyệt đối
+        "/storage/emulated/0/Delta/Internals/Cache",
+        "/sdcard/Delta/Internals/Cache",
+        "/data/media/0/Delta/Internals/Cache"  # Đường dẫn vật lý tuyệt đối
     ]
     if selected_packages:
         for item in selected_packages:
             pkg = item['pkg']
             dirs_to_check.extend([
-                f"/sdcard/Android/media/{pkg}/Delta/Internals",
-                f"/sdcard/Android/data/{pkg}/Delta/Internals",
-                f"/data/media/0/Android/media/{pkg}/Delta/Internals",
-                f"/data/media/0/Android/data/{pkg}/Delta/Internals"
+                f"/sdcard/Android/media/{pkg}/Delta/Internals/Cache",
+                f"/sdcard/Android/data/{pkg}/Delta/Internals/Cache",
+                f"/data/media/0/Android/media/{pkg}/Delta/Internals/Cache",
+                f"/data/media/0/Android/data/{pkg}/Delta/Internals/Cache"
             ])
     
     dirs_to_check = list(set(dirs_to_check))
@@ -1217,7 +1217,7 @@ def test_delta_license():
         print(f"\n{M}[Gợi ý Debug] Kết quả quét thư mục vật lý:{RESET}")
         try:
             import subprocess
-            out = subprocess.check_output("su -c 'ls -l /data/media/0/Delta/Internals/'", shell=True, text=True, stderr=subprocess.STDOUT)
+            out = subprocess.check_output("su -c 'ls -l /data/media/0/Delta/Internals/Cache/'", shell=True, text=True, stderr=subprocess.STDOUT)
             print(out.strip())
         except:
             print("Không thể ls /data/media/0/")
