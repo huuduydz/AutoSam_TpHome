@@ -104,6 +104,7 @@ CHANGE_ACCOUNTS = "Disable"
 CHANGE_ACCOUNTS_CUSTOM = "Disable"
 CHECK_UI_TIME = 180
 AUTO_BLOCK = "Disable"
+AUTO_RESTORE_DELTA_KEY = "Disable"
 
 last_restart_time = {}
 last_any_restart_time = 0            # Thời điểm bất kỳ pkg nào restart gần nhất
@@ -169,6 +170,7 @@ def print_dashboard(states):
     print(f"{C}Change accounts custom: {Y}{CHANGE_ACCOUNTS_CUSTOM}{RESET}")
     print(f"{C}Check UI time: {Y}{CHECK_UI_TIME}{RESET}")
     print(f"{C}Auto block: {Y}{AUTO_BLOCK}{RESET}")
+    print(f"{C}Auto restore Delta Key: {Y}{AUTO_RESTORE_DELTA_KEY}{RESET}")
     print("-" * 65)
     print(f"{C}{'Package':<20} | {'Username':<16} | {'Status':<25}{RESET}")
     print("-" * 65)
@@ -541,8 +543,27 @@ def _kill_pkg(pkg):
     if pids:
         pid_str = ' '.join(pids)
         safe_root(f"su -c 'kill -9 {pid_str} 2>/dev/null'")
-    else:
-        safe_root(f"su -c 'am force-stop {pkg}'")
+    
+    # Aggressive kill via ps
+    try:
+        ps_cmd = f"su -c 'ps -ef 2>/dev/null || ps 2>/dev/null'"
+        out = subprocess.check_output(ps_cmd, shell=True, text=True, timeout=5, stderr=subprocess.DEVNULL)
+        pids_to_kill = []
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 8:
+                pid = parts[1]
+                name = parts[-1]
+                if name == pkg or name.startswith(pkg + ':'):
+                    if pid.isdigit() and pid not in pids:
+                        pids_to_kill.append(pid)
+        if pids_to_kill:
+            pid_str2 = ' '.join(pids_to_kill)
+            safe_root(f"su -c 'kill -9 {pid_str2} 2>/dev/null'")
+    except:
+        pass
+
+    safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(1)
 
 def boot_pkg_with_verify(pkg, max_retries=4):
@@ -556,9 +577,9 @@ def boot_pkg_with_verify(pkg, max_retries=4):
         # B) Launch đúng package, tránh dialog chọn app
         if target_place_id:
             # -p {pkg}: buộc intent vào đúng package này, không hỏi
-            # -f 0x18000000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK tránh tắt tab khác
+            # -f 0x10008000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK tránh tắt tab khác
             safe_root(
-                f"su -c 'am start -p {pkg} -f 0x18000000 -a android.intent.action.VIEW "
+                f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
                 f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
             )
         else:
@@ -943,6 +964,59 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
         stop_event.wait(10)
 
 
+
+def delta_license_sync_thread(stop_event):
+    global AUTO_RESTORE_DELTA_KEY, selected_packages
+    backup_file = "/sdcard/Delta_license_backup_v2"
+    while not stop_event.is_set():
+        try:
+            if getattr(sys.modules[__name__], 'AUTO_RESTORE_DELTA_KEY', "Disable") == "Enable":
+                # 1. Quét tìm file license gốc từ game
+                find_cmd = "su -c 'find /storage/emulated/0/ /sdcard/ -maxdepth 5 -type f -path "*/Delta*/Internals/license" 2>/dev/null'"
+                try:
+                    out = subprocess.check_output(find_cmd, shell=True, text=True, timeout=5, stderr=subprocess.DEVNULL)
+                    licenses = [p.strip() for p in out.splitlines() if p.strip()]
+                except:
+                    licenses = []
+                
+                # 2. Nếu tìm thấy license thật trong thư mục game, hãy backup lại nó nếu nó mới hơn
+                best_mtime = 0
+                best_lic = None
+                for lic in licenses:
+                    mtime = _get_file_mtime(lic)
+                    if mtime > best_mtime:
+                        best_mtime = mtime
+                        best_lic = lic
+                
+                backup_mtime = _get_file_mtime(backup_file)
+                
+                if best_lic and best_mtime > backup_mtime:
+                    # Có file mới hơn -> backup nó lại
+                    subprocess.run(f"su -c 'cp "{best_lic}" "{backup_file}" && chmod 777 "{backup_file}"'", shell=True, stderr=subprocess.DEVNULL)
+                    backup_mtime = best_mtime
+                
+                # 3. Nếu game lỡ xóa mất license, hãy copy từ backup trả về
+                if backup_mtime > 0:
+                    dirs_to_check = [
+                        "/storage/emulated/0/Delta/Internals",
+                        "/sdcard/Delta/Internals"
+                    ]
+                    for item in selected_packages:
+                        pkg = item['pkg']
+                        dirs_to_check.extend([
+                            f"/sdcard/Android/media/{pkg}/Delta/Internals",
+                            f"/sdcard/Android/data/{pkg}/Delta/Internals"
+                        ])
+                    
+                    for d in set(dirs_to_check):
+                        lic_path = f"{d}/license"
+                        curr_mtime = _get_file_mtime(lic_path)
+                        if curr_mtime <= 0:
+                            subprocess.run(f"su -c 'mkdir -p "{d}" && cp "{backup_file}" "{lic_path}" && chmod 777 "{lic_path}"'", shell=True, stderr=subprocess.DEVNULL)
+        except:
+            pass
+        stop_event.wait(5)
+
 def start_auto_rejoin():
     global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
     if not selected_packages:
@@ -965,6 +1039,9 @@ def start_auto_rejoin():
     states = {}
     last_ok_ping = {}
     stop_event = threading.Event()
+    sync_t = threading.Thread(target=delta_license_sync_thread, args=(stop_event,), daemon=True)
+    sync_t.start()
+
     now = time.time()
 
     # Bật từng tab theo thứ tự, cách nhau 5s để hệ thống ổn định
@@ -1051,6 +1128,9 @@ def start_auto_rejoin():
 # =====================================================================
 # MAIN
 # =====================================================================
+
+
+
 def main():
     fix_tty()
     while True:
@@ -1060,7 +1140,8 @@ def main():
         print(f"[{C}2{RESET}] Cài đặt Game ID & Time Kill All")
         print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
         print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
-        print(f"[{C}5{RESET}] Thoát")
+        print(f"[{C}5{RESET}] Bypass Delta Key (Auto Backup/Restore)")
+        print(f"[{C}6{RESET}] Thoát")
         try:
             fix_tty()
             choice = safe_input(f"\n{M}HuDy > {RESET}")
@@ -1075,7 +1156,18 @@ def main():
             start_auto_rejoin()
         elif choice == '4':
             login_via_cookie()
-        elif choice == '5':
+                elif choice == '5':
+            global AUTO_RESTORE_DELTA_KEY
+            if getattr(sys.modules[__name__], 'AUTO_RESTORE_DELTA_KEY', "Disable") == "Disable":
+                AUTO_RESTORE_DELTA_KEY = "Enable"
+                print(f"
+{G}[+] Đã BẬT Auto Restore Delta Key!{RESET}")
+            else:
+                AUTO_RESTORE_DELTA_KEY = "Disable"
+                print(f"
+{Y}[*] Đã TẮT Auto Restore Delta Key!{RESET}")
+            time.sleep(1)
+        elif choice == '6':
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
             fix_tty()
