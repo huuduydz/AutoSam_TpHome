@@ -1,0 +1,12 @@
+_G.webhook_url = "" 
+_G.AutoSeaEvents = true
+_G.buso = true
+_G.ken = true
+_G.noclip = true 
+_G.WhiteScreen = false
+_G.boss = {"Sea King", "Hydra"}
+_G.tool = {"Sword", "Fruit","Melee"} 
+_G.skill = {"M1", "Z", "X", "C","V","B","E"}
+_G.BossEarlyJoinSec = 30
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/kaitun",true))()
