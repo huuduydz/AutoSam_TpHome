@@ -167,7 +167,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.1{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.2{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -378,6 +378,19 @@ def get_all_heartbeat_files_fast(pkg=None):
 
 def get_heartbeat_files_for_pkg(pkg):
     return get_all_heartbeat_files_fast(pkg)
+
+
+def _get_file_mtime_root(filepath):
+    """Lấy mtime bằng quyền root để xuyên qua bộ nhớ của Android 11+"""
+    try:
+        import subprocess
+        # Dùng stat để lấy timestamp
+        out = subprocess.check_output(f"su -c 'stat -c %Y \"{filepath}\" 2>/dev/null'", shell=True, text=True, timeout=3).strip()
+        if out.isdigit():
+            return float(out)
+    except:
+        pass
+    return 0
 
 def _get_file_mtime(filepath):
     """Lấy mtime - thử getmtime trước, fallback su stat cho file cần root."""
@@ -1003,12 +1016,12 @@ def delta_license_sync_thread(stop_event):
                 best_lic = None
                 for d in dirs_to_check:
                     lic = f"{d}/license"
-                    mtime = _get_file_mtime(lic)
+                    mtime = _get_file_mtime_root(lic)
                     if mtime > best_mtime:
                         best_mtime = mtime
                         best_lic = lic
                 
-                backup_mtime = _get_file_mtime(backup_file)
+                backup_mtime = _get_file_mtime_root(backup_file)
                 
                 if best_lic and best_mtime > backup_mtime:
                     subprocess.run(f"su -c 'cp \"{best_lic}\" \"{backup_file}\" && chmod 777 \"{backup_file}\"'", shell=True, stderr=subprocess.DEVNULL)
@@ -1019,7 +1032,7 @@ def delta_license_sync_thread(stop_event):
                 if backup_mtime > 0:
                     for d in dirs_to_check:
                         lic_path = f"{d}/license"
-                        curr_mtime = _get_file_mtime(lic_path)
+                        curr_mtime = _get_file_mtime_root(lic_path)
                         if curr_mtime <= 0:
                             subprocess.run(f"su -c 'mkdir -p \"{d}\" && cp \"{backup_file}\" \"{lic_path}\" && chmod 777 \"{lic_path}\"'", shell=True, stderr=subprocess.DEVNULL)
                             add_log(f"Đã Restore Key cho thư mục {d.split('/')[-3][:10]}")
@@ -1163,7 +1176,7 @@ def test_delta_license():
     print(f"{Y}[*] Đang quét {len(dirs_to_check)} thư mục Delta...{RESET}\n")
     for d in dirs_to_check:
         lic_path = f"{d}/license"
-        mtime = _get_file_mtime(lic_path)
+        mtime = _get_file_mtime_root(lic_path)
         if mtime > 0:
             found = True
             t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))
@@ -1171,7 +1184,7 @@ def test_delta_license():
             print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
             
     backup_path = "/sdcard/Delta_license_backup_v2"
-    backup_mtime = _get_file_mtime(backup_path)
+    backup_mtime = _get_file_mtime_root(backup_path)
     print(f"\n{M}--- KIỂM TRA FILE BACKUP ---{RESET}")
     if backup_mtime > 0:
         t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(backup_mtime))
