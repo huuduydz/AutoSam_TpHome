@@ -1,58 +1,1753 @@
-import subprocess
-import os
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading
+from datetime import datetime
+import xml.etree.ElementTree as ET
 
-filepath = "/storage/emulated/0/Delta/Internals/license"
+# =====================================================================
+# ANTI-CRASH & FIX TERMINAL
+# =====================================================================
+_original_print = builtins.print
+def safe_print(*args, **kwargs):
+    if 'end' not in kwargs:
+        kwargs['end'] = '\r\n'
+    _original_print(*args, **kwargs)
+builtins.print = safe_print
 
-print(f"=== DIAGNOSTIC SCRIPT ===")
-print(f"Checking {filepath}\n")
-
-# 1. Native Python
-print("1. Python Native Check:")
-print(f"os.path.exists: {os.path.exists(filepath)}")
 try:
-    print(f"os.path.getmtime: {os.path.getmtime(filepath)}")
-except Exception as e:
-    print(f"os.path.getmtime error: {e}")
-print("-" * 30)
+    import termios
+    OLD_TTY = termios.tcgetattr(sys.stdin.fileno())
+except:
+    OLD_TTY = None
 
-# 2. stat via su
-print("2. su stat Check:")
-try:
-    cmd = f"su -c 'stat -c %Y \"{filepath}\"'"
-    print(f"Running: {cmd}")
-    out = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.STDOUT)
-    print(f"Output: {out.strip()}")
-except subprocess.CalledProcessError as e:
-    print(f"FAILED: Exit code {e.returncode}\nOutput: {e.output.strip()}")
-except Exception as e:
-    print(f"Exception: {e}")
-print("-" * 30)
+def fix_tty():
+    # Chỉ fix TTY từ main thread - tránh bg thread corrupt terminal
+    if threading.current_thread() is not threading.main_thread():
+        return
+    try:
+        if OLD_TTY:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, OLD_TTY)
+        else:
+            os.system("stty sane 2>/dev/null")
+    except:
+        pass
+    # Tắt bracketed paste mode để tránh lỗi gõ phím ra ^[1
+    try:
+        sys.stdout.write('\033[?2004l')
+        sys.stdout.flush()
+    except:
+        pass
 
-# 3. ls via su
-print("3. su ls Check:")
-try:
-    cmd = f"su -c 'ls -l /storage/emulated/0/Delta/Internals/'"
-    print(f"Running: {cmd}")
-    out = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.STDOUT)
-    print(f"Output:\n{out.strip()}")
-except subprocess.CalledProcessError as e:
-    print(f"FAILED: Exit code {e.returncode}\nOutput: {e.output.strip()}")
-except Exception as e:
-    print(f"Exception: {e}")
-print("-" * 30)
+def safe_input(prompt=''):
+    """Input wrapper: fix TTY trước, sau đó lọc escape sequence ra khỏi kết quả."""
+    fix_tty()
+    try:
+        val = input(prompt)
+    except EOFError:
+        fix_tty()
+        return ''
+    # Lọc bỏ escape sequence dạng ^[ (ESC) và ^[[...~ (bracketed paste markers)
+    val = re.sub(r'\x1b\[\?2004[hl]', '', val)  # bracketed paste on/off
+    val = re.sub(r'\x1b\[200~|\x1b\[201~', '', val)  # paste start/end markers
+    val = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', val)  # các escape sequence khác
+    val = re.sub(r'\x1b.', '', val)  # ESC + ký tự bất kỳ còn sót
+    return val.strip()
 
-# 4. python inside su
-print("4. Python via su Check:")
-try:
-    python_bin = "/data/data/com.termux/files/usr/bin/python"
-    cmd = f"su -c '{python_bin} -c \"import os; print(os.path.exists(\\'{filepath}\\'))\"'"
-    print(f"Running: {cmd}")
-    out = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.STDOUT)
-    print(f"Output: {out.strip()}")
-except subprocess.CalledProcessError as e:
-    print(f"FAILED: Exit code {e.returncode}\nOutput: {e.output.strip()}")
-except Exception as e:
-    print(f"Exception: {e}")
-print("-" * 30)
+def safe_root(cmd, timeout=15):
+    """Chạy lệnh root với timeout - tránh subprocess treo mãi khi 24/7."""
+    try:
+        subprocess.run(
+            cmd, shell=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        pass
+    except:
+        pass
+    # KHÔNG gọi fix_tty() từ background thread - tránh corrupt terminal
 
-print("Done.")
+
+system_logs = []
+def add_log(msg):
+    global system_logs
+    import time
+    t_str = time.strftime("%H:%M:%S")
+    system_logs.append(f"[{t_str}] {msg}")
+    if len(system_logs) > 5:
+        system_logs.pop(0)
+
+def clear_screen():
+    fix_tty()
+    # Dùng clear system command thay vì ANSI escape sequence
+    # Để tránh tạo tab mới hoặc scroll lạ trên terminal Android/Cloud Phone
+    try:
+        os.system('clear 2>/dev/null || cls 2>/dev/null')
+    except:
+        sys.stdout.write('\033[2J\033[H\r')
+        sys.stdout.flush()
+
+# =====================================================================
+# MÀU SẮC
+# =====================================================================
+C = '\033[96m'
+G = '\033[92m'
+Y = '\033[93m'
+R = '\033[91m'
+M = '\033[95m'
+RESET = '\033[0m'
+
+# =====================================================================
+# BIẾN TOÀN CỤC
+# =====================================================================
+selected_packages = []
+target_place_id = "4520749081"
+kill_all_time = 0
+json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
+heartbeat_last_check = {}     # {pkg: {acc_name: last_check_time}}
+CLAIMED_NAMES = set()
+
+# Tùy chọn giao diện
+CHECK_EXECUTOR_METHOD = "Disable"
+CHANGE_ACCOUNTS = "Disable"
+CHANGE_ACCOUNTS_CUSTOM = "Disable"
+CHECK_UI_TIME = 180
+AUTO_BLOCK = "Disable"
+AUTO_RESTORE_DELTA_KEY = "Disable"
+
+# Delta key: số giờ trước khi coi key là hết hạn và cần lấy mới
+KEY_EXPIRE_HOURS = 23
+_last_key_trigger = {}   # {pkg: timestamp} – khi nào lần cuối trigger Get Key
+BACON_API_KEY = ""
+BACON_BACKUP_FILE = "/data/media/0/Delta_license_backup_hudy3"
+
+last_restart_time = {}
+last_any_restart_time = 0            # Thời điểm bất kỳ pkg nào restart gần nhất
+shared_lock = threading.Lock()       # bảo vệ CLAIMED_NAMES giữa các thread
+pkg_restart_locks = {}               # {pkg: Lock} - mỗi pkg 1 lock riêng
+global_restart_semaphore = threading.Semaphore(1)  # Chỉ serialize bước boot
+file_to_pkg_binding = {}             # {file_path: pkg} - ghi nhớ file json nào thuộc pkg nào
+
+# =====================================================================
+# LẤY CPU & RAM
+# =====================================================================
+def get_cpu_usage():
+    try:
+        with open("/proc/stat", "r") as f:
+            line = f.readline()
+            parts = line.split()
+            if len(parts) >= 5:
+                total = sum(int(x) for x in parts[1:])
+                idle = int(parts[4])
+                return f"{((total - idle) / total * 100):.2f}%"
+    except:
+        return "N/A"
+
+def get_memory_usage():
+    try:
+        with open("/proc/meminfo", "r") as f:
+            lines = f.readlines()
+        total = free = 0
+        for line in lines:
+            if line.startswith("MemTotal:"):
+                total = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                free = int(line.split()[1])
+        if total > 0:
+            used = total - free
+            return f"{(used / total * 100):.1f}%"
+    except:
+        return "N/A"
+
+# =====================================================================
+# GIAO DIỆN DASHBOARD
+# =====================================================================
+def print_banner():
+    banner = f"""{C}
+ ██░ ██  █    ██  ██▓███ ▓██   ██▓
+▓██░ ██▒ ██  ▓██▒▓██░  ██▒▒██  ██▒
+▒██▀▀██░▓██  ▒██░▓██░ ██▓▒ ▒██ ██░
+░▓█ ░██ ▓▓█  ░██░▒██▄█▓▒ ▒ ░ ▐██▓░
+░▓█▒░██▓▒▒█████▓ ▒██▒ ░  ░ ░ ██▒▓░
+{RESET}"""
+    print(banner)
+    print(f"{G}Developer: {Y}HuDy{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.1{RESET}")
+    print("-" * 65)
+
+def print_dashboard(states):
+    clear_screen()
+    print_banner()
+    print(f"{C}CPU: {G}{get_cpu_usage()}{RESET} | {C}RAM: {G}{get_memory_usage()}{RESET}")
+    print("-" * 65)
+    print(f"{C}Check executor method: {Y}{CHECK_EXECUTOR_METHOD}{RESET}")
+    print(f"{C}Change accounts: {Y}{CHANGE_ACCOUNTS}{RESET}")
+    print(f"{C}Change accounts custom: {Y}{CHANGE_ACCOUNTS_CUSTOM}{RESET}")
+    print(f"{C}Check UI time: {Y}{CHECK_UI_TIME}{RESET}")
+    print(f"{C}Auto block: {Y}{AUTO_BLOCK}{RESET}")
+    print(f"{C}Auto restore Delta Key: {Y}{AUTO_RESTORE_DELTA_KEY}{RESET}")
+    print("-" * 65)
+    print(f"{C}{'Package':<20} | {'Username':<16} | {'Status':<25}{RESET}")
+    print("-" * 65)
+    for item in selected_packages:
+        pkg = item['pkg']
+        s_pkg = pkg if len(pkg) <= 19 else pkg[:16] + "..."
+        s_name = states[pkg]['display_name']
+        if len(s_name) > 15: s_name = s_name[:12] + "..."
+        txt = states[pkg]['text']
+        # Truncate text để tránh tràn dòng dashboard
+        if len(txt) > 24: txt = txt[:21] + "..."
+        col = states[pkg]['color']
+        print(f"{s_pkg:<20} | {s_name:<16} | {col}{txt:<25}{RESET}")
+    print("-" * 65)
+    print(f"{C} Đang chạy Live... (Bấm Ctrl+C để dừng){RESET}")
+    if system_logs:
+        print("-" * 65)
+        print(f"{Y}--- HỆ THỐNG LOG ---{RESET}")
+        for log in system_logs:
+            print(log)
+
+# =====================================================================
+# CÀI ĐẶT
+# =====================================================================
+def settings_menu():
+    global target_place_id, kill_all_time
+    print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
+    fix_tty()
+    p_id_raw = safe_input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}")
+    if p_id_raw == "":
+        target_place_id = "4520749081"
+        print(f"{Y}[*] Place ID mặc định: {target_place_id}{RESET}")
+    elif p_id_raw == "0":
+        target_place_id = ""
+        print(f"{Y}[*] Đã xóa Place ID, app mở vào sảnh chính.{RESET}")
+    else:
+        nums = re.findall(r'\d+', p_id_raw)
+        if nums:
+            target_place_id = nums[0]
+            print(f"{G}[+] Đã lưu Place ID: {target_place_id}{RESET}")
+        else:
+            print(f"{R}[!] ID không hợp lệ.{RESET}")
+    fix_tty()
+    k_time_raw = safe_input(f"{M}Nhập thời gian Auto Restart (phút, 0 để tắt): {RESET}")
+    if k_time_raw != "":
+        nums = re.findall(r'\d+', k_time_raw)
+        if nums:
+            kill_all_time = int(nums[0])
+            if kill_all_time > 0:
+                print(f"{G}[+] Auto Restart mỗi {kill_all_time} phút.{RESET}")
+            else:
+                print(f"{Y}[*] Đã tắt Auto Restart.{RESET}")
+        else:
+            print(f"{R}[!] Số phút không hợp lệ.{RESET}")
+    time.sleep(2)
+
+def scan_packages():
+    packages = []
+    try:
+        output = subprocess.check_output("pm list packages -3", shell=True, text=True, stderr=subprocess.DEVNULL)
+    except:
+        try:
+            output = subprocess.check_output("su -c 'pm list packages -3'", shell=True, text=True, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+        except:
+            output = ""
+    fix_tty()
+    for line in output.splitlines():
+        if "package:" in line:
+            packages.append(line.replace("package:", "").strip())
+    return list(set(packages))
+
+def select_package_menu():
+    global selected_packages
+    packages = scan_packages()
+    if not packages:
+        print(f"{R}[!] Không tìm thấy app nào!{RESET}")
+        time.sleep(2)
+        return
+    print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
+    for i, pkg in enumerate(packages, 1):
+        print(f"[{i}] {pkg}")
+    try:
+        fix_tty()
+        print(f"\n{C}💡 Nhập số thứ tự cách nhau khoảng trắng (VD: 1 3 5){RESET}")
+        choice_str = safe_input(f"{M}Chọn số: {RESET}")
+        choices = [int(x) for x in re.findall(r'\d+', choice_str)]
+        selected_packages.clear()
+        for choice in set(choices):
+            if 1 <= choice <= len(packages):
+                pkg_name = packages[choice - 1]
+                fix_tty()
+                acc_name = safe_input(f"\n{C}[?] Tên In-game cho {Y}{pkg_name}{C} (bỏ trống để auto): {RESET}")
+                selected_packages.append({"pkg": pkg_name, "name": acc_name})
+        if selected_packages:
+            print(f"\n{G}[+] Đã chọn {len(selected_packages)} package.{RESET}")
+            time.sleep(1)
+    except:
+        pass
+
+# =====================================================================
+# INJECT SCRIPT UNIVERSAL (giữ nguyên)
+# =====================================================================
+def inject_universal_lua():
+    lua_code = """
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
+local Players = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
+local DisconnectErrors = Enum.ConnectionError.DisconnectErrors.Value
+local PlaceLaunchOtherError = Enum.ConnectionError.PlacelaunchOtherError.Value
+repeat task.wait() until game:IsLoaded() and Players.LocalPlayer
+local LocalPlayer = Players.LocalPlayer
+local fileName = "rj_" .. LocalPlayer.Name .. "_checkhudyhub.json"
+local sWF = true
+task.spawn(function()
+    while sWF do
+        task.wait(3)
+        pcall(function()
+            local errorCode = GuiService:GetErrorCode().Value
+            if errorCode == 1 or errorCode == 773 or errorCode == 772 or errorCode == 769 or (errorCode >= DisconnectErrors and errorCode < PlaceLaunchOtherError) then
+                sWF = false
+            end
+        end)
+        if sWF then
+            local pidOk, pid = pcall(function() return game.PlaceId end)
+            local humOk, hum = pcall(function() return LocalPlayer.Character.Humanoid end)
+            if not (pidOk and pid == 0 and not (humOk and hum)) then
+                pcall(function()
+                    -- Ghi Unix timestamp số nguyên (không dùng string date) để Python đọc chính xác
+                    writefile(fileName, string.format('{"playerName":"%s","timestamp":%d}', LocalPlayer.Name, math.floor(workspace:GetServerTimeNow())))
+                end)
+            end
+        end
+    end
+end)"""
+    safe_root("su -c 'find /sdcard/ -maxdepth 4 -type f -name \"*checkhudyhub.lua\" -delete 2>/dev/null'")
+    temp_lua = "/sdcard/Download/universal_checkhudyhub.lua"
+    with open(temp_lua, "w", encoding="utf-8") as f:
+        f.write(lua_code)
+    root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/universal_checkhudyhub.lua\\" && chmod 777 \\"\\$dir/universal_checkhudyhub.lua\\"; done; rm {temp_lua}" """
+    safe_root(root_cmd)
+
+# =====================================================================
+# HEARTBEAT & ACCOUNT DISCOVERY (ĐÃ SỬA TÌM ĐÚNG FILE)
+# =====================================================================
+def extract_username_from_filename(filename):
+    """Lấy tên ingame từ tên file kiểu rj_TEN_checkhudyhub.json hoặc r_j_TEN_checkhudyhub.json..."""
+    base = os.path.basename(filename)
+    # Xóa đuôi _checkhudyhub.json
+    if base.endswith('_checkhudyhub.json'):
+        base = base[:-len('_checkhudyhub.json')]
+    else:
+        # Không đúng định dạng, thử tách phần trước đuôi .json
+        base = os.path.splitext(base)[0]
+    # Tách bởi dấu gạch dưới, lấy phần tử cuối cùng (sau khi đã bỏ hậu tố) làm tên
+    # Với rj_TEN -> parts = ['rj', 'TEN'] -> lấy parts[-1]
+    # Với r_j_TEN -> parts = ['r', 'j', 'TEN'] -> lấy parts[-1]
+    parts = base.split('_')
+    if len(parts) >= 2:
+        return parts[-1]  # Phần cuối là tên
+    return base  # fallback
+
+def get_all_heartbeat_files_fast(pkg=None):
+    """Tìm file heartbeat bằng su find - giống hudy_2.py đã hoạt động."""
+    search_dirs = [
+        "/sdcard/Android/media",
+        "/sdcard/Android/data",
+        "/sdcard/Delta",
+        "/storage/emulated/0/Delta",
+        "/sdcard/DeltaQT",
+        "/storage/emulated/0/DeltaQT",
+        "/sdcard/ModWorkspace",
+    ]
+    if pkg:
+        search_dirs = [
+            f"/sdcard/Android/media/{pkg}",
+            f"/sdcard/Android/data/{pkg}",
+            "/sdcard/Delta",
+            "/storage/emulated/0/Delta",
+            "/sdcard/DeltaQT",
+            "/storage/emulated/0/DeltaQT",
+        ]
+    results = []
+    for d in search_dirs:
+        try:
+            cmd = f"su -c 'find {d} -iname \"*_checkhudyhub.json\" -type f 2>/dev/null'"
+            out = subprocess.check_output(cmd, shell=True, text=True, timeout=5,
+                                           stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL).strip()
+            for line in out.splitlines():
+                line = line.strip()
+                if line and '_checkhudyhub.json' in line:
+                    results.append(line)
+        except:
+            pass
+    return list(set(results))
+
+def get_heartbeat_files_for_pkg(pkg):
+    return get_all_heartbeat_files_fast(pkg)
+
+
+def _get_file_mtime_root(filepath):
+    try:
+        import subprocess
+        cmd = f"su -c 'stat -c %Y \"{filepath}\"' 2>/dev/null"
+        out = subprocess.check_output(cmd, shell=True, text=True, timeout=2).strip()
+        if out.isdigit():
+            return float(out)
+    except:
+        pass
+    try:
+        import subprocess
+        # Backup dùng su -mm (Mount Master) để xuyên Namespace nếu Magisk hỗ trợ
+        cmd = f"su -mm -c 'stat -c %Y \"{filepath}\"' 2>/dev/null"
+        out = subprocess.check_output(cmd, shell=True, text=True, timeout=2).strip()
+        if out.isdigit():
+            return float(out)
+    except:
+        pass
+    return 0
+
+def _get_file_mtime(filepath):
+    """Lấy mtime - thử getmtime trước, fallback su stat cho file cần root."""
+    try:
+        return os.path.getmtime(filepath)
+    except:
+        pass
+    try:
+        out = subprocess.check_output(
+            f"su -c 'stat -c %Y \"{filepath}\" 2>/dev/null'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).strip()
+        if out.isdigit():
+            return float(out)
+    except:
+        pass
+    return -1
+
+import json as _json_mod
+
+def _read_json_timestamp(filepath):
+    """Đọc nội dung JSON, trả về Unix timestamp. -1 nếu lỗi.
+    Hỗ trợ format mới {timestamp:N} và format cũ {time:string}."""
+    raw = None
+    # Ưu tiên đọc trực tiếp (Delta ở /storage/emulated/0/ không cần root)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as fh:
+            raw = fh.read().strip()
+    except:
+        pass
+    # Fallback: đọc qua su -c cat (file trong /sdcard/Android/ cần root)
+    if not raw:
+        try:
+            raw = subprocess.check_output(
+                f"su -c 'cat \"{filepath}\" 2>/dev/null'",
+                shell=True, text=True, timeout=3,
+                stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            ).strip()
+        except:
+            pass
+    if not raw:
+        return -1
+    try:
+        data = _json_mod.loads(raw)
+        if 'timestamp' in data:
+            return float(data['timestamp'])
+        if 'time' in data:
+            # Format cũ: "2024-05-01T12:00:00Z" → parse thành epoch
+            from datetime import datetime, timezone
+            dt = datetime.strptime(data['time'], '%Y-%m-%dT%H:%M:%SZ')
+            return dt.replace(tzinfo=timezone.utc).timestamp()
+    except:
+        pass
+    return -1
+
+def get_heartbeat(acc_name, pkg):
+    """Trả về mtime của file heartbeat - giống hudy_2.py đã hoạt động."""
+    global json_path_cache, heartbeat_last_check, file_to_pkg_binding
+    now = time.time()
+    if pkg not in json_path_cache:
+        json_path_cache[pkg] = {}
+        heartbeat_last_check[pkg] = {}
+    cache = json_path_cache[pkg]
+    last_check = heartbeat_last_check[pkg]
+
+    if acc_name in cache:
+        cached_path, cached_mtime = cache[acc_name]
+        if os.path.exists(cached_path):
+            if now - last_check.get(acc_name, 0) < 15:
+                return cached_mtime
+            mtime = _get_file_mtime(cached_path)
+            if mtime > 0:
+                cache[acc_name] = (cached_path, mtime)
+                last_check[acc_name] = now
+                with shared_lock:
+                    file_to_pkg_binding[cached_path] = pkg
+                return mtime
+        del cache[acc_name]
+
+    all_files = get_all_heartbeat_files_fast(pkg)
+    best_mtime = 0
+    best_file = None
+    for f in all_files:
+        name_in_file = extract_username_from_filename(f)
+        if name_in_file == acc_name:
+            mtime = _get_file_mtime(f)
+            if mtime > best_mtime:
+                best_mtime = mtime
+                best_file = f
+    if best_file and best_mtime > 0:
+        cache[acc_name] = (best_file, best_mtime)
+        last_check[acc_name] = now
+        with shared_lock:
+            file_to_pkg_binding[best_file] = pkg
+        return best_mtime
+    return -1
+
+def discover_unbound_account(pkg, states):
+    """Tìm acc chưa được claim. Dùng mtime giống hudy_2.py (đã hoạt động)."""
+    global CLAIMED_NAMES, file_to_pkg_binding
+
+    active_names_other_pkgs = {
+        s['bound_name'] for p, s in states.items()
+        if p != pkg and s.get('bound_name')
+    }
+    with shared_lock:
+        blocked_files = {fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg != pkg}
+
+    all_files = get_all_heartbeat_files_fast(pkg)
+    candidates = []
+    now = time.time()
+    for f in all_files:
+        if f in blocked_files:
+            continue
+        mtime = _get_file_mtime(f)
+        if mtime > 0 and now - mtime < 300:
+            name = extract_username_from_filename(f)
+            if name:
+                candidates.append((name, mtime, f))
+    candidates.sort(key=lambda x: x[1], reverse=True)
+
+    with shared_lock:
+        for name, mtime, fpath in candidates:
+            if name not in CLAIMED_NAMES and name not in active_names_other_pkgs:
+                CLAIMED_NAMES.add(name)
+                file_to_pkg_binding[fpath] = pkg
+                return name
+    return None
+
+# =====================================================================
+# BOOT & RESTART
+# =====================================================================
+_boot_threads = {}   # {pkg: Thread} — track boot threads
+
+def _pgrep_pkg(pkg, timeout=3):
+    """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c để tránh va chạm clone."""
+    pids = []
+    try:
+        cmd = "su -c 'for p in /proc/[0-9]*; do [ -d \"$p\" ] && echo -n \"${p##*/}:\" && cat \"$p/cmdline\" 2>/dev/null && echo; done'"
+        out = subprocess.check_output(
+            cmd, shell=True, timeout=timeout,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        for line in out.split(b'\n'):
+            if b':' not in line:
+                continue
+            parts = line.split(b':', 1)
+            pid_str = parts[0].strip()
+            if not pid_str.isdigit():
+                continue
+            cmdline = parts[1].split(b'\x00')[0].decode('utf-8', errors='ignore').strip()
+            if cmdline == pkg or cmdline.startswith(pkg + ':'):
+                pids.append(pid_str.decode('utf-8'))
+    except:
+        pass
+    return pids
+
+def _is_pkg_active(pkg):
+    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys (chính xác, không va chạm clone)."""
+    if _pgrep_pkg(pkg):
+        return True
+    try:
+        out = subprocess.check_output(
+            f"su -c 'dumpsys activity activities 2>/dev/null'",
+            shell=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        # So khớp package name chính xác với word boundary
+        pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
+        return bool(pattern.search(out))
+    except:
+        return False
+
+def _kill_pkg(pkg):
+    """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
+    pids = _pgrep_pkg(pkg)
+    if pids:
+        pid_str = ' '.join(pids)
+        safe_root(f"su -c 'kill -9 {pid_str} 2>/dev/null'")
+    
+    # Aggressive kill via ps
+    try:
+        ps_cmd = f"su -c 'ps -ef 2>/dev/null || ps 2>/dev/null'"
+        out = subprocess.check_output(ps_cmd, shell=True, text=True, timeout=5, stderr=subprocess.DEVNULL)
+        pids_to_kill = []
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 8:
+                pid = parts[1]
+                name = parts[-1]
+                if name == pkg or name.startswith(pkg + ':'):
+                    if pid.isdigit() and pid not in pids:
+                        pids_to_kill.append(pid)
+        if pids_to_kill:
+            pid_str2 = ' '.join(pids_to_kill)
+            safe_root(f"su -c 'kill -9 {pid_str2} 2>/dev/null'")
+    except:
+        pass
+
+    safe_root(f"su -c 'am force-stop {pkg}'")
+    time.sleep(1)
+
+def boot_pkg_with_verify(pkg, max_retries=4):
+    """Boot pkg với tối đa 4 lần thử. Mỗi lần: force-stop sạch → am start → poll 30s.
+    Dùng -p {pkg} để tránh hộp thoại 'Mở bằng...' (app chooser)."""
+    for attempt in range(1, max_retries + 1):
+        # A) Dọn process cũ hoàn toàn
+        safe_root(f"su -c 'am force-stop {pkg}'")
+        time.sleep(2)
+
+        # B) Launch đúng package, tránh dialog chọn app
+        if target_place_id:
+            # -p {pkg}: buộc intent vào đúng package này, không hỏi
+            # -f 0x10008000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK tránh tắt tab khác
+            safe_root(
+                f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
+                f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
+            )
+        else:
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+
+        # C) Poll 6×5s = 30s
+        for _ in range(6):
+            time.sleep(5)
+            if _is_pkg_active(pkg):
+                return True
+
+        if attempt < max_retries:
+            time.sleep(3)
+
+    # Last resort
+    safe_root(f"su -c 'am force-stop {pkg}'")
+    time.sleep(2)
+    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+    return False
+
+def _boot_worker(pkg, states):
+    """Background thread: boot pkg không block monitor thread."""
+    boot_acquired = global_restart_semaphore.acquire(timeout=60)
+    try:
+        boot_pkg_with_verify(pkg)
+    except Exception:
+        pass
+    finally:
+        if boot_acquired:
+            global_restart_semaphore.release()
+        _boot_threads.pop(pkg, None)
+
+def force_restart_app(pkg, states, current_time, reason, color):
+    global last_restart_time, last_any_restart_time, file_to_pkg_binding
+    if pkg in last_restart_time and current_time - last_restart_time[pkg] < 180:
+        return
+
+    states[pkg]['text'] = reason
+    states[pkg]['color'] = color
+    last_restart_time[pkg] = current_time
+    last_any_restart_time = current_time
+
+    # ── B1: Kill ngay (ngược lại với semaphore → không block pkg khác) ───
+    _kill_pkg(pkg)
+
+    # ── Dọn file heartbeat + cache RAM ──────────────────────────
+    bound_name = states[pkg].get('bound_name')
+    if bound_name:
+        safe_root(
+            f"su -c 'rm -f "
+            f"/sdcard/Android/media/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/media/{pkg}/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Android/data/{pkg}/*_{bound_name}_checkhudyhub.json "
+            f"/sdcard/Delta/*_{bound_name}_checkhudyhub.json "
+            f"2>/dev/null'"
+        )
+        json_path_cache.pop(pkg, None)
+        heartbeat_last_check.pop(pkg, None)
+        with shared_lock:
+            CLAIMED_NAMES.discard(bound_name)
+            stale_fps = [fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg == pkg]
+            for fp in stale_fps:
+                del file_to_pkg_binding[fp]
+
+    # ── Reset state ──────────────────────────────────────────
+    states[pkg]['rejoin_time'] = current_time
+    states[pkg]['warmup_until'] = current_time + 60
+    states[pkg]['bound_name'] = None
+    states[pkg]['display_name'] = 'Chờ Auto-Bind...'
+    states[pkg]['heartbeat_misses'] = 0
+
+    # ── B2: Boot trong background thread — monitor thread không bị block ────
+    existing = _boot_threads.get(pkg)
+    if existing and existing.is_alive():
+        return  # Đang boot rồi, không spawn thêm
+    t = threading.Thread(
+        target=_boot_worker, args=(pkg, states),
+        daemon=True, name=f"boot_{pkg[-8:]}"
+    )
+    _boot_threads[pkg] = t
+    t.start()
+
+# =====================================================================
+# COOKIE INJECTION (giữ nguyên)
+# =====================================================================
+def inject_cookie_webview(pkg, cookie):
+    webview_db = f"/data/data/{pkg}/app_webview/Default/Cookies"
+    try:
+        subprocess.check_output(f"su -c 'test -f {webview_db} && echo exists'", shell=True, text=True, timeout=5)
+    except:
+        return False
+    tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
+    os.makedirs(tmp_dir, exist_ok=True)
+    local_db = os.path.join(tmp_dir, f"cookies_{pkg.split('.')[-1]}.db")
+    subprocess.run(f"su -c 'cp {webview_db} {local_db} && chmod 666 {local_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        conn = sqlite3.connect(local_db)
+        c = conn.cursor()
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+        if not c.fetchone():
+            conn.close()
+            os.remove(local_db)
+            return False
+        c.execute("PRAGMA table_info(cookies)")
+        columns = [col[1] for col in c.fetchall()]
+        now = int(time.time())
+        data = {
+            'creation_utc': now, 'top_frame_site_key': '.roblox.com', 'host_key': '.roblox.com',
+            'name': '.ROBLOSECURITY', 'value': cookie, 'path': '/', 'expires_utc': 2147483647,
+            'is_secure': 1, 'is_httponly': 1, 'last_access_utc': now, 'has_expires': 1,
+            'is_permanent': 1, 'source_port': -1, 'is_same_party': 0
+        }
+        cols = [k for k in data if k in columns]
+        values = [data[k] for k in cols]
+        placeholders = ','.join(['?' for _ in cols])
+        c.execute("DELETE FROM cookies WHERE host_key=? AND name=?", ('.roblox.com', '.ROBLOSECURITY'))
+        sql = f"INSERT INTO cookies ({','.join(cols)}) VALUES ({placeholders})"
+        c.execute(sql, values)
+        conn.commit()
+        conn.close()
+        subprocess.run(f"su -c 'cp {local_db} {webview_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.remove(local_db)
+        return True
+    except Exception as e:
+        try:
+            conn.close()
+        except:
+            pass
+        try:
+            os.remove(local_db)
+        except:
+            pass
+        print(f"{R}    └─ Lỗi WebView: {str(e)[:80]}{RESET}")
+        return False
+
+def inject_cookie_safe_xml(pkg, cookie):
+    shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
+    try:
+        files_str = subprocess.check_output(f"su -c 'ls {shared_prefs_dir}/*.xml 2>/dev/null'", shell=True, text=True, timeout=5).strip()
+    except:
+        return False
+    if not files_str:
+        return False
+    xml_files = files_str.split('\n')
+    uid = "10000"
+    try:
+        uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=5).strip()
+    except:
+        pass
+    for xml_path in xml_files:
+        xml_path = xml_path.strip()
+        if not xml_path:
+            continue
+        try:
+            raw = subprocess.check_output(f"su -c 'cat {xml_path} 2>/dev/null'", shell=True, text=True, timeout=5)
+        except:
+            continue
+        if '<map>' not in raw:
+            continue
+        existing = {}
+        try:
+            root_el = ET.fromstring(raw)
+            for string_tag in root_el.findall('string'):
+                key = string_tag.get('name')
+                if key:
+                    existing[key] = string_tag.text
+        except:
+            pass
+        existing['ROBLOSECURITY'] = cookie
+        new_root = ET.Element('map')
+        for k, v in existing.items():
+            el = ET.SubElement(new_root, 'string', name=k)
+            el.text = v
+        xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(new_root, encoding='unicode')
+        tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+        fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(xml_output)
+        subprocess.run(f"su -c 'cp {temp_file} {xml_path} && chown {uid}:{uid} {xml_path} && chmod 660 {xml_path} && restorecon {xml_path} 2>/dev/null || true && touch {xml_path}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.remove(temp_file)
+    return True
+
+def login_via_cookie():
+    global selected_packages
+    if not selected_packages:
+        print(f"{R}[!] Phải chọn Package ở mục [1] trước!{RESET}")
+        time.sleep(2)
+        return
+    print(f"\n{C}--- ĐĂNG NHẬP BẰNG COOKIE (TỰ ĐỘNG PHÁT HIỆN DB) ---{RESET}")
+    print(f"{Y}Tool sẽ thử WebView, nếu không có sẽ dùng XML shared_prefs.{RESET}")
+    try:
+        test = subprocess.check_output("su -c 'echo testok'", shell=True, text=True, timeout=5)
+        if "testok" not in test:
+            print(f"{R}[!] Không có quyền ROOT!{RESET}")
+            time.sleep(3)
+            return
+    except:
+        print(f"{R}[!] Lỗi kiểm tra SU.{RESET}")
+        time.sleep(3)
+        return
+    fix_tty()
+    cookie = safe_input(f"{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").replace('\r', '').replace('\n', '')
+    if not cookie.startswith("_|WARNING"):
+        print(f"{R}[!] Cookie không hợp lệ!{RESET}")
+        time.sleep(2)
+        return
+    print(f"\n{G}[+] Cookie hợp lệ! Đang inject...{RESET}")
+    time.sleep(1)
+    for idx, item in enumerate(selected_packages, 1):
+        pkg = item['pkg']
+        print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
+        print(f"{Y}[{idx}/{len(selected_packages)}] {pkg}{RESET}")
+        subprocess.run(f"su -c 'am force-stop {pkg}'", shell=True, stdout=subprocess.DEVNULL)
+        time.sleep(1)
+        success = inject_cookie_webview(pkg, cookie)
+        if success:
+            print(f"{G}[✓] WebView Database thành công.{RESET}")
+        else:
+            print(f"{Y}[*] Thử XML shared_prefs...{RESET}")
+            if inject_cookie_safe_xml(pkg, cookie):
+                print(f"{G}[✓] XML shared_prefs thành công.{RESET}")
+            else:
+                print(f"{R}[✗] Không thể inject cookie.{RESET}")
+        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/*; rm -rf /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
+        print(f"{Y}[*] Mở app...{RESET}")
+        subprocess.run(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'", shell=True, stdout=subprocess.DEVNULL)
+        time.sleep(1)
+    print(f"\n{G}[+] HOÀN TẤT.{RESET}")
+    time.sleep(5)
+
+# =====================================================================
+# AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
+# =====================================================================
+# =====================================================================
+# MONITOR THREAD - Mỗi package chạy 1 thread riêng
+# =====================================================================
+def is_app_running(pkg):
+    """Kiểm tra process của package (chính xác, không va chạm clone)."""
+    return bool(_pgrep_pkg(pkg))
+
+def monitor_package(pkg, states, last_ok_ping, stop_event):
+    """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
+    global kill_all_time, last_restart_time, CLAIMED_NAMES
+    while not stop_event.is_set():
+        try:
+            current_time = time.time()
+            state = states[pkg]
+            # session_start_time: thời điểm start lần đầu, KHÔNG reset khi rejoin
+            # rejoin_time: chỉ dùng để tính warmup
+            session_uptime = current_time - state['session_start_time']
+            uptime_seconds = current_time - state['rejoin_time']
+
+            # === KIỂM TRA ĐANG TRONG TIẾN TRÌNH BOOT ===
+            if pkg in _boot_threads and _boot_threads[pkg].is_alive():
+                state['text'] = "Đang Khởi Động..."
+                state['color'] = Y
+                stop_event.wait(5)
+                continue
+
+            # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
+            if uptime_seconds > 15 and not is_app_running(pkg):
+                can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                if can_restart:
+                    with pkg_restart_locks[pkg]:
+                        force_restart_app(pkg, states, current_time, "App không chạy!", R)
+                    last_ok_ping[pkg] = current_time
+                else:
+                    state['text'] = 'App tắt, chờ...'
+                    state['color'] = R
+                stop_event.wait(5)
+                continue
+
+            # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
+            if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
+                # Dùng lock riêng của pkg - tránh block luồng khác
+                with pkg_restart_locks[pkg]:
+                    force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
+                # Reset session timer sau khi auto restart
+                state['session_start_time'] = current_time
+                last_ok_ping[pkg] = current_time
+                stop_event.wait(10)
+                continue
+
+            # === WARMUP ===
+            if current_time < state.get('warmup_until', 0):
+                state['text'] = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
+                state['color'] = Y
+                stop_event.wait(5)
+                continue
+
+            # === TÌM TÊN NẾU CHƯA BIND ===
+            if not state['bound_name']:
+                found = discover_unbound_account(pkg, states)
+                if found:
+                    state['bound_name'] = found
+                    state['display_name'] = found
+
+            bound = state['bound_name']
+            is_grace = (uptime_seconds < 120)  # 150s thay vì 240s → detect fail nhanh hơn
+
+            # === CHƯ A BIND ĐƯỢC TÊN ===
+            if not bound:
+                if is_grace:
+                    # Nếu app không chạy sau 30s warmup → restart ngay
+                    if uptime_seconds > 30 and not is_app_running(pkg):
+                        can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                        if can_restart:
+                            with pkg_restart_locks[pkg]:
+                                force_restart_app(pkg, states, current_time, "App không mở được!", R)
+                            last_ok_ping[pkg] = current_time
+                        else:
+                            state['text'] = 'App lỗi, đang chờ...'
+                            state['color'] = R
+                    else:
+                        state['text'] = f"Đang Load ({int(150 - uptime_seconds)}s)"
+                        state['color'] = Y
+                else:
+                    can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
+                    if can_restart:
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẻ t Bind!", R)
+                        last_ok_ping[pkg] = current_time
+                    else:
+                        wait_sec = int(180 - (current_time - last_restart_time.get(pkg, current_time)))
+                        state['text'] = f"Chờ Restart ({wait_sec}s)"
+                        state['color'] = R
+                stop_event.wait(10)
+                continue
+
+            # === CHECK HEARTBEAT ===
+            # Nếu pkg khác vừa restart (< 180s), cho thêm grace để tránh cascade
+            other_just_restarted = (current_time - last_any_restart_time < 90) and \
+                                   (last_any_restart_time != last_restart_time.get(pkg, 0))
+
+            last_ping = get_heartbeat(bound, pkg)
+            if last_ping == -1:
+                state['heartbeat_misses'] = state.get('heartbeat_misses', 0) + 1
+                misses = state['heartbeat_misses']
+                if is_grace or other_just_restarted:
+                    remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
+                    state['text'] = f"Đang Nạp Data ({max(0,remain)}s)"
+                    state['color'] = Y
+                elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90):
+                    # Cần 3 miss liên tiếp (~30s) mới restart - tránh false negative
+                    with pkg_restart_locks[pkg]:
+                        force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
+                    last_ok_ping[pkg] = current_time
+                    state['heartbeat_misses'] = 0
+                else:
+                    state['text'] = f"Mất HB ({misses}/3 lần)..."
+                    state['color'] = Y
+            else:
+                state['heartbeat_misses'] = 0  # Reset khi có heartbeat
+                diff = current_time - last_ping
+                if diff <= 120:
+                    last_ok_ping[pkg] = current_time
+                real_diff = current_time - last_ok_ping.get(pkg, current_time)
+                if diff > 120:
+                    if is_grace or other_just_restarted:
+                        remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
+                        state['text'] = f"Vào Server... ({max(0,remain)}s)"
+                        state['color'] = Y
+                    elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90):
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
+                        last_ok_ping[pkg] = current_time
+                    elif real_diff < 120:
+                        state['text'] = f"Cảnh báo lag ({int(diff)}s)"
+                        state['color'] = Y
+                else:
+                    state['text'] = f"Đang Farm ({int(diff)}s trước)"
+                    state['color'] = G
+        except Exception as e:
+            # Ghi lỗi nhưng không crash thread - quan trọng cho 24/7
+            try:
+                states[pkg]['text'] = f"Lỗi ({str(e)[:15]})"
+                states[pkg]['color'] = R
+            except:
+                pass
+        stop_event.wait(10)
+
+
+
+# =====================================================================
+# BACON BYPASS API CLIENT & DELTA AUTO-BYPASS ENGINE
+# =====================================================================
+from collections import deque
+import random
+
+def mask_secret(secret):
+    """Che giấu chuỗi bảo mật/API Key khi hiển thị trên terminal hoặc log."""
+    if not secret:
+        return "<CHƯA CÓ>"
+    secret = str(secret).strip()
+    if len(secret) <= 8:
+        return "***"
+    return f"{secret[:4]}...{secret[-4:]}"
+
+class BaconApiException(Exception):
+    """Lớp Exception cơ sở cho mọi lỗi trả về từ Bacon Bypass API."""
+    def __init__(self, message, status_code=None, response_body=None):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.response_body = response_body
+    def __str__(self):
+        st = f" [HTTP {self.status_code}]" if self.status_code else ""
+        return f"{self.__class__.__name__}{st}: {self.message}"
+
+class BadRequestException(BaconApiException):
+    """Mã 400: Thiếu tham số bắt buộc hoặc dữ liệu sai."""
+    def __init__(self, message, response_body=None):
+        super().__init__(message, status_code=400, response_body=response_body)
+
+class InvalidKeyException(BaconApiException):
+    """Mã 403: API Key không hợp lệ, chưa kích hoạt hoặc đã hết hạn."""
+    def __init__(self, message, response_body=None):
+        super().__init__(message, status_code=403, response_body=response_body)
+
+class RateLimitExceededException(BaconApiException):
+    """Mã 429: Vượt quá giới hạn gọi API (>3 req/10s)."""
+    def __init__(self, message, response_body=None):
+        super().__init__(message, status_code=429, response_body=response_body)
+
+class UpstreamProviderException(BaconApiException):
+    """Mã 500: Lỗi máy chủ hoặc upstream link provider không phản hồi."""
+    def __init__(self, message, response_body=None):
+        super().__init__(message, status_code=500, response_body=response_body)
+
+class BaconTimeoutException(BaconApiException):
+    """Lỗi Timeout: Quá 90s không nhận được kết quả giải mã."""
+    def __init__(self, message="Request timed out after 90s."):
+        super().__init__(message, status_code=408)
+
+class SlidingWindowRateLimiter:
+    """Rate Limiter cửa sổ trượt: đảm bảo nghiêm ngặt tối đa 3 requests / 10s (Thread-safe)."""
+    def __init__(self, max_requests=3, window_seconds=10.0):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._timestamps = deque()
+        self._lock = threading.Lock()
+
+    def acquire(self):
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                while self._timestamps and self._timestamps[0] <= now - self.window_seconds:
+                    self._timestamps.popleft()
+                if len(self._timestamps) < self.max_requests:
+                    self._timestamps.append(now)
+                    return
+                earliest = self._timestamps[0]
+                sleep_sec = earliest + self.window_seconds - now + 0.05
+            if sleep_sec > 0:
+                time.sleep(sleep_sec)
+
+# Singleton rate limiter dùng chung cho toàn bộ tiến trình
+_bacon_rate_limiter = SlidingWindowRateLimiter(max_requests=3, window_seconds=10.0)
+
+def load_bacon_api_key():
+    """Tự động đọc Bacon API Key từ RAM, biến môi trường hoặc các file cấu hình."""
+    global BACON_API_KEY
+    if BACON_API_KEY:
+        return BACON_API_KEY
+    env_k = os.environ.get("BACON_API_KEY")
+    if env_k:
+        BACON_API_KEY = env_k.strip()
+        return BACON_API_KEY
+    search_files = [
+        "bacon_key.txt",
+        "/data/media/0/bacon_key.txt",
+        "/sdcard/bacon_key.txt",
+        "/data/data/com.termux/files/home/bacon_key.txt"
+    ]
+    for p in search_files:
+        try:
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    k = f.read().strip()
+                    if k:
+                        BACON_API_KEY = k
+                        return BACON_API_KEY
+        except:
+            pass
+    return ""
+
+def save_bacon_api_key(key):
+    """Lưu Bacon API Key vào bộ nhớ và file cục bộ."""
+    global BACON_API_KEY
+    BACON_API_KEY = key.strip()
+    search_files = [
+        "bacon_key.txt",
+        "/data/media/0/bacon_key.txt",
+        "/sdcard/bacon_key.txt"
+    ]
+    for p in search_files:
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(BACON_API_KEY)
+        except:
+            pass
+
+class BaconBypassClient:
+    """Client tự động giải mã link qua Bacon Bypass API với chuẩn Production-grade."""
+    DEFAULT_BASE_URL = "https://baconbypass.online"
+    DEFAULT_TIMEOUT = 90.0
+    DEFAULT_MAX_RETRIES = 3
+
+    def __init__(self, api_key=None, base_url=None, timeout=DEFAULT_TIMEOUT, max_retries=DEFAULT_MAX_RETRIES):
+        self.api_key = api_key or load_bacon_api_key()
+        if not self.api_key:
+            raise InvalidKeyException("Chưa cấu hình Bacon API Key.")
+        self.base_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        self.timeout = max(float(timeout), 90.0)
+        self.max_retries = int(max_retries)
+
+    def _execute_http_post(self, endpoint, payload):
+        payload_bytes = _json_mod.dumps(payload).encode('utf-8')
+        # Thử sử dụng requests nếu môi trường có sẵn
+        try:
+            import requests
+            r = requests.post(
+                endpoint, json=payload,
+                headers={"Content-Type": "application/json", "User-Agent": "BaconClient/1.0"},
+                timeout=self.timeout
+            )
+            try:
+                data = r.json()
+            except Exception:
+                data = {"raw": r.text}
+            return r.status_code, data
+        except ImportError:
+            pass
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                raise BaconTimeoutException(str(e))
+
+        # Fallback thư viện chuẩn urllib (chạy trên mọi máy Android/Termux không cần pip)
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(
+            endpoint, data=payload_bytes,
+            headers={"Content-Type": "application/json", "User-Agent": "BaconClient/1.0"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                raw_txt = resp.read().decode('utf-8', errors='ignore')
+                try:
+                    data = _json_mod.loads(raw_txt)
+                except:
+                    data = {"raw": raw_txt}
+                return resp.status, data
+        except urllib.error.HTTPError as he:
+            raw_txt = he.read().decode('utf-8', errors='ignore') if he.fp else ""
+            try:
+                data = _json_mod.loads(raw_txt)
+            except:
+                data = {"raw": raw_txt}
+            return he.code, data
+        except urllib.error.URLError as ue:
+            if "timed out" in str(ue.reason).lower():
+                raise BaconTimeoutException(str(ue.reason))
+            raise BaconApiException(f"Lỗi mạng kết nối: {ue.reason}")
+        except TimeoutError as te:
+            raise BaconTimeoutException(str(te))
+
+    def bypass(self, target_url):
+        if not target_url or not isinstance(target_url, str):
+            raise BadRequestException("Target URL không hợp lệ.")
+        endpoint = f"{self.base_url}/bypass"
+        payload = {"url": target_url.strip(), "apikey": self.api_key}
+
+        for attempt in range(self.max_retries + 1):
+            _bacon_rate_limiter.acquire()
+            try:
+                status, data = self._execute_http_post(endpoint, payload)
+                if status == 200:
+                    if isinstance(data, dict) and data.get("status") == "success":
+                        res = data.get("result")
+                        if res:
+                            return res
+                    raise BaconApiException(f"Phản hồi không hợp lệ: {data}", status_code=status, response_body=data)
+
+                err_msg = data.get("message", str(data)) if isinstance(data, dict) else str(data)
+
+                # Lỗi định danh & cú pháp: Không retry
+                if status == 400:
+                    raise BadRequestException(err_msg, response_body=data)
+                if status == 403:
+                    raise InvalidKeyException(err_msg, response_body=data)
+
+                # Lỗi tạm thời: Exponential Backoff với Jitter
+                if status in (429, 500):
+                    if attempt < self.max_retries:
+                        backoff = min(30.0, 2.0 * (2 ** attempt)) + random.uniform(0.5, 1.5)
+                        add_log(f"[Bacon] HTTP {status}, thử lại sau {int(backoff)}s ({attempt+1}/{self.max_retries})")
+                        time.sleep(backoff)
+                        continue
+                    if status == 429:
+                        raise RateLimitExceededException(f"Vượt giới hạn Rate Limit: {err_msg}", response_body=data)
+                    raise UpstreamProviderException(f"Lỗi Upstream Server: {err_msg}", response_body=data)
+
+                raise BaconApiException(f"Lỗi HTTP {status}: {err_msg}", status_code=status, response_body=data)
+
+            except BaconTimeoutException as te:
+                if attempt < self.max_retries:
+                    backoff = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
+                    add_log(f"[Bacon] Quá hạn 90s, thử lại sau {int(backoff)}s...")
+                    time.sleep(backoff)
+                    continue
+                raise te
+            except BaconApiException:
+                raise
+            except Exception as ex:
+                if attempt < self.max_retries:
+                    time.sleep(2)
+                    continue
+                raise BaconApiException(f"Lỗi không xác định: {str(ex)}")
+
+        raise BaconApiException("Đã thử hết số lần retry cho phép.")
+
+def get_android_clipboard():
+    """Đọc dữ liệu từ clipboard Android (termux hoặc su)."""
+    try:
+        out = subprocess.check_output("termux-clipboard-get 2>/dev/null", shell=True, text=True, timeout=2).strip()
+        if out: return out
+    except: pass
+    try:
+        out = subprocess.check_output("su -c 'cmd clipboard get' 2>/dev/null", shell=True, text=True, timeout=2).strip()
+        if out: return out
+    except: pass
+    return ""
+
+def set_android_clipboard(text):
+    """Ghi dữ liệu vào clipboard Android."""
+    try:
+        subprocess.run(f"echo -n \"{text}\" | termux-clipboard-set 2>/dev/null", shell=True, timeout=2)
+    except: pass
+    try:
+        safe_root(f"su -c 'cmd clipboard set \"{text}\" 2>/dev/null'")
+    except: pass
+
+def extract_getkey_url(text):
+    """Trích xuất URL Get Key từ văn bản (Platoboost, Linkvertise, Lootlabs...)."""
+    if not text:
+        return None
+    patterns = [
+        r'(https?://gateway\.platoboost\.com[^\s"\'<>]+)',
+        r'(https?://[^\s"\'<>]*(?:platoboost|linkvertise|loot-link|loot-labs|lootdest|direct-link)[^\s"\'<>]*)',
+        r'(https?://[^\s"\'<>]+(?:getkey|key)[^\s"\'<>]*)'
+    ]
+    for p in patterns:
+        m = re.search(p, text, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return None
+
+def _http_get_ping(url, timeout=15):
+    """Gửi GET request để kích hoạt Whitelist/HWID callback trên hệ thống key."""
+    try:
+        import requests
+        headers = {"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36"}
+        requests.get(url, headers=headers, timeout=timeout)
+        return True
+    except: pass
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile)"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+        return True
+    except: pass
+    return False
+
+def _get_delta_license_dirs():
+    """Trả về danh sách tất cả thư mục có thể chứa Delta license."""
+    dirs = [
+        "/storage/emulated/0/Delta/Internals/Cache",
+        "/data/media/0/Delta/Internals/Cache",
+        "/sdcard/Delta/Internals/Cache",
+        "/sdcard/DeltaQT/Internals/Cache",
+        "/storage/emulated/0/DeltaQT/Internals/Cache",
+    ]
+    for item in selected_packages:
+        pkg = item['pkg']
+        dirs.extend([
+            f"/sdcard/Android/media/{pkg}/Delta/Internals/Cache",
+            f"/data/media/0/Android/media/{pkg}/Delta/Internals/Cache",
+            f"/sdcard/Android/data/{pkg}/Delta/Internals/Cache",
+            f"/data/media/0/Android/data/{pkg}/Delta/Internals/Cache",
+        ])
+    return list(set(dirs))
+
+
+def open_delta_getkey(pkg):
+    """Trigger Delta mở trang Get Key bằng cách gửi intent vào activity chính.
+    Delta thường xử lý key check khi launch nên force-stop rồi reopen là đủ."""
+    # Bước 1: xóa file license cũ hết hạn để Delta bắt buộc get key mới
+    dirs = _get_delta_license_dirs()
+    for d in dirs:
+        lic = f"{d}/license"
+        mt = _get_file_mtime_root(lic)
+        if mt > 0:  # file tồn tại → xóa để force re-auth
+            safe_root(f"su -c 'rm -f \"{lic}\"'")
+
+    # Bước 2: force-stop Delta rồi mở lại → Delta sẽ detect thiếu key → mở Get Key page
+    safe_root(f"su -c 'am force-stop {pkg}'")
+    time.sleep(2)
+    safe_root(
+        f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
+    )
+    add_log(f"[Key] Đã mở Delta Get Key cho {pkg[-20:]}")
+
+
+def delta_license_sync_thread(stop_event):
+    """Thread quản lý Delta key:
+    - Backup key mới nhất mỗi khi phát hiện file license mới hơn backup.
+    - Restore vào thư mục thiếu NẾU key còn trong hạn (< KEY_EXPIRE_HOURS giờ).
+    - Tích hợp Bacon Bypass: Tự động bắt link Get Key từ Clipboard, giải mã và kích hoạt license mới.
+    """
+    global AUTO_RESTORE_DELTA_KEY, selected_packages, _last_key_trigger
+    backup_file = BACON_BACKUP_FILE
+
+    while not stop_event.is_set():
+        try:
+            if getattr(sys.modules[__name__], 'AUTO_RESTORE_DELTA_KEY', "Disable") != "Enable":
+                stop_event.wait(10)
+                continue
+
+            dirs_to_check = _get_delta_license_dirs()
+            now = time.time()
+            expire_secs = KEY_EXPIRE_HOURS * 3600
+
+            # ── B1: Tìm file license mới nhất đang tồn tại trong game ───────
+            best_mtime = 0
+            best_lic   = None
+            for d in dirs_to_check:
+                lic   = f"{d}/license"
+                mtime = _get_file_mtime_root(lic)
+                if mtime > best_mtime:
+                    best_mtime = mtime
+                    best_lic   = lic
+
+            backup_mtime = _get_file_mtime_root(backup_file)
+
+            # ── B2: Backup nếu có file mới hơn backup ───────────────────────
+            if best_lic and best_mtime > backup_mtime:
+                subprocess.run(
+                    f"su -c 'cp \"{best_lic}\" \"{backup_file}\" && chmod 777 \"{backup_file}\"'",
+                    shell=True, stderr=subprocess.DEVNULL
+                )
+                backup_mtime = best_mtime
+                add_log("[Key] Đã Backup Key Delta mới nhất")
+
+            # ── B3: Xác định key có còn hợp lệ không ───────────────────────
+            key_age = now - backup_mtime if backup_mtime > 0 else float('inf')
+            key_valid = (backup_mtime > 0) and (key_age < expire_secs)
+
+            if key_valid:
+                # Key còn hợp lệ → restore vào thư mục nào đang thiếu
+                for d in dirs_to_check:
+                    lic_path  = f"{d}/license"
+                    curr_mtime = _get_file_mtime_root(lic_path)
+                    if curr_mtime <= 0:
+                        subprocess.run(
+                            f"su -c 'mkdir -p \"{d}\" && cp \"{backup_file}\" \"{lic_path}\" && chmod 777 \"{lic_path}\" && restorecon \"{lic_path}\" 2>/dev/null || true'",
+                            shell=True, stderr=subprocess.DEVNULL
+                        )
+                        add_log(f"[Key] Restore Key → {d.split('/')[-3][:12]}")
+            else:
+                # ── B4: Key hết hạn hoặc chưa có → Tự động xử lý bằng Bacon API ────
+                bkey = load_bacon_api_key()
+                for item in selected_packages:
+                    pkg = item['pkg']
+                    last_trigger = _last_key_trigger.get(pkg, 0)
+                    if now - last_trigger >= 300:  # 5 phút tối thiểu giữa các lần trigger
+                        _last_key_trigger[pkg] = now
+
+                        # Bước 4.1: Kiểm tra xem đã có link trong Clipboard chưa
+                        clip = get_android_clipboard()
+                        target_url = extract_getkey_url(clip)
+
+                        if not target_url:
+                            # Nếu chưa có link: Mở Delta để nó kích hoạt tạo link Get Key
+                            open_delta_getkey(pkg)
+                            for _ in range(6):  # Chờ 12s đọc clipboard
+                                stop_event.wait(2)
+                                clip = get_android_clipboard()
+                                target_url = extract_getkey_url(clip)
+                                if target_url:
+                                    break
+
+                        # Bước 4.2: Nếu có link và đã cấu hình Bacon API Key -> Thực hiện Bypass
+                        if target_url and bkey:
+                            add_log(f"[Bacon] Phát hiện link: {target_url[:20]}...")
+                            try:
+                                client = BaconBypassClient(api_key=bkey, timeout=90.0, max_retries=3)
+                                direct_res = client.bypass(target_url)
+                                add_log("[Bacon] Giải mã thành công!")
+
+                                # Nếu kết quả là link kích hoạt Whitelist -> Ping GET
+                                if direct_res.startswith("http://") or direct_res.startswith("https://"):
+                                    _http_get_ping(direct_res)
+                                    add_log("[Bacon] Đã gửi xác thực Whitelist!")
+                                else:
+                                    set_android_clipboard(direct_res)
+
+                                # Relaunch Delta để app xác nhận whitelist và tạo license file
+                                safe_root(f"su -c 'am force-stop {pkg}'")
+                                time.sleep(2)
+                                safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+                                add_log(f"[Key] Mở lại {pkg[-12:]} để nhận key")
+                                stop_event.wait(20)
+                            except BaconApiException as be:
+                                add_log(f"[Bacon Lỗi] {str(be)[:25]}")
+                        else:
+                            if not bkey and target_url:
+                                add_log("[Bacon] Cần cấu hình API Key ở mục [5]")
+                            stop_event.wait(30)
+                        break
+
+        except Exception:
+            pass
+        stop_event.wait(15)
+
+def start_auto_rejoin():
+    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
+    if not selected_packages:
+        print(f"{R}[!] Chọn package trước!{RESET}")
+        time.sleep(2)
+        return
+
+    last_restart_time = {}
+    last_any_restart_time = 0
+    json_path_cache = {}
+    heartbeat_last_check = {}
+    CLAIMED_NAMES = set()
+    pkg_restart_locks = {}
+    global_restart_semaphore = threading.Semaphore(1)
+    file_to_pkg_binding = {}
+
+    print(f"\n{Y}[*] Inject script universal...{RESET}")
+    inject_universal_lua()
+
+    states = {}
+    last_ok_ping = {}
+    stop_event = threading.Event()
+    sync_t = threading.Thread(target=delta_license_sync_thread, args=(stop_event,), daemon=True)
+    sync_t.start()
+
+    now = time.time()
+
+    # Bật từng tab theo thứ tự, cách nhau 5s để hệ thống ổn định
+    for i, item in enumerate(selected_packages):
+        pkg = item['pkg']
+        pkg_restart_locks[pkg] = threading.Lock()
+        pkg_now = time.time()  # Dùng thời gian thực tế cho từng pkg, không dùng `now` chung
+        states[pkg] = {
+            'text': 'Đang Mở Sảnh...',
+            'color': Y,
+            'bound_name': item['name'] if item['name'] else None,
+            'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
+            'rejoin_time': pkg_now,
+            'session_start_time': pkg_now,
+            'warmup_until': pkg_now + 90,
+            'heartbeat_misses': 0
+        }
+        last_ok_ping[pkg] = pkg_now
+        last_restart_time.pop(pkg, None)
+        force_restart_app(pkg, states, pkg_now, 'Đang Mở Sảnh...', Y)
+        if i < len(selected_packages) - 1:
+            print(f"{Y}[*] Chờ 5s trước khi bật tab tiếp theo...{RESET}")
+            time.sleep(5)
+
+    os.system("stty sane < /dev/tty > /dev/null 2>&1")
+    # Đợi thêm 2s cho các shell command sau safe_root hoàn tất
+    time.sleep(2)
+
+    # Khởi thread riêng cho từng package
+    monitor_threads = {}
+    for item in selected_packages:
+        pkg = item['pkg']
+        t = threading.Thread(
+            target=monitor_package,
+            args=(pkg, states, last_ok_ping, stop_event),
+            daemon=True,
+            name=f"mon-{pkg[-12:]}"
+        )
+        t.start()
+        monitor_threads[pkg] = t
+
+    # Main thread: hiển thị dashboard + watchdog tự khởi lại thread chết
+    last_dashboard = 0
+    try:
+        while True:
+            current_time = time.time()
+            if current_time - last_dashboard >= 5:
+                print_dashboard(states)
+                last_dashboard = current_time
+
+            # === WATCHDOG: phát hiện thread chết và khởi lại ===
+            for item in selected_packages:
+                pkg = item['pkg']
+                t = monitor_threads.get(pkg)
+                if t and not t.is_alive():
+                    try:
+                        states[pkg]['text'] = 'Watchdog: khởi lại...'
+                        states[pkg]['color'] = M
+                    except:
+                        pass
+                    new_t = threading.Thread(
+                        target=monitor_package,
+                        args=(pkg, states, last_ok_ping, stop_event),
+                        daemon=True,
+                        name=f"mon-{pkg[-12:]}"
+                    )
+                    new_t.start()
+                    monitor_threads[pkg] = new_t
+
+            time.sleep(3)
+    except KeyboardInterrupt:
+        stop_event.set()
+        time.sleep(1.5)  # Đợi thread dừng hết
+        fix_tty()
+        print(f"\n{R}[!] Đã dừng Auto Rejoin.{RESET}")
+        print("-" * 65)
+        print(f"{Y}[*] Bấm Enter để về menu...{RESET}")
+        try:
+            input()  # Chờ người dùng bấm Enter trước khi về menu
+        except:
+            pass
+        fix_tty()
+
+# =====================================================================
+# MAIN
+# =====================================================================
+
+
+
+
+def test_delta_license():
+    clear_screen()
+    print(f"\n{C}--- KIỂM TRA FILE DELTA LICENSE (CHẾ ĐỘ XUYÊN KHÔNG GIAN) ---{RESET}")
+    
+    # Tạo danh sách các đường dẫn thật (bỏ qua ảo hóa mount của Android)
+    dirs_to_check = [
+        "/storage/emulated/0/Delta/Internals/Cache",
+        "/sdcard/Delta/Internals/Cache",
+        "/data/media/0/Delta/Internals/Cache"  # Đường dẫn vật lý tuyệt đối
+    ]
+    if selected_packages:
+        for item in selected_packages:
+            pkg = item['pkg']
+            dirs_to_check.extend([
+                f"/sdcard/Android/media/{pkg}/Delta/Internals/Cache",
+                f"/sdcard/Android/data/{pkg}/Delta/Internals/Cache",
+                f"/data/media/0/Android/media/{pkg}/Delta/Internals/Cache",
+                f"/data/media/0/Android/data/{pkg}/Delta/Internals/Cache"
+            ])
+    
+    dirs_to_check = list(set(dirs_to_check))
+    found = False
+    
+    print(f"{Y}[*] Đang quét {len(dirs_to_check)} thư mục Delta...{RESET}\n")
+    for d in dirs_to_check:
+        lic_path = f"{d}/license"
+        mtime = _get_file_mtime_root(lic_path)
+        if mtime > 0:
+            found = True
+            import time
+            t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))
+            print(f"{G}[✓] Đã tìm thấy: {lic_path}{RESET}")
+            print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
+            
+    backup_path = BACON_BACKUP_FILE # Đường dẫn backup chuẩn: /data/media/0/Delta_license_backup_hudy3
+    backup_mtime = _get_file_mtime_root(backup_path)
+    if backup_mtime <= 0:
+        backup_path = "/data/media/0/Delta_license_backup_v2"
+        backup_mtime = _get_file_mtime_root(backup_path)
+    print(f"\n{M}--- KIỂM TRA FILE BACKUP ---{RESET}")
+    if backup_mtime > 0:
+        import time
+        t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(backup_mtime))
+        print(f"{G}[Backup] Đang lưu trữ tại: {backup_path}{RESET}")
+        print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
+    else:
+        print(f"{R}[!] Chưa có file Backup nào được tạo ra.{RESET}")
+        
+    if not found:
+        print(f"\n{R}[✗] KHÔNG tìm thấy bất kỳ file license nào từ game.{RESET}")
+        print(f"{Y}Hãy thử vào game bằng tay và Get Key 1 lần để tạo file.{RESET}")
+        print(f"\n{M}[Gợi ý Debug] Kết quả quét thư mục vật lý:{RESET}")
+        try:
+            import subprocess
+            out = subprocess.check_output("su -c 'ls -l /data/media/0/Delta/Internals/Cache/'", shell=True, text=True, stderr=subprocess.STDOUT)
+            print(out.strip())
+        except:
+            print("Không thể ls /data/media/0/")
+        
+    fix_tty()
+    print(f"\n{Y}Bấm Enter để quay lại Menu...{RESET}")
+    try:
+        input()
+    except:
+        pass
+
+def delta_key_menu():
+    global AUTO_RESTORE_DELTA_KEY
+    while True:
+        clear_screen()
+        print_banner()
+        st_col = G if AUTO_RESTORE_DELTA_KEY == "Enable" else R
+        current_k = load_bacon_api_key()
+        m_bacon = mask_secret(current_k) if current_k else "Chưa cài đặt"
+        print(f"{C}--- QUẢN LÝ DELTA KEY & BACON AUTO BYPASS ---{RESET}")
+        print(f"1. Trạng thái Auto Restore & Bypass: {st_col}{AUTO_RESTORE_DELTA_KEY}{RESET}")
+        print(f"2. Bacon Bypass API Key:             {Y}{m_bacon}{RESET}")
+        print("-" * 65)
+        print(f"[{C}1{RESET}] Bật/Tắt Auto Restore & Bypass Delta Key")
+        print(f"[{C}2{RESET}] Cấu hình / Cập nhật Bacon API Key")
+        print(f"[{C}3{RESET}] Test Bypass 1 Link thủ công ngay")
+        print(f"[{C}4{RESET}] Kiểm tra file Delta License & Backup")
+        print(f"[{C}5{RESET}] Quay lại Menu chính")
+        fix_tty()
+        c = safe_input(f"\n{M}Chọn [1-5]: {RESET}")
+        if c == '1':
+            if getattr(sys.modules[__name__], 'AUTO_RESTORE_DELTA_KEY', "Disable") == "Disable":
+                AUTO_RESTORE_DELTA_KEY = "Enable"
+                print(f"\n{G}[+] Đã BẬT Auto Restore & Bypass Delta Key!{RESET}")
+            else:
+                AUTO_RESTORE_DELTA_KEY = "Disable"
+                print(f"\n{Y}[*] Đã TẮT Auto Restore & Bypass Delta Key!{RESET}")
+            time.sleep(1.5)
+        elif c == '2':
+            fix_tty()
+            new_k = safe_input(f"{M}Nhập Bacon API Key mới: {RESET}").strip()
+            if new_k:
+                save_bacon_api_key(new_k)
+                print(f"\n{G}[+] Đã lưu Bacon API Key ({mask_secret(new_k)})!{RESET}")
+            else:
+                print(f"\n{Y}[*] Đã hủy.{RESET}")
+            time.sleep(1.5)
+        elif c == '3':
+            fix_tty()
+            cur_k = load_bacon_api_key()
+            if not cur_k:
+                print(f"\n{R}[!] Chưa có Bacon API Key! Vui lòng chọn mục [2] trước.{RESET}")
+                time.sleep(2)
+                continue
+            test_url = safe_input(f"{M}Nhập URL cần Bypass (hoặc Enter để đọc Clipboard): {RESET}").strip()
+            if not test_url:
+                clip = get_android_clipboard()
+                test_url = extract_getkey_url(clip)
+                if test_url:
+                    print(f"{Y}[*] Tự động lấy URL từ Clipboard: {test_url}{RESET}")
+                else:
+                    print(f"{R}[!] Clipboard không chứa link Get Key hợp lệ.{RESET}")
+                    time.sleep(2)
+                    continue
+            print(f"\n{Y}[*] Đang gửi yêu cầu giải mã tới Bacon Bypass API (timeout 90s)...{RESET}")
+            try:
+                client = BaconBypassClient(api_key=cur_k, timeout=90.0, max_retries=3)
+                t0 = time.time()
+                res = client.bypass(test_url)
+                dur = time.time() - t0
+                print(f"\n{G}[✓] GIẢI MÃ THÀNH CÔNG trong {dur:.2f}s!{RESET}")
+                print(f"    Kết quả: {C}{res}{RESET}")
+                if res.startswith("http://") or res.startswith("https://"):
+                    print(f"{Y}[*] Đang gửi request kích hoạt Whitelist HWID...{RESET}")
+                    ok = _http_get_ping(res)
+                    if ok:
+                        print(f"{G}[✓] Đã gửi kích hoạt thành công!{RESET}")
+                    else:
+                        print(f"{Y}[!] Không thể ping URL kích hoạt.{RESET}")
+                else:
+                    set_android_clipboard(res)
+                    print(f"{G}[✓] Đã sao chép key vào Clipboard!{RESET}")
+            except BaconApiException as be:
+                print(f"\n{R}[✗] Thất bại: {be}{RESET}")
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để quay lại...{RESET}")
+            try: input()
+            except: pass
+        elif c == '4':
+            test_delta_license()
+        elif c == '5':
+            break
+
+def main():
+    fix_tty()
+    while True:
+        clear_screen()
+        print_banner()
+        print(f"[{C}1{RESET}] Quét và Chọn Package Roblox")
+        print(f"[{C}2{RESET}] Cài đặt Game ID & Time Kill All")
+        print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
+        print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
+        print(f"[{C}5{RESET}] Quản lý Delta Key & Auto Bypass (Bacon API)")
+        print(f"[{C}6{RESET}] Kiểm tra file Delta License (Test)")
+        print(f"[{C}7{RESET}] Thoát")
+        try:
+            fix_tty()
+            choice = safe_input(f"\n{M}HuDy > {RESET}")
+        except EOFError:
+            fix_tty()
+            continue
+        if choice == '1':
+            select_package_menu()
+        elif choice == '2':
+            settings_menu()
+        elif choice == '3':
+            start_auto_rejoin()
+        elif choice == '4':
+            login_via_cookie()
+        elif choice == '5':
+            delta_key_menu()
+        elif choice == '6':
+            test_delta_license()
+        elif choice == '7':
+            clear_screen()
+            print(f"{G}Tạm biệt!{RESET}")
+            fix_tty()
+            break
+
+if __name__ == "__main__":
+    fix_tty()
+    main()
