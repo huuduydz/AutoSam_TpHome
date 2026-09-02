@@ -172,7 +172,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.1{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -1327,20 +1327,21 @@ def close_browser_popups():
 def click_receive_key_button():
     """
     Tự động tìm và click vào nút 'Receive Key' của Delta.
-    Dựa trên ảnh thực tế: Bảng nằm bên PHẢI màn hình (X=83.3% W, Y=91% H).
-    Lưu ý: Click nút này Delta sẽ mở Chrome và copy link vào Clipboard.
+    Dựa trên ảnh thực tế:
+    - X = 80.0% W
+    - Y = 59.0% H (nút Receive Key / Copied Link)
     """
     w, h = get_screen_resolution()
     rec_coords = None
     try:
         safe_root("su -c 'uiautomator dump /sdcard/uidump.xml 2>/dev/null'")
         dump_str = subprocess.check_output("su -c 'cat /sdcard/uidump.xml 2>/dev/null'", shell=True, text=True, timeout=3)
-        if "Receive Key" in dump_str:
+        if "Receive Key" in dump_str or "Copied Link" in dump_str:
             root_el = ET.fromstring(dump_str)
             for node in root_el.iter('node'):
                 txt = node.attrib.get('text', '')
                 desc = node.attrib.get('content-desc', '')
-                if "Receive Key" in txt or "Receive Key" in desc:
+                if any(k in txt or k in desc for k in ["Receive Key", "Copied Link"]):
                     bounds = node.attrib.get('bounds', '')
                     coords = re.findall(r'\[(\d+),(\d+)\]', bounds)
                     if len(coords) == 2:
@@ -1354,9 +1355,9 @@ def click_receive_key_button():
     if rec_coords:
         rx, ry = rec_coords
     else:
-        # Panel docked ở góc PHẢI: X = 83.3% W, Receive Key ở dưới cùng: Y = 91.0% H
-        rx = int(w * 0.833)
-        ry = int(h * 0.910)
+        # Tọa độ chuẩn từ ảnh thực tế: X = 80.0% W, Y = 59.0% H
+        rx = int(w * 0.800)
+        ry = int(h * 0.590)
 
     add_log(f"[Key] Click 'Receive Key' tại ({rx}, {ry})")
     safe_root(f"su -c 'input tap {rx} {ry}'")
@@ -1366,10 +1367,10 @@ def click_receive_key_button():
 def auto_enter_key_and_continue(key_str):
     """
     Tự động nhập key dạng 'FREE_...' vào khung 'KEY_example' và bấm nút 'Continue'.
-    Tọa độ chuẩn theo bảng Welcome Back ở góc phải:
-    - Input 'KEY_example': X = 83.3% W, Y = 61.7% H
-    - Button 'Continue':   X = 83.3% W, Y = 75.8% H
-    Sau khi bấm Continue, Delta sẽ tự động kiểm tra và sinh file license!
+    Tọa độ chuẩn xác từ ảnh thực tế:
+    - Input 'KEY_example': X = 80.0% W, Y = 38.0% H (khung nhập key)
+    - Button 'Continue':   X = 80.0% W, Y = 50.0% H (nút Continue màu xanh)
+    - (Nút Receive Key ở Y = 59.0% H, Discord ở Y = 86.5% H)
     """
     key_str = key_str.strip()
     if not key_str:
@@ -1379,7 +1380,7 @@ def auto_enter_key_and_continue(key_str):
     input_coords = None
     continue_coords = None
 
-    # Thử quét tọa độ chính xác qua uiautomator
+    # Thử quét tọa độ qua uiautomator
     try:
         safe_root("su -c 'uiautomator dump /sdcard/uidump.xml 2>/dev/null'")
         dump_str = subprocess.check_output("su -c 'cat /sdcard/uidump.xml 2>/dev/null'", shell=True, text=True, timeout=3)
@@ -1395,19 +1396,20 @@ def auto_enter_key_and_continue(key_str):
                     cy = (int(coords[0][1]) + int(coords[1][1])) // 2
                     if "Continue" in txt or "Continue" in desc:
                         continue_coords = (cx, cy)
-                    elif "KEY_example" in txt or "Enter key" in txt or "Enter key" in desc or node.attrib.get('class') == 'android.widget.EditText':
+                    elif any(k in txt or k in desc for k in ["KEY_example", "Enter key"]):
                         input_coords = (cx, cy)
     except:
         pass
 
-    # 1. Tọa độ ô input: Panel bên phải (83.3% W, 61.7% H)
-    in_x = input_coords[0] if input_coords else int(w * 0.833)
-    in_y = input_coords[1] if input_coords else int(h * 0.617)
+    # 1. Tọa độ chính xác:
+    # Ô nhập KEY_example: X = 80% W, Y = 38% H
+    in_x = input_coords[0] if input_coords else int(w * 0.800)
+    in_y = input_coords[1] if input_coords else int(h * 0.380)
 
     # 2. Focus vào ô nhập key (nhấp 2 lần để con trỏ chắc chắn vào ô)
     add_log(f"[Key] Focus ô 'KEY_example' ({in_x}, {in_y})")
     safe_root(f"su -c 'input tap {in_x} {in_y}'")
-    time.sleep(0.3)
+    time.sleep(0.4)
     safe_root(f"su -c 'input tap {in_x} {in_y}'")
     time.sleep(0.5)
 
@@ -1418,17 +1420,17 @@ def auto_enter_key_and_continue(key_str):
     # 4. Gõ chuỗi key (dạng FREE_...) vào ô input
     safe_root(f"su -c 'input text \"{key_str}\"'")
     time.sleep(0.4)
-    # Gửi lệnh paste backup
+    # Backup bằng lệnh paste
     safe_root("su -c 'input keyevent 279 2>/dev/null'")
     time.sleep(0.4)
 
-    # 5. Đóng bàn phím ảo (nếu có) bằng phím Back để không che nút Continue
+    # 5. Đóng bàn phím ảo (nếu có) bằng phím Back để lộ nút Continue
     safe_root("su -c 'input keyevent 4 2>/dev/null'")
     time.sleep(0.8)
 
-    # 6. Tọa độ nút Continue: Panel bên phải (83.3% W, 75.8% H)
-    cont_x = continue_coords[0] if continue_coords else int(w * 0.833)
-    cont_y = continue_coords[1] if continue_coords else int(h * 0.758)
+    # 6. Tọa độ nút Continue: X = 80% W, Y = 50% H (nằm ngay dưới ô input)
+    cont_x = continue_coords[0] if continue_coords else int(w * 0.800)
+    cont_y = continue_coords[1] if continue_coords else int(h * 0.500)
 
     add_log(f"[Key] Bấm nút 'Continue' ({cont_x}, {cont_y})")
     safe_root(f"su -c 'input tap {cont_x} {cont_y}'")
@@ -1483,8 +1485,8 @@ def launch_roblox_and_join_game(pkg):
 def obtain_delta_getkey_url(pkg, stop_event, max_wait_secs=120):
     """
     Khởi động và bắn vào game để lấy URL Get Key triệt để:
-    - Game load map và asset khá lâu (~1 phút) mới hiện bảng 'Welcome Back!'.
-    - Cơ chế: Xóa clipboard cũ -> Bắn vào game -> Chờ 60s khởi tạo -> Quét lặp định kỳ mỗi 3s.
+    - Game load map và asset khá lâu (chờ 2p30s) mới hiện bảng 'Welcome Back!'.
+    - Cơ chế: Xóa clipboard cũ -> Bắn vào game -> Chờ 150s khởi tạo -> Quét lặp định kỳ mỗi 3s.
     - Mỗi chu kỳ: Tap 'Receive Key' (83.3% W, 91.0% H) -> Đợi 2s kiểm tra Clipboard -> Bắt URL.
     - Đóng ngay Chrome khi nhận được URL.
     """
@@ -1500,10 +1502,10 @@ def obtain_delta_getkey_url(pkg, stop_event, max_wait_secs=120):
 
     # 3. Khởi động và bắn thẳng vào game
     launch_roblox_and_join_game(pkg)
-    add_log(f"[Key] Chờ 60s để {pkg[-12:]} load vào giao diện in-game...")
+    add_log(f"[Key] Chờ 150s (2p30s) để {pkg[-12:]} load vào giao diện in-game...")
 
-    # Chờ 60s (1 phút) cho game tải tài nguyên, kết nối server và hiển thị giao diện
-    for _ in range(60):
+    # Chờ 150s (2 phút 30 giây) cho game tải tài nguyên, kết nối server và hiển thị giao diện
+    for _ in range(150):
         if stop_event.is_set():
             return None
         time.sleep(1)
@@ -1541,11 +1543,11 @@ def delta_license_sync_thread(stop_event):
     Thread tự động lấy & nạp key Delta (KHÔNG CẦN BACKUP HAY RESTORE):
     1. Kiểm tra xem app đã có file license còn hạn (< KEY_EXPIRE_HOURS) hay chưa.
     2. Nếu chưa có hoặc hết hạn:
-       - Bắn vào game, chờ game load hoàn tất.
+       - Bắn vào game, chờ game load hoàn tất (150s).
        - Lấy URL Get Key triệt để qua vòng lặp quét Receive Key định kỳ.
        - Gửi URL lên Bacon API giải mã lấy chuỗi key 'FREE_...'.
        - Khởi động lại game & bắn vào game để hiện lại bảng 'Welcome Back!'.
-       - Chờ 60s game load -> Tự động điền chuỗi key 'FREE_...' vào ô 'KEY_example' và click 'Continue'.
+       - Chờ 150s game load -> Tự động điền chuỗi key 'FREE_...' vào ô 'KEY_example' và click 'Continue'.
        - Delta sẽ tự động kiểm tra và sinh file license riêng cho app đó!
     """
     global AUTO_RESTORE_DELTA_KEY, selected_packages, _last_key_trigger
@@ -1592,7 +1594,7 @@ def delta_license_sync_thread(stop_event):
                 _last_key_trigger[pkg] = now
                 add_log(f"[Key] {pkg[-12:]} chưa có key, bắt đầu quy trình...")
 
-                # Bước 1: Bắn vào game & Quét lấy URL Get Key triệt để (chờ 60s game load)
+                # Bước 1: Bắn vào game & Quét lấy URL Get Key triệt để (chờ 150s game load)
                 target_url = obtain_delta_getkey_url(pkg, stop_event, max_wait_secs=120)
 
                 # Bước 2: Gửi URL lên Bacon API giải mã
@@ -1609,8 +1611,8 @@ def delta_license_sync_thread(stop_event):
                         # Bước 3: Khởi động lại và BẮN VÀO GAME để quay lại bảng "Welcome Back!" nhập key
                         add_log(f"[Key] Bắn {pkg[-12:]} vào game để nạp key...")
                         launch_roblox_and_join_game(pkg)
-                        add_log("[Key] Chờ 60s cho game load vào giao diện & bảng Enter Key...")
-                        for _ in range(60):
+                        add_log("[Key] Chờ 150s (2p30s) cho game load vào giao diện & bảng Enter Key...")
+                        for _ in range(150):
                             if stop_event.is_set():
                                 break
                             time.sleep(1)
@@ -1902,8 +1904,8 @@ def delta_key_menu():
                             target_pkg = selected_packages[0]['pkg']
                             print(f"{Y}[*] Đang bắn vào game {target_pkg}...{RESET}")
                             launch_roblox_and_join_game(target_pkg)
-                            print(f"{Y}[*] Chờ 60s (1 phút) cho game load vào server & bảng Welcome Back...{RESET}")
-                            time.sleep(60)
+                            print(f"{Y}[*] Chờ 150s (2p30s) cho game load vào server & bảng Welcome Back...{RESET}")
+                            time.sleep(150)
                         print(f"{Y}[*] Đang focus ô 'KEY_example', nhập key và bấm Continue...{RESET}")
                         auto_enter_key_and_continue(res)
                         print(f"{G}[✓] Đã hoàn tất nhập key và click Continue!{RESET}")
