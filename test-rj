@@ -120,7 +120,6 @@ AUTO_RESTORE_DELTA_KEY = "Disable"
 KEY_EXPIRE_HOURS = 23
 _last_key_trigger = {}   # {pkg: timestamp} – khi nào lần cuối trigger Get Key
 BACON_API_KEY = ""
-BACON_BACKUP_FILE = "/data/media/0/Delta_license_backup_hudy3"
 
 last_restart_time = {}
 last_any_restart_time = 0            # Thời điểm bất kỳ pkg nào restart gần nhất
@@ -173,7 +172,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.1{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.2{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -1310,8 +1309,26 @@ def get_screen_resolution():
         pass
     return 1600, 720
 
+def close_browser_popups():
+    """Đóng Chrome hoặc các trình duyệt vừa bị Delta mở khi click Receive Key."""
+    browsers = [
+        "com.android.chrome",
+        "com.google.android.apps.chrome",
+        "com.sec.android.app.sbrowser",
+        "org.mozilla.firefox",
+        "com.opera.browser",
+        "com.brave.browser",
+        "com.android.browser"
+    ]
+    for b in browsers:
+        safe_root(f"su -c 'am force-stop {b} 2>/dev/null'")
+
 def click_receive_key_button():
-    """Tự động tìm và click vào nút 'Receive Key' của Delta để copy link vào Clipboard."""
+    """
+    Tự động tìm và click vào nút 'Receive Key' của Delta.
+    Dựa trên ảnh thực tế: Bảng nằm bên PHẢI màn hình (X=83.3% W, Y=91% H).
+    Lưu ý: Click nút này Delta sẽ mở Chrome và copy link vào Clipboard.
+    """
     w, h = get_screen_resolution()
     rec_coords = None
     try:
@@ -1336,9 +1353,9 @@ def click_receive_key_button():
     if rec_coords:
         rx, ry = rec_coords
     else:
-        # Tọa độ tương đối: giữa màn hình theo X (50%), khoảng 70% theo Y (dưới nút Continue)
-        rx = int(w * 0.50)
-        ry = int(h * 0.70)
+        # Panel docked ở góc PHẢI: X = 83.3% W, Receive Key ở dưới cùng: Y = 91.0% H
+        rx = int(w * 0.833)
+        ry = int(h * 0.910)
 
     add_log(f"[Key] Click 'Receive Key' tại ({rx}, {ry})")
     safe_root(f"su -c 'input tap {rx} {ry}'")
@@ -1347,8 +1364,11 @@ def click_receive_key_button():
 
 def auto_enter_key_and_continue(key_str):
     """
-    Tự động nhập key dạng 'FREE_...' vào khung 'Enter key' và bấm nút 'Continue'.
-    Sau khi bấm Continue, Delta sẽ kích hoạt và tự động sinh ra file license.
+    Tự động nhập key dạng 'FREE_...' vào khung 'KEY_example' và bấm nút 'Continue'.
+    Tọa độ chuẩn theo bảng Welcome Back ở góc phải:
+    - Input 'KEY_example': X = 83.3% W, Y = 61.7% H
+    - Button 'Continue':   X = 83.3% W, Y = 75.8% H
+    Sau khi bấm Continue, Delta sẽ tự động kiểm tra và sinh file license!
     """
     key_str = key_str.strip()
     if not key_str:
@@ -1379,14 +1399,14 @@ def auto_enter_key_and_continue(key_str):
     except:
         pass
 
-    # 1. Tọa độ ô input (mặc định 50% W, 46% H)
-    in_x = input_coords[0] if input_coords else int(w * 0.50)
-    in_y = input_coords[1] if input_coords else int(h * 0.46)
+    # 1. Tọa độ ô input: Panel bên phải (83.3% W, 61.7% H)
+    in_x = input_coords[0] if input_coords else int(w * 0.833)
+    in_y = input_coords[1] if input_coords else int(h * 0.617)
 
-    # 2. Focus vào ô nhập key (nhấp 2 lần để đảm bảo con trỏ vào ô)
-    add_log(f"[Key] Focus ô nhập key ({in_x}, {in_y})")
+    # 2. Focus vào ô nhập key (nhấp 2 lần để con trỏ chắc chắn vào ô)
+    add_log(f"[Key] Focus ô 'KEY_example' ({in_x}, {in_y})")
     safe_root(f"su -c 'input tap {in_x} {in_y}'")
-    time.sleep(0.4)
+    time.sleep(0.3)
     safe_root(f"su -c 'input tap {in_x} {in_y}'")
     time.sleep(0.5)
 
@@ -1394,24 +1414,24 @@ def auto_enter_key_and_continue(key_str):
     set_android_clipboard(key_str)
     time.sleep(0.2)
 
-    # 4. Nhập key dạng FREE_... vào ô
+    # 4. Gõ chuỗi key (dạng FREE_...) vào ô input
     safe_root(f"su -c 'input text \"{key_str}\"'")
     time.sleep(0.4)
-    # Backup bằng paste keyevent 279
+    # Gửi lệnh paste backup
     safe_root("su -c 'input keyevent 279 2>/dev/null'")
     time.sleep(0.4)
 
-    # 5. Đóng bàn phím ảo (nếu có) để lộ nút Continue (phím Back)
+    # 5. Đóng bàn phím ảo (nếu có) bằng phím Back để không che nút Continue
     safe_root("su -c 'input keyevent 4 2>/dev/null'")
     time.sleep(0.8)
 
-    # 6. Tọa độ nút Continue (mặc định 50% W, 58% H)
-    cont_x = continue_coords[0] if continue_coords else int(w * 0.50)
-    cont_y = continue_coords[1] if continue_coords else int(h * 0.58)
+    # 6. Tọa độ nút Continue: Panel bên phải (83.3% W, 75.8% H)
+    cont_x = continue_coords[0] if continue_coords else int(w * 0.833)
+    cont_y = continue_coords[1] if continue_coords else int(h * 0.758)
 
     add_log(f"[Key] Bấm nút 'Continue' ({cont_x}, {cont_y})")
     safe_root(f"su -c 'input tap {cont_x} {cont_y}'")
-    time.sleep(1.5)
+    time.sleep(2.0)
     return True
 
 def _get_delta_license_dirs():
@@ -1437,31 +1457,36 @@ def _get_delta_license_dirs():
 def open_delta_getkey(pkg):
     """Trigger Delta mở trang Get Key bằng cách gửi intent vào activity chính.
     Delta thường xử lý key check khi launch nên force-stop rồi reopen là đủ."""
-    # Bước 1: xóa file license cũ hết hạn để Delta bắt buộc get key mới
+    # Xóa file license cũ hết hạn (nếu có) để Delta bắt buộc hiện bảng Welcome Back
     dirs = _get_delta_license_dirs()
     for d in dirs:
         lic = f"{d}/license"
         mt = _get_file_mtime_root(lic)
-        if mt > 0:  # file tồn tại → xóa để force re-auth
+        if mt > 0:
             safe_root(f"su -c 'rm -f \"{lic}\"'")
 
-    # Bước 2: force-stop Delta rồi mở lại → Delta sẽ detect thiếu key → mở Get Key page
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(2)
     safe_root(
         f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
     )
-    add_log(f"[Key] Đã mở Delta Get Key cho {pkg[-20:]}")
+    add_log(f"[Key] Mở Delta {pkg[-16:]} để nạp Key")
 
 
 def delta_license_sync_thread(stop_event):
-    """Thread quản lý Delta key:
-    - Backup key mới nhất mỗi khi phát hiện file license mới hơn backup.
-    - Restore vào thư mục thiếu NẾU key còn trong hạn (< KEY_EXPIRE_HOURS giờ).
-    - Tự động: Click 'Receive Key' -> Lấy URL Clipboard -> Bypass Bacon API -> Nhập Key 'FREE_...' -> Click 'Continue' -> Sinh file license tự động!
+    """
+    Thread tự động lấy & nạp key Delta (KHÔNG CẦN BACKUP HAY RESTORE):
+    1. Kiểm tra xem app đã có file license còn hạn (< KEY_EXPIRE_HOURS) hay chưa.
+    2. Nếu chưa có hoặc hết hạn:
+       - Mở Delta, chờ bảng Welcome Back xuất hiện.
+       - Tự động click 'Receive Key' (góc phải) để lấy URL Get Key vào Clipboard.
+       - Đóng trình duyệt Chrome vừa bị bật lên.
+       - Gửi URL lên Bacon API giải mã lấy chuỗi key 'FREE_...'.
+       - Khởi động lại game để quay lại bảng 'Welcome Back!'.
+       - Tự động điền chuỗi key 'FREE_...' vào ô 'KEY_example' và click 'Continue'.
+       - Delta sẽ tự động kiểm tra và sinh file license riêng cho app đó!
     """
     global AUTO_RESTORE_DELTA_KEY, selected_packages, _last_key_trigger
-    backup_file = BACON_BACKUP_FILE
 
     while not stop_event.is_set():
         try:
@@ -1469,126 +1494,112 @@ def delta_license_sync_thread(stop_event):
                 stop_event.wait(10)
                 continue
 
-            dirs_to_check = _get_delta_license_dirs()
+            bkey = load_bacon_api_key()
+            if not bkey:
+                stop_event.wait(15)
+                continue
+
             now = time.time()
             expire_secs = KEY_EXPIRE_HOURS * 3600
 
-            # ── B1: Tìm file license mới nhất đang tồn tại trong game ───────
-            best_mtime = 0
-            best_lic   = None
-            for d in dirs_to_check:
-                lic   = f"{d}/license"
-                mtime = _get_file_mtime_root(lic)
-                if mtime > best_mtime:
-                    best_mtime = mtime
-                    best_lic   = lic
+            for item in selected_packages:
+                pkg = item['pkg']
+                last_trigger = _last_key_trigger.get(pkg, 0)
+                if now - last_trigger < 300:  # Giãn cách 5 phút mỗi lần thử cho 1 pkg
+                    continue
 
-            backup_mtime = _get_file_mtime_root(backup_file)
-
-            # ── B2: Backup nếu có file mới hơn backup ───────────────────────
-            if best_lic and best_mtime > backup_mtime:
-                subprocess.run(
-                    f"su -c 'cp \"{best_lic}\" \"{backup_file}\" && chmod 777 \"{backup_file}\"'",
-                    shell=True, stderr=subprocess.DEVNULL
-                )
-                backup_mtime = best_mtime
-                add_log("[Key] Đã Backup Key Delta mới nhất")
-
-            # ── B3: Xác định key có còn hợp lệ không ───────────────────────
-            key_age = now - backup_mtime if backup_mtime > 0 else float('inf')
-            key_valid = (backup_mtime > 0) and (key_age < expire_secs)
-
-            if key_valid:
-                # Key còn hợp lệ → restore vào thư mục nào đang thiếu
-                for d in dirs_to_check:
-                    lic_path  = f"{d}/license"
-                    curr_mtime = _get_file_mtime_root(lic_path)
-                    if curr_mtime <= 0:
-                        subprocess.run(
-                            f"su -c 'mkdir -p \"{d}\" && cp \"{backup_file}\" \"{lic_path}\" && chmod 777 \"{lic_path}\" && restorecon \"{lic_path}\" 2>/dev/null || true'",
-                            shell=True, stderr=subprocess.DEVNULL
-                        )
-                        add_log(f"[Key] Restore Key → {d.split('/')[-3][:12]}")
-            else:
-                # ── B4: Key hết hạn hoặc chưa có → Khép kín luồng Auto-Bypass & Nạp Key ────
-                bkey = load_bacon_api_key()
-                for item in selected_packages:
-                    pkg = item['pkg']
-                    last_trigger = _last_key_trigger.get(pkg, 0)
-                    if now - last_trigger >= 300:  # 5 phút tối thiểu giữa các lần thử
-                        _last_key_trigger[pkg] = now
-
-                        # Bước 4.1: Kiểm tra xem đã có link Get Key trong Clipboard chưa
-                        clip = get_android_clipboard()
-                        target_url = extract_getkey_url(clip)
-
-                        if not target_url:
-                            # Mở Delta để form 'Enter key' xuất hiện
-                            open_delta_getkey(pkg)
-                            add_log("[Key] Chờ hiển thị form Enter Key...")
-                            stop_event.wait(6)  # Chờ app load form
-
-                            # Tự động click nút "Receive Key"
-                            click_receive_key_button()
-                            stop_event.wait(2)
-
-                            # Đọc lại Clipboard
-                            clip = get_android_clipboard()
-                            target_url = extract_getkey_url(clip)
-
-                        # Bước 4.2: Nếu có link và có Bacon API Key -> Gửi giải mã
-                        if target_url and bkey:
-                            add_log(f"[Bacon] Giải link: {target_url[:20]}...")
-                            try:
-                                client = BaconBypassClient(api_key=bkey, timeout=90.0, max_retries=3)
-                                key_res = client.bypass(target_url)
-                                add_log(f"[Bacon] Nhận key: {key_res[:15]}...")
-
-                                # Bước 4.3: Xử lý kết quả trả về từ API
-                                if key_res.startswith("http://") or key_res.startswith("https://"):
-                                    _http_get_ping(key_res)
-                                    add_log("[Bacon] Đã ping URL kích hoạt Whitelist!")
-                                    stop_event.wait(3)
-                                else:
-                                    # Kết quả dạng "FREE_263ddd9f267bb46239e3c2873752e563"
-                                    # Nhập vào khung 'Enter key' và bấm 'Continue'
-                                    auto_enter_key_and_continue(key_res)
-                                    add_log("[Key] Đã nạp key & bấm Continue!")
-                                    stop_event.wait(6)
-
-                                # Bước 4.4: Kiểm tra xem file license đã được Delta tự sinh ra chưa
-                                created_lic = None
-                                for d in dirs_to_check:
-                                    lic = f"{d}/license"
-                                    if _get_file_mtime_root(lic) > 0:
-                                        created_lic = lic
-                                        break
-
-                                if created_lic:
-                                    add_log("[Key] File License đã tạo thành công!")
-                                    # Backup ngay và nạp sang các package khác
-                                    subprocess.run(
-                                        f"su -c 'cp \"{created_lic}\" \"{backup_file}\" && chmod 777 \"{backup_file}\"'",
-                                        shell=True, stderr=subprocess.DEVNULL
-                                    )
-                                    for d in dirs_to_check:
-                                        lp = f"{d}/license"
-                                        if lp != created_lic:
-                                            subprocess.run(
-                                                f"su -c 'mkdir -p \"{d}\" && cp \"{backup_file}\" \"{lp}\" && chmod 777 \"{lp}\" && restorecon \"{lp}\" 2>/dev/null || true'",
-                                                shell=True, stderr=subprocess.DEVNULL
-                                            )
-                                    add_log("[Key] Đã đồng bộ License sang mọi app!")
-                                else:
-                                    add_log("[Key] Đang chờ Delta sinh file license...")
-
-                            except BaconApiException as be:
-                                add_log(f"[Bacon Lỗi] {str(be)[:25]}")
-                        else:
-                            if not bkey and target_url:
-                                add_log("[Bacon] Cần nhập Bacon Key ở mục [5]!")
-                            stop_event.wait(20)
+                # Kiểm tra app này đã có license hợp lệ từ game chưa
+                pkg_dirs = [
+                    "/storage/emulated/0/Delta/Internals/Cache",
+                    "/sdcard/Delta/Internals/Cache",
+                    f"/sdcard/Android/media/{pkg}/Delta/Internals/Cache",
+                    f"/sdcard/Android/data/{pkg}/Delta/Internals/Cache",
+                ]
+                has_license = False
+                for d in pkg_dirs:
+                    lic = f"{d}/license"
+                    mt = _get_file_mtime_root(lic)
+                    if mt > 0 and (now - mt < expire_secs):
+                        has_license = True
                         break
+
+                if has_license:
+                    continue  # App này đã có key hợp lệ, không cần nạp
+
+                # App chưa có key hợp lệ -> Bắt đầu quy trình tự động lấy và nạp key
+                _last_key_trigger[pkg] = now
+                add_log(f"[Key] {pkg[-12:]} cần Key, bắt đầu xử lý...")
+
+                # Bước 1: Kiểm tra xem đã có link Get Key sẵn trong Clipboard chưa
+                clip = get_android_clipboard()
+                target_url = extract_getkey_url(clip)
+
+                if not target_url:
+                    # Mở app để bảng Welcome Back xuất hiện
+                    open_delta_getkey(pkg)
+                    add_log("[Key] Chờ hiển thị bảng Welcome Back...")
+                    stop_event.wait(6)  # Chờ 6s cho form load
+
+                    # Tự động click nút "Receive Key" ở góc phải
+                    click_receive_key_button()
+                    stop_event.wait(2)
+
+                    # Đóng trình duyệt Chrome vừa bị bật lên
+                    close_browser_popups()
+
+                    # Đọc lại Clipboard để lấy URL vừa được copy
+                    clip = get_android_clipboard()
+                    target_url = extract_getkey_url(clip)
+
+                # Bước 2: Gửi URL lên Bacon API giải mã
+                if target_url:
+                    add_log(f"[Bacon] Giải mã link: {target_url[:20]}...")
+                    try:
+                        client = BaconBypassClient(api_key=bkey, timeout=90.0, max_retries=3)
+                        key_res = client.bypass(target_url)
+                        add_log(f"[Bacon] Nhận key: {key_res[:16]}...")
+
+                        # Đóng lại trình duyệt nếu có
+                        close_browser_popups()
+
+                        # Bước 3: Khởi động lại game để quay lại bảng "Welcome Back!" nhập key
+                        add_log(f"[Key] Khởi động lại {pkg[-12:]} để nhập key...")
+                        safe_root(f"su -c 'am force-stop {pkg}'")
+                        stop_event.wait(2)
+                        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+                        add_log("[Key] Chờ hiển thị bảng Enter Key...")
+                        stop_event.wait(6)  # Chờ 6s cho game mở lại và hiển thị bảng Welcome Back
+
+                        # Bước 4: Nhập chuỗi key 'FREE_...' vào khung và click 'Continue'
+                        if not (key_res.startswith("http://") or key_res.startswith("https://")):
+                            auto_enter_key_and_continue(key_res)
+                            add_log("[Key] Đã điền key FREE_... & bấm Continue!")
+                            stop_event.wait(5)
+                        else:
+                            # Nếu kết quả là URL kích hoạt Whitelist
+                            _http_get_ping(key_res)
+                            add_log("[Bacon] Đã ping URL kích hoạt!")
+                            stop_event.wait(3)
+
+                        # Bước 5: Kiểm tra Delta đã tự sinh file license chưa
+                        created = False
+                        for d in pkg_dirs:
+                            lic = f"{d}/license"
+                            if _get_file_mtime_root(lic) > 0:
+                                created = True
+                                break
+
+                        if created:
+                            add_log(f"[Key] {pkg[-12:]} đã tự sinh License thành công!")
+                        else:
+                            add_log(f"[Key] Đã submit key cho {pkg[-12:]}")
+
+                    except BaconApiException as be:
+                        add_log(f"[Bacon Lỗi] {str(be)[:25]}")
+                else:
+                    add_log("[Key] Chưa lấy được URL Get Key.")
+
+                stop_event.wait(10)
 
         except Exception:
             pass
@@ -1743,30 +1754,9 @@ def test_delta_license():
             print(f"{G}[✓] Đã tìm thấy: {lic_path}{RESET}")
             print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
             
-    backup_path = BACON_BACKUP_FILE # Đường dẫn backup chuẩn: /data/media/0/Delta_license_backup_hudy3
-    backup_mtime = _get_file_mtime_root(backup_path)
-    if backup_mtime <= 0:
-        backup_path = "/data/media/0/Delta_license_backup_v2"
-        backup_mtime = _get_file_mtime_root(backup_path)
-    print(f"\n{M}--- KIỂM TRA FILE BACKUP ---{RESET}")
-    if backup_mtime > 0:
-        import time
-        t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(backup_mtime))
-        print(f"{G}[Backup] Đang lưu trữ tại: {backup_path}{RESET}")
-        print(f"    {C}Cập nhật lúc: {t_str}{RESET}")
-    else:
-        print(f"{R}[!] Chưa có file Backup nào được tạo ra.{RESET}")
-        
     if not found:
-        print(f"\n{R}[✗] KHÔNG tìm thấy bất kỳ file license nào từ game.{RESET}")
-        print(f"{Y}Hãy thử vào game bằng tay và Get Key 1 lần để tạo file.{RESET}")
-        print(f"\n{M}[Gợi ý Debug] Kết quả quét thư mục vật lý:{RESET}")
-        try:
-            import subprocess
-            out = subprocess.check_output("su -c 'ls -l /data/media/0/Delta/Internals/Cache/'", shell=True, text=True, stderr=subprocess.STDOUT)
-            print(out.strip())
-        except:
-            print("Không thể ls /data/media/0/")
+        print(f"\n{R}[✗] CHƯA tìm thấy file license nào từ game.{RESET}")
+        print(f"{Y}Hãy dùng chức năng Auto Key để tool tự bấm 'Receive Key' -> Bypass -> Nhập Key 'FREE_...' -> 'Continue' để Delta tự sinh file license.{RESET}")
         
     fix_tty()
     print(f"\n{Y}Bấm Enter để quay lại Menu...{RESET}")
@@ -1783,14 +1773,15 @@ def delta_key_menu():
         st_col = G if AUTO_RESTORE_DELTA_KEY == "Enable" else R
         current_k = load_bacon_api_key()
         m_bacon = mask_secret(current_k) if current_k else "Chưa cài đặt"
-        print(f"{C}--- QUẢN LÝ DELTA KEY & BACON AUTO BYPASS ---{RESET}")
-        print(f"1. Trạng thái Auto Restore & Bypass: {st_col}{AUTO_RESTORE_DELTA_KEY}{RESET}")
-        print(f"2. Bacon Bypass API Key:             {Y}{m_bacon}{RESET}")
+        print(f"{C}--- QUẢN LÝ DELTA KEY & BACON AUTO BYPASS (KHÔNG CẦN BACKUP) ---{RESET}")
+        print(f"1. Trạng thái Auto Bypass & Nạp Key: {st_col}{AUTO_RESTORE_DELTA_KEY}{RESET}")
+        print(f"2. Bacon Bypass API Key:              {Y}{m_bacon}{RESET}")
+        print(f"{Y}Cơ chế: Click 'Receive Key' -> Bypass -> Nhập Key 'FREE_...' -> Click 'Continue'{RESET}")
         print("-" * 65)
-        print(f"[{C}1{RESET}] Bật/Tắt Auto Restore & Bypass Delta Key")
+        print(f"[{C}1{RESET}] Bật/Tắt Tự động Bypass & Nhập Key")
         print(f"[{C}2{RESET}] Cấu hình / Cập nhật Bacon API Key")
-        print(f"[{C}3{RESET}] Test Bypass 1 Link thủ công ngay")
-        print(f"[{C}4{RESET}] Kiểm tra file Delta License & Backup")
+        print(f"[{C}3{RESET}] Test Bypass 1 Link & Tự động nhập vào game")
+        print(f"[{C}4{RESET}] Kiểm tra file License tự sinh của các Package")
         print(f"[{C}5{RESET}] Quay lại Menu chính")
         fix_tty()
         c = safe_input(f"\n{M}Chọn [1-5]: {RESET}")
@@ -1847,8 +1838,17 @@ def delta_key_menu():
                     set_android_clipboard(res)
                     print(f"{G}[✓] Đã sao chép key vào Clipboard!{RESET}")
                     fix_tty()
-                    auto_c = safe_input(f"\n{M}Tự động điền key vào game và bấm Continue ngay? (Y/n): {RESET}").strip().lower()
+                    auto_c = safe_input(f"\n{M}Tự động khởi động lại game, nhập key và bấm Continue ngay? (Y/n): {RESET}").strip().lower()
                     if auto_c != 'n':
+                        close_browser_popups()
+                        if selected_packages:
+                            target_pkg = selected_packages[0]['pkg']
+                            print(f"{Y}[*] Đang khởi động lại game {target_pkg}...{RESET}")
+                            safe_root(f"su -c 'am force-stop {target_pkg}'")
+                            time.sleep(2)
+                            safe_root(f"su -c 'monkey -p {target_pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+                            print(f"{Y}[*] Chờ 6s cho bảng Welcome Back xuất hiện...{RESET}")
+                            time.sleep(6)
                         print(f"{Y}[*] Đang focus ô 'KEY_example', nhập key và bấm Continue...{RESET}")
                         auto_enter_key_and_continue(res)
                         print(f"{G}[✓] Đã hoàn tất nhập key và click Continue!{RESET}")
