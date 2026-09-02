@@ -39,7 +39,7 @@ pkg install python sqlite tsu curl ncurses-utils procps -y -o Dpkg::Options::="-
 
 # 5. Tải Tool Rejoin mới nhất
 echo -e "${C_CYAN}[*] Đang tải file script Tool Rejoin (hudy.py)...${C_RESET}"
-curl -Ls https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/ToolRejoin -o ~/hudy.py
+curl -Ls https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/test-rj -o ~/hudy.py
 chmod +x ~/hudy.py
 
 # 6. Thiết lập Alias tự động
