@@ -172,7 +172,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.2{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.1{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -1266,18 +1266,19 @@ def set_android_clipboard(text):
     except: pass
 
 def extract_getkey_url(text):
-    """Trích xuất URL Get Key từ văn bản (Platoboost, Linkvertise, Lootlabs...)."""
+    """Trích xuất URL Get Key từ văn bản (Platoboost, Linkvertise, Lootlabs, Work.ink...)."""
     if not text:
         return None
     patterns = [
-        r'(https?://gateway\.platoboost\.com[^\s"\'<>]+)',
-        r'(https?://[^\s"\'<>]*(?:platoboost|linkvertise|loot-link|loot-labs|lootdest|direct-link)[^\s"\'<>]*)',
-        r'(https?://[^\s"\'<>]+(?:getkey|key)[^\s"\'<>]*)'
+        r'(https?://(?:gateway\.)?platoboost\.[^\s"\'<>]+)',
+        r'(https?://[^\s"\'<>]*(?:platoboost|linkvertise|loot-link|loot-labs|lootdest|direct-link|deltaexploits|work\.ink)[^\s"\'<>]*)',
+        r'(https?://[^\s"\'<>]+(?:getkey|get-key|key-system|\/key|\?key)[^\s"\'<>]*)',
+        r'(https?://[^\s"\'<>]+\.[a-z]{2,}[^\s"\'<>]*)'
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
         if m:
-            return m.group(1)
+            return m.group(1).strip()
     return None
 
 def _http_get_ping(url, timeout=15):
@@ -1454,9 +1455,11 @@ def _get_delta_license_dirs():
     return list(set(dirs))
 
 
-def open_delta_getkey(pkg):
-    """Trigger Delta mở trang Get Key bằng cách gửi intent vào activity chính.
-    Delta thường xử lý key check khi launch nên force-stop rồi reopen là đủ."""
+def launch_roblox_and_join_game(pkg):
+    """
+    Khởi động package và BẮN THẲNG VÀO GAME bằng Place ID để Delta inject và hiện bảng Welcome Back.
+    """
+    global target_place_id
     # Xóa file license cũ hết hạn (nếu có) để Delta bắt buộc hiện bảng Welcome Back
     dirs = _get_delta_license_dirs()
     for d in dirs:
@@ -1467,10 +1470,70 @@ def open_delta_getkey(pkg):
 
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(2)
-    safe_root(
-        f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
-    )
-    add_log(f"[Key] Mở Delta {pkg[-16:]} để nạp Key")
+    if target_place_id:
+        safe_root(
+            f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
+            f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
+        )
+    else:
+        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+    add_log(f"[Key] Bắn {pkg[-14:]} vào game (Place: {target_place_id or 'Sảnh'})")
+
+
+def obtain_delta_getkey_url(pkg, stop_event, max_wait_secs=120):
+    """
+    Khởi động và bắn vào game để lấy URL Get Key triệt để:
+    - Game load map và asset khá lâu (~1 phút) mới hiện bảng 'Welcome Back!'.
+    - Cơ chế: Xóa clipboard cũ -> Bắn vào game -> Chờ 60s khởi tạo -> Quét lặp định kỳ mỗi 3s.
+    - Mỗi chu kỳ: Tap 'Receive Key' (83.3% W, 91.0% H) -> Đợi 2s kiểm tra Clipboard -> Bắt URL.
+    - Đóng ngay Chrome khi nhận được URL.
+    """
+    # 1. Kiểm tra nếu clipboard hiện tại đã có link hợp lệ
+    clip = get_android_clipboard()
+    target_url = extract_getkey_url(clip)
+    if target_url:
+        add_log(f"[Key] Clipboard đã có sẵn link: {target_url[:20]}...")
+        return target_url
+
+    # 2. Xóa sạch clipboard để không nhận link rác/cũ
+    set_android_clipboard("")
+
+    # 3. Khởi động và bắn thẳng vào game
+    launch_roblox_and_join_game(pkg)
+    add_log(f"[Key] Chờ 60s để {pkg[-12:]} load vào giao diện in-game...")
+
+    # Chờ 60s (1 phút) cho game tải tài nguyên, kết nối server và hiển thị giao diện
+    for _ in range(60):
+        if stop_event.is_set():
+            return None
+        time.sleep(1)
+
+    # 4. Vòng lặp quét liên tục tối đa max_wait_secs
+    t_start = time.time()
+    attempt = 1
+    while time.time() - t_start < max_wait_secs:
+        if stop_event.is_set():
+            return None
+
+        add_log(f"[Key] Quét lấy URL lần {attempt} ({int(time.time() - t_start)}s)...")
+        click_receive_key_button()
+
+        # Chờ 2 giây kiểm tra clipboard (thử 4 lần nhịp 0.5s)
+        for _ in range(4):
+            time.sleep(0.5)
+            clip = get_android_clipboard()
+            target_url = extract_getkey_url(clip)
+            if target_url:
+                close_browser_popups()
+                add_log(f"[Key] Đã bắt được URL thành công sau {int(time.time() - t_start)}s!")
+                return target_url
+
+        close_browser_popups()
+        attempt += 1
+        time.sleep(2.5)
+
+    add_log(f"[Key] Hết {max_wait_secs}s chưa bắt được link Get Key.")
+    return None
 
 
 def delta_license_sync_thread(stop_event):
@@ -1478,12 +1541,11 @@ def delta_license_sync_thread(stop_event):
     Thread tự động lấy & nạp key Delta (KHÔNG CẦN BACKUP HAY RESTORE):
     1. Kiểm tra xem app đã có file license còn hạn (< KEY_EXPIRE_HOURS) hay chưa.
     2. Nếu chưa có hoặc hết hạn:
-       - Mở Delta, chờ bảng Welcome Back xuất hiện.
-       - Tự động click 'Receive Key' (góc phải) để lấy URL Get Key vào Clipboard.
-       - Đóng trình duyệt Chrome vừa bị bật lên.
+       - Bắn vào game, chờ game load hoàn tất.
+       - Lấy URL Get Key triệt để qua vòng lặp quét Receive Key định kỳ.
        - Gửi URL lên Bacon API giải mã lấy chuỗi key 'FREE_...'.
-       - Khởi động lại game để quay lại bảng 'Welcome Back!'.
-       - Tự động điền chuỗi key 'FREE_...' vào ô 'KEY_example' và click 'Continue'.
+       - Khởi động lại game & bắn vào game để hiện lại bảng 'Welcome Back!'.
+       - Chờ 60s game load -> Tự động điền chuỗi key 'FREE_...' vào ô 'KEY_example' và click 'Continue'.
        - Delta sẽ tự động kiểm tra và sinh file license riêng cho app đó!
     """
     global AUTO_RESTORE_DELTA_KEY, selected_packages, _last_key_trigger
@@ -1528,28 +1590,10 @@ def delta_license_sync_thread(stop_event):
 
                 # App chưa có key hợp lệ -> Bắt đầu quy trình tự động lấy và nạp key
                 _last_key_trigger[pkg] = now
-                add_log(f"[Key] {pkg[-12:]} cần Key, bắt đầu xử lý...")
+                add_log(f"[Key] {pkg[-12:]} chưa có key, bắt đầu quy trình...")
 
-                # Bước 1: Kiểm tra xem đã có link Get Key sẵn trong Clipboard chưa
-                clip = get_android_clipboard()
-                target_url = extract_getkey_url(clip)
-
-                if not target_url:
-                    # Mở app để bảng Welcome Back xuất hiện
-                    open_delta_getkey(pkg)
-                    add_log("[Key] Chờ hiển thị bảng Welcome Back...")
-                    stop_event.wait(6)  # Chờ 6s cho form load
-
-                    # Tự động click nút "Receive Key" ở góc phải
-                    click_receive_key_button()
-                    stop_event.wait(2)
-
-                    # Đóng trình duyệt Chrome vừa bị bật lên
-                    close_browser_popups()
-
-                    # Đọc lại Clipboard để lấy URL vừa được copy
-                    clip = get_android_clipboard()
-                    target_url = extract_getkey_url(clip)
+                # Bước 1: Bắn vào game & Quét lấy URL Get Key triệt để (chờ 60s game load)
+                target_url = obtain_delta_getkey_url(pkg, stop_event, max_wait_secs=120)
 
                 # Bước 2: Gửi URL lên Bacon API giải mã
                 if target_url:
@@ -1562,19 +1606,27 @@ def delta_license_sync_thread(stop_event):
                         # Đóng lại trình duyệt nếu có
                         close_browser_popups()
 
-                        # Bước 3: Khởi động lại game để quay lại bảng "Welcome Back!" nhập key
-                        add_log(f"[Key] Khởi động lại {pkg[-12:]} để nhập key...")
-                        safe_root(f"su -c 'am force-stop {pkg}'")
-                        stop_event.wait(2)
-                        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
-                        add_log("[Key] Chờ hiển thị bảng Enter Key...")
-                        stop_event.wait(6)  # Chờ 6s cho game mở lại và hiển thị bảng Welcome Back
+                        # Bước 3: Khởi động lại và BẮN VÀO GAME để quay lại bảng "Welcome Back!" nhập key
+                        add_log(f"[Key] Bắn {pkg[-12:]} vào game để nạp key...")
+                        launch_roblox_and_join_game(pkg)
+                        add_log("[Key] Chờ 60s cho game load vào giao diện & bảng Enter Key...")
+                        for _ in range(60):
+                            if stop_event.is_set():
+                                break
+                            time.sleep(1)
 
                         # Bước 4: Nhập chuỗi key 'FREE_...' vào khung và click 'Continue'
                         if not (key_res.startswith("http://") or key_res.startswith("https://")):
                             auto_enter_key_and_continue(key_res)
                             add_log("[Key] Đã điền key FREE_... & bấm Continue!")
-                            stop_event.wait(5)
+                            stop_event.wait(6)
+
+                            # Kiểm tra nếu chưa sinh file, thử nhập lại lần 2 sau 5s (phòng máy lag)
+                            has_lic = any(_get_file_mtime_root(f"{d}/license") > 0 for d in pkg_dirs)
+                            if not has_lic:
+                                add_log("[Key] Thử nạp lại key lần 2...")
+                                auto_enter_key_and_continue(key_res)
+                                stop_event.wait(5)
                         else:
                             # Nếu kết quả là URL kích hoạt Whitelist
                             _http_get_ping(key_res)
@@ -1592,12 +1644,12 @@ def delta_license_sync_thread(stop_event):
                         if created:
                             add_log(f"[Key] {pkg[-12:]} đã tự sinh License thành công!")
                         else:
-                            add_log(f"[Key] Đã submit key cho {pkg[-12:]}")
+                            add_log(f"[Key] Đã hoàn tất nạp key cho {pkg[-12:]}")
 
                     except BaconApiException as be:
                         add_log(f"[Bacon Lỗi] {str(be)[:25]}")
                 else:
-                    add_log("[Key] Chưa lấy được URL Get Key.")
+                    add_log("[Key] Không lấy được URL Get Key.")
 
                 stop_event.wait(10)
 
@@ -1809,16 +1861,21 @@ def delta_key_menu():
                 print(f"\n{R}[!] Chưa có Bacon API Key! Vui lòng chọn mục [2] trước.{RESET}")
                 time.sleep(2)
                 continue
-            test_url = safe_input(f"{M}Nhập URL cần Bypass (hoặc Enter để đọc Clipboard): {RESET}").strip()
+            test_url = safe_input(f"{M}Nhập URL cần Bypass (hoặc Enter để quét tự động từ game): {RESET}").strip()
             if not test_url:
                 clip = get_android_clipboard()
                 test_url = extract_getkey_url(clip)
                 if test_url:
                     print(f"{Y}[*] Tự động lấy URL từ Clipboard: {test_url}{RESET}")
                 else:
-                    print(f"{R}[!] Clipboard không chứa link Get Key hợp lệ.{RESET}")
-                    time.sleep(2)
-                    continue
+                    if selected_packages:
+                        target_pkg = selected_packages[0]['pkg']
+                        print(f"{Y}[*] Đang bắn vào game {target_pkg} để lấy URL triệt để...{RESET}")
+                        test_url = obtain_delta_getkey_url(target_pkg, threading.Event(), max_wait_secs=65)
+                    if not test_url:
+                        print(f"{R}[!] Không thể lấy được link Get Key.{RESET}")
+                        time.sleep(2)
+                        continue
             print(f"\n{Y}[*] Đang gửi yêu cầu giải mã tới Bacon Bypass API (timeout 90s)...{RESET}")
             try:
                 client = BaconBypassClient(api_key=cur_k, timeout=90.0, max_retries=3)
@@ -1838,17 +1895,15 @@ def delta_key_menu():
                     set_android_clipboard(res)
                     print(f"{G}[✓] Đã sao chép key vào Clipboard!{RESET}")
                     fix_tty()
-                    auto_c = safe_input(f"\n{M}Tự động khởi động lại game, nhập key và bấm Continue ngay? (Y/n): {RESET}").strip().lower()
+                    auto_c = safe_input(f"\n{M}Tự động bắn vào game, nhập key và bấm Continue ngay? (Y/n): {RESET}").strip().lower()
                     if auto_c != 'n':
                         close_browser_popups()
                         if selected_packages:
                             target_pkg = selected_packages[0]['pkg']
-                            print(f"{Y}[*] Đang khởi động lại game {target_pkg}...{RESET}")
-                            safe_root(f"su -c 'am force-stop {target_pkg}'")
-                            time.sleep(2)
-                            safe_root(f"su -c 'monkey -p {target_pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
-                            print(f"{Y}[*] Chờ 6s cho bảng Welcome Back xuất hiện...{RESET}")
-                            time.sleep(6)
+                            print(f"{Y}[*] Đang bắn vào game {target_pkg}...{RESET}")
+                            launch_roblox_and_join_game(target_pkg)
+                            print(f"{Y}[*] Chờ 60s (1 phút) cho game load vào server & bảng Welcome Back...{RESET}")
+                            time.sleep(60)
                         print(f"{Y}[*] Đang focus ô 'KEY_example', nhập key và bấm Continue...{RESET}")
                         auto_enter_key_and_continue(res)
                         print(f"{G}[✓] Đã hoàn tất nhập key và click Continue!{RESET}")
