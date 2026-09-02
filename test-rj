@@ -1298,6 +1298,122 @@ def _http_get_ping(url, timeout=15):
     except: pass
     return False
 
+def get_screen_resolution():
+    """Lấy độ phân giải màn hình chuẩn Landscape của Roblox (W x H)."""
+    try:
+        out = subprocess.check_output("su -c 'wm size 2>/dev/null'", shell=True, text=True, timeout=3)
+        m = re.findall(r'(\d+)x(\d+)', out)
+        if m:
+            w, h = int(m[-1][0]), int(m[-1][1])
+            return max(w, h), min(w, h)
+    except:
+        pass
+    return 1600, 720
+
+def click_receive_key_button():
+    """Tự động tìm và click vào nút 'Receive Key' của Delta để copy link vào Clipboard."""
+    w, h = get_screen_resolution()
+    rec_coords = None
+    try:
+        safe_root("su -c 'uiautomator dump /sdcard/uidump.xml 2>/dev/null'")
+        dump_str = subprocess.check_output("su -c 'cat /sdcard/uidump.xml 2>/dev/null'", shell=True, text=True, timeout=3)
+        if "Receive Key" in dump_str:
+            root_el = ET.fromstring(dump_str)
+            for node in root_el.iter('node'):
+                txt = node.attrib.get('text', '')
+                desc = node.attrib.get('content-desc', '')
+                if "Receive Key" in txt or "Receive Key" in desc:
+                    bounds = node.attrib.get('bounds', '')
+                    coords = re.findall(r'\[(\d+),(\d+)\]', bounds)
+                    if len(coords) == 2:
+                        cx = (int(coords[0][0]) + int(coords[1][0])) // 2
+                        cy = (int(coords[0][1]) + int(coords[1][1])) // 2
+                        rec_coords = (cx, cy)
+                        break
+    except:
+        pass
+
+    if rec_coords:
+        rx, ry = rec_coords
+    else:
+        # Tọa độ tương đối: giữa màn hình theo X (50%), khoảng 70% theo Y (dưới nút Continue)
+        rx = int(w * 0.50)
+        ry = int(h * 0.70)
+
+    add_log(f"[Key] Click 'Receive Key' tại ({rx}, {ry})")
+    safe_root(f"su -c 'input tap {rx} {ry}'")
+    time.sleep(1.5)
+    return True
+
+def auto_enter_key_and_continue(key_str):
+    """
+    Tự động nhập key dạng 'FREE_...' vào khung 'Enter key' và bấm nút 'Continue'.
+    Sau khi bấm Continue, Delta sẽ kích hoạt và tự động sinh ra file license.
+    """
+    key_str = key_str.strip()
+    if not key_str:
+        return False
+
+    w, h = get_screen_resolution()
+    input_coords = None
+    continue_coords = None
+
+    # Thử quét tọa độ chính xác qua uiautomator
+    try:
+        safe_root("su -c 'uiautomator dump /sdcard/uidump.xml 2>/dev/null'")
+        dump_str = subprocess.check_output("su -c 'cat /sdcard/uidump.xml 2>/dev/null'", shell=True, text=True, timeout=3)
+        if dump_str:
+            root_el = ET.fromstring(dump_str)
+            for node in root_el.iter('node'):
+                txt = node.attrib.get('text', '')
+                desc = node.attrib.get('content-desc', '')
+                bounds = node.attrib.get('bounds', '')
+                coords = re.findall(r'\[(\d+),(\d+)\]', bounds)
+                if len(coords) == 2:
+                    cx = (int(coords[0][0]) + int(coords[1][0])) // 2
+                    cy = (int(coords[0][1]) + int(coords[1][1])) // 2
+                    if "Continue" in txt or "Continue" in desc:
+                        continue_coords = (cx, cy)
+                    elif "KEY_example" in txt or "Enter key" in txt or "Enter key" in desc or node.attrib.get('class') == 'android.widget.EditText':
+                        input_coords = (cx, cy)
+    except:
+        pass
+
+    # 1. Tọa độ ô input (mặc định 50% W, 46% H)
+    in_x = input_coords[0] if input_coords else int(w * 0.50)
+    in_y = input_coords[1] if input_coords else int(h * 0.46)
+
+    # 2. Focus vào ô nhập key (nhấp 2 lần để đảm bảo con trỏ vào ô)
+    add_log(f"[Key] Focus ô nhập key ({in_x}, {in_y})")
+    safe_root(f"su -c 'input tap {in_x} {in_y}'")
+    time.sleep(0.4)
+    safe_root(f"su -c 'input tap {in_x} {in_y}'")
+    time.sleep(0.5)
+
+    # 3. Ghi vào Clipboard
+    set_android_clipboard(key_str)
+    time.sleep(0.2)
+
+    # 4. Nhập key dạng FREE_... vào ô
+    safe_root(f"su -c 'input text \"{key_str}\"'")
+    time.sleep(0.4)
+    # Backup bằng paste keyevent 279
+    safe_root("su -c 'input keyevent 279 2>/dev/null'")
+    time.sleep(0.4)
+
+    # 5. Đóng bàn phím ảo (nếu có) để lộ nút Continue (phím Back)
+    safe_root("su -c 'input keyevent 4 2>/dev/null'")
+    time.sleep(0.8)
+
+    # 6. Tọa độ nút Continue (mặc định 50% W, 58% H)
+    cont_x = continue_coords[0] if continue_coords else int(w * 0.50)
+    cont_y = continue_coords[1] if continue_coords else int(h * 0.58)
+
+    add_log(f"[Key] Bấm nút 'Continue' ({cont_x}, {cont_y})")
+    safe_root(f"su -c 'input tap {cont_x} {cont_y}'")
+    time.sleep(1.5)
+    return True
+
 def _get_delta_license_dirs():
     """Trả về danh sách tất cả thư mục có thể chứa Delta license."""
     dirs = [
@@ -1342,7 +1458,7 @@ def delta_license_sync_thread(stop_event):
     """Thread quản lý Delta key:
     - Backup key mới nhất mỗi khi phát hiện file license mới hơn backup.
     - Restore vào thư mục thiếu NẾU key còn trong hạn (< KEY_EXPIRE_HOURS giờ).
-    - Tích hợp Bacon Bypass: Tự động bắt link Get Key từ Clipboard, giải mã và kích hoạt license mới.
+    - Tự động: Click 'Receive Key' -> Lấy URL Clipboard -> Bypass Bacon API -> Nhập Key 'FREE_...' -> Click 'Continue' -> Sinh file license tự động!
     """
     global AUTO_RESTORE_DELTA_KEY, selected_packages, _last_key_trigger
     backup_file = BACON_BACKUP_FILE
@@ -1394,55 +1510,84 @@ def delta_license_sync_thread(stop_event):
                         )
                         add_log(f"[Key] Restore Key → {d.split('/')[-3][:12]}")
             else:
-                # ── B4: Key hết hạn hoặc chưa có → Tự động xử lý bằng Bacon API ────
+                # ── B4: Key hết hạn hoặc chưa có → Khép kín luồng Auto-Bypass & Nạp Key ────
                 bkey = load_bacon_api_key()
                 for item in selected_packages:
                     pkg = item['pkg']
                     last_trigger = _last_key_trigger.get(pkg, 0)
-                    if now - last_trigger >= 300:  # 5 phút tối thiểu giữa các lần trigger
+                    if now - last_trigger >= 300:  # 5 phút tối thiểu giữa các lần thử
                         _last_key_trigger[pkg] = now
 
-                        # Bước 4.1: Kiểm tra xem đã có link trong Clipboard chưa
+                        # Bước 4.1: Kiểm tra xem đã có link Get Key trong Clipboard chưa
                         clip = get_android_clipboard()
                         target_url = extract_getkey_url(clip)
 
                         if not target_url:
-                            # Nếu chưa có link: Mở Delta để nó kích hoạt tạo link Get Key
+                            # Mở Delta để form 'Enter key' xuất hiện
                             open_delta_getkey(pkg)
-                            for _ in range(6):  # Chờ 12s đọc clipboard
-                                stop_event.wait(2)
-                                clip = get_android_clipboard()
-                                target_url = extract_getkey_url(clip)
-                                if target_url:
-                                    break
+                            add_log("[Key] Chờ hiển thị form Enter Key...")
+                            stop_event.wait(6)  # Chờ app load form
 
-                        # Bước 4.2: Nếu có link và đã cấu hình Bacon API Key -> Thực hiện Bypass
+                            # Tự động click nút "Receive Key"
+                            click_receive_key_button()
+                            stop_event.wait(2)
+
+                            # Đọc lại Clipboard
+                            clip = get_android_clipboard()
+                            target_url = extract_getkey_url(clip)
+
+                        # Bước 4.2: Nếu có link và có Bacon API Key -> Gửi giải mã
                         if target_url and bkey:
-                            add_log(f"[Bacon] Phát hiện link: {target_url[:20]}...")
+                            add_log(f"[Bacon] Giải link: {target_url[:20]}...")
                             try:
                                 client = BaconBypassClient(api_key=bkey, timeout=90.0, max_retries=3)
-                                direct_res = client.bypass(target_url)
-                                add_log("[Bacon] Giải mã thành công!")
+                                key_res = client.bypass(target_url)
+                                add_log(f"[Bacon] Nhận key: {key_res[:15]}...")
 
-                                # Nếu kết quả là link kích hoạt Whitelist -> Ping GET
-                                if direct_res.startswith("http://") or direct_res.startswith("https://"):
-                                    _http_get_ping(direct_res)
-                                    add_log("[Bacon] Đã gửi xác thực Whitelist!")
+                                # Bước 4.3: Xử lý kết quả trả về từ API
+                                if key_res.startswith("http://") or key_res.startswith("https://"):
+                                    _http_get_ping(key_res)
+                                    add_log("[Bacon] Đã ping URL kích hoạt Whitelist!")
+                                    stop_event.wait(3)
                                 else:
-                                    set_android_clipboard(direct_res)
+                                    # Kết quả dạng "FREE_263ddd9f267bb46239e3c2873752e563"
+                                    # Nhập vào khung 'Enter key' và bấm 'Continue'
+                                    auto_enter_key_and_continue(key_res)
+                                    add_log("[Key] Đã nạp key & bấm Continue!")
+                                    stop_event.wait(6)
 
-                                # Relaunch Delta để app xác nhận whitelist và tạo license file
-                                safe_root(f"su -c 'am force-stop {pkg}'")
-                                time.sleep(2)
-                                safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
-                                add_log(f"[Key] Mở lại {pkg[-12:]} để nhận key")
-                                stop_event.wait(20)
+                                # Bước 4.4: Kiểm tra xem file license đã được Delta tự sinh ra chưa
+                                created_lic = None
+                                for d in dirs_to_check:
+                                    lic = f"{d}/license"
+                                    if _get_file_mtime_root(lic) > 0:
+                                        created_lic = lic
+                                        break
+
+                                if created_lic:
+                                    add_log("[Key] File License đã tạo thành công!")
+                                    # Backup ngay và nạp sang các package khác
+                                    subprocess.run(
+                                        f"su -c 'cp \"{created_lic}\" \"{backup_file}\" && chmod 777 \"{backup_file}\"'",
+                                        shell=True, stderr=subprocess.DEVNULL
+                                    )
+                                    for d in dirs_to_check:
+                                        lp = f"{d}/license"
+                                        if lp != created_lic:
+                                            subprocess.run(
+                                                f"su -c 'mkdir -p \"{d}\" && cp \"{backup_file}\" \"{lp}\" && chmod 777 \"{lp}\" && restorecon \"{lp}\" 2>/dev/null || true'",
+                                                shell=True, stderr=subprocess.DEVNULL
+                                            )
+                                    add_log("[Key] Đã đồng bộ License sang mọi app!")
+                                else:
+                                    add_log("[Key] Đang chờ Delta sinh file license...")
+
                             except BaconApiException as be:
                                 add_log(f"[Bacon Lỗi] {str(be)[:25]}")
                         else:
                             if not bkey and target_url:
-                                add_log("[Bacon] Cần cấu hình API Key ở mục [5]")
-                            stop_event.wait(30)
+                                add_log("[Bacon] Cần nhập Bacon Key ở mục [5]!")
+                            stop_event.wait(20)
                         break
 
         except Exception:
@@ -1701,6 +1846,12 @@ def delta_key_menu():
                 else:
                     set_android_clipboard(res)
                     print(f"{G}[✓] Đã sao chép key vào Clipboard!{RESET}")
+                    fix_tty()
+                    auto_c = safe_input(f"\n{M}Tự động điền key vào game và bấm Continue ngay? (Y/n): {RESET}").strip().lower()
+                    if auto_c != 'n':
+                        print(f"{Y}[*] Đang focus ô 'KEY_example', nhập key và bấm Continue...{RESET}")
+                        auto_enter_key_and_continue(res)
+                        print(f"{G}[✓] Đã hoàn tất nhập key và click Continue!{RESET}")
             except BaconApiException as be:
                 print(f"\n{R}[✗] Thất bại: {be}{RESET}")
             fix_tty()
