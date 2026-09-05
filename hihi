@@ -8,5 +8,5 @@ _G.boss = {"Sea King", "Hydra"}
 _G.tool = {"Sword", "Fruit","Melee"} 
 _G.skill = {"M1", "Z", "X", "C","V","B","E"}
 _G.BossEarlyJoinSec = 30
-
-loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/kaitun",true))()
+_G.id = hop_seaking
+loadstring(game:HttpGet("https://raw.githubusercontent.com/NTTTTTTTT/upload/refs/heads/main/content/4705387ade384d8faf8cb56237e3ce31_obf.lua",true))()
