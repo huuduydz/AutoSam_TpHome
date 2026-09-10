@@ -172,7 +172,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.2{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -539,44 +539,142 @@ def discover_unbound_account(pkg, states):
 # =====================================================================
 _boot_threads = {}   # {pkg: Thread} — track boot threads
 
-def _pgrep_pkg(pkg, timeout=3):
-    """Lấy danh sách PID chính xác của pkg bằng cách duyệt qua /proc qua su -c để tránh va chạm clone."""
-    pids = []
+def _pgrep_pkg(pkg):
+    """
+    Lấy danh sách PID của package một cách nhanh chóng, chính xác, chống va chạm clone:
+    1. Thử qua pidof (nhanh nhất, ~5ms)
+    2. Thử qua ps -A -o PID,NAME / ps -ef (chính xác từng process name, không va chạm clone)
+    3. Thử qua pgrep -x / pgrep -f
+    """
+    pids = set()
+
+    # 1. Thử pidof (nhanh và chuẩn Android)
     try:
-        cmd = "su -c 'for p in /proc/[0-9]*; do [ -d \"$p\" ] && echo -n \"${p##*/}:\" && cat \"$p/cmdline\" 2>/dev/null && echo; done'"
         out = subprocess.check_output(
-            cmd, shell=True, timeout=timeout,
+            f"su -c 'pidof {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=2,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-        for line in out.split(b'\n'):
-            if b':' not in line:
-                continue
-            parts = line.split(b':', 1)
-            pid_str = parts[0].strip()
-            if not pid_str.isdigit():
-                continue
-            cmdline = parts[1].split(b'\x00')[0].decode('utf-8', errors='ignore').strip()
-            if cmdline == pkg or cmdline.startswith(pkg + ':'):
-                pids.append(pid_str.decode('utf-8'))
+        for token in out.strip().split():
+            if token.isdigit():
+                pids.add(token)
     except:
         pass
-    return pids
 
-def _is_pkg_active(pkg):
-    """Kiểm tra pkg đang chạy: pgrep (nhanh) + dumpsys (chính xác, không va chạm clone)."""
-    if _pgrep_pkg(pkg):
-        return True
+    if pids:
+        return list(pids)
+
+    # 2. Thử ps -A / ps -ef (chống va chạm clone bằng so khớp exact name)
     try:
         out = subprocess.check_output(
-            f"su -c 'dumpsys activity activities 2>/dev/null'",
-            shell=True, text=True, timeout=5,
+            "su -c 'ps -A -o PID,NAME 2>/dev/null || ps -ef 2>/dev/null || ps 2>/dev/null'",
+            shell=True, text=True, timeout=3,
             stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-        # So khớp package name chính xác với word boundary
-        pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
-        return bool(pattern.search(out))
+        for line in out.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                cand_pid = None
+                cand_name = None
+                if parts[0].isdigit():
+                    cand_pid = parts[0]
+                    cand_name = parts[-1]
+                elif len(parts) >= 8 and parts[1].isdigit():
+                    cand_pid = parts[1]
+                    cand_name = parts[-1]
+                
+                if cand_pid and cand_name:
+                    if cand_name == pkg or cand_name.startswith(pkg + ':'):
+                        pids.add(cand_pid)
     except:
-        return False
+        pass
+
+    if pids:
+        return list(pids)
+
+    # 3. Thử pgrep
+    try:
+        out = subprocess.check_output(
+            f"su -c 'pgrep -x {pkg} 2>/dev/null || pgrep -f {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=2,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        for token in out.strip().split():
+            if token.isdigit():
+                pids.add(token)
+    except:
+        pass
+
+    return list(pids)
+
+def is_app_running(pkg):
+    """
+    Kiểm tra app có đang chạy hay không — hỗ trợ cả Toàn màn hình lẫn Cửa sổ nổi (Floating / Freeform / Multi-window / Split-screen).
+    Đa tầng:
+    1. Process PID qua _pgrep_pkg (pidof, ps -A, pgrep)
+    2. Dumpsys Activity Processes (ProcessRecord của Android ActivityManager)
+    3. Dumpsys Window (Nhận diện cửa sổ nổi / freeform window đang active trên màn hình)
+    4. Dumpsys Activity Activities (Activity stack trong chế độ đa nhiệm / pop-up)
+    5. Heartbeat file mới cập nhật (< 90s)
+    """
+    # 1. Process PID (nhanh nhất)
+    if bool(_pgrep_pkg(pkg)):
+        return True
+
+    # 2. ActivityManager Process Record
+    try:
+        p_out = subprocess.check_output(
+            f"su -c 'dumpsys activity p {pkg} 2>/dev/null'",
+            shell=True, text=True, timeout=2,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        if "ProcessRecord" in p_out and (" " + pkg in p_out or ":" + pkg in p_out or "/" + pkg in p_out):
+            return True
+    except:
+        pass
+
+    # 3. WindowManager: Nhận diện Cửa Sổ Nổi (Floating Window / Freeform / Pop-up view)
+    try:
+        w_out = subprocess.check_output(
+            "su -c 'dumpsys window windows 2>/dev/null || dumpsys window displays 2>/dev/null'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
+        if pattern.search(w_out):
+            return True
+    except:
+        pass
+
+    # 4. Activity stack đa nhiệm
+    try:
+        act_out = subprocess.check_output(
+            "su -c 'dumpsys activity activities 2>/dev/null'",
+            shell=True, text=True, timeout=3,
+            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
+        if pattern.search(act_out):
+            return True
+    except:
+        pass
+
+    # 5. Heartbeat file còn mới (< 90s)
+    try:
+        all_hb = get_all_heartbeat_files_fast(pkg)
+        now = time.time()
+        for f in all_hb:
+            mt = _get_file_mtime(f)
+            if mt > 0 and (now - mt < 90):
+                return True
+    except:
+        pass
+
+    return False
+
+def _is_pkg_active(pkg):
+    """Kiểm tra pkg đang hoạt động (đồng bộ hoàn toàn với is_app_running)."""
+    return is_app_running(pkg)
 
 def _kill_pkg(pkg):
     """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
@@ -859,9 +957,6 @@ def login_via_cookie():
 # =====================================================================
 # MONITOR THREAD - Mỗi package chạy 1 thread riêng
 # =====================================================================
-def is_app_running(pkg):
-    """Kiểm tra process của package (chính xác, không va chạm clone)."""
-    return bool(_pgrep_pkg(pkg))
 
 def monitor_package(pkg, states, last_ok_ping, stop_event):
     """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
