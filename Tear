@@ -1,0 +1,9 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
+_G.webhook_url = "" 
+_G.auto_ms_mother = true
+_G.distance_stud = 10
+_G.buso = true
+_G.ken = true
+_G.tool = {"Sword", "Fruit","Melee"} 
+_G.skill = {"M1", "Z", "X", "C","V","B","E"}
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/sourcehopmother.lua"))()
