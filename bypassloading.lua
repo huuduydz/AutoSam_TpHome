@@ -17,4 +17,4 @@ end
 while not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")) do
     RunService.Heartbeat:Wait()
 end
-loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hihi",true))()
+
