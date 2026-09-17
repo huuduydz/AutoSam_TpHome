@@ -286,40 +286,79 @@ def select_package_menu():
 def inject_universal_lua():
     lua_code = """
 loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
+
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
 local DisconnectErrors = Enum.ConnectionError.DisconnectErrors.Value
 local PlaceLaunchOtherError = Enum.ConnectionError.PlacelaunchOtherError.Value
+
 repeat task.wait() until game:IsLoaded() and Players.LocalPlayer
+
 local LocalPlayer = Players.LocalPlayer
 local fileName = "rj_" .. LocalPlayer.Name .. "_checkhudyhub.json"
 local sWF = true
+
 task.spawn(function()
     while sWF do
         task.wait(3)
+
         pcall(function()
             local errorCode = GuiService:GetErrorCode().Value
-            if errorCode == 1 or errorCode == 773 or errorCode == 772 or errorCode == 769 or (errorCode >= DisconnectErrors and errorCode < PlaceLaunchOtherError) then
+
+            if errorCode == 1
+                or errorCode == 773
+                or errorCode == 772
+                or errorCode == 769
+                or (errorCode >= DisconnectErrors and errorCode < PlaceLaunchOtherError)
+            then
                 sWF = false
             end
         end)
+
         if sWF then
-            local pidOk, pid = pcall(function() return game.PlaceId end)
-            local humOk, hum = pcall(function() return LocalPlayer.Character.Humanoid end)
+            local pidOk, pid = pcall(function()
+                return game.PlaceId
+            end)
+
+            local humOk, hum = pcall(function()
+                return LocalPlayer.Character.Humanoid
+            end)
+
             if not (pidOk and pid == 0 and not (humOk and hum)) then
                 pcall(function()
-                    -- Ghi Unix timestamp số nguyên (không dùng string date) để Python đọc chính xác
-                    writefile(fileName, string.format('{"playerName":"%s","timestamp":%d}', LocalPlayer.Name, math.floor(workspace:GetServerTimeNow())))
+                    writefile(
+                        fileName,
+                        string.format(
+                            '{"playerName":"%s","timestamp":%d}',
+                            LocalPlayer.Name,
+                            math.floor(workspace:GetServerTimeNow())
+                        )
+                    )
                 end)
             end
         end
     end
-end)"""
-    safe_root("su -c 'find /sdcard/ -maxdepth 4 -type f -name \"*checkhudyhub.lua\" -delete 2>/dev/null'")
+end)
+
+-- Inject thêm file hihi
+loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hihi",
+    true
+))()
+"""
+
+    safe_root(
+        "su -c 'find /sdcard/ -maxdepth 4 -type f "
+        "-name \"*checkhudyhub.lua\" -delete 2>/dev/null'"
+    )
+
     temp_lua = "/sdcard/Download/universal_checkhudyhub.lua"
+
     with open(temp_lua, "w", encoding="utf-8") as f:
         f.write(lua_code)
+
     root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/universal_checkhudyhub.lua\\" && chmod 777 \\"\\$dir/universal_checkhudyhub.lua\\"; done; rm {temp_lua}" """
+
     safe_root(root_cmd)
 
 # =====================================================================
