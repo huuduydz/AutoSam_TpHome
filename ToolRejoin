@@ -285,6 +285,7 @@ def select_package_menu():
 # =====================================================================
 def inject_universal_lua():
     lua_code = """
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hihi",true))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
@@ -314,8 +315,7 @@ task.spawn(function()
             end
         end
     end
-end)
-loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hihi",true))()"""
+end)"""
     safe_root("su -c 'find /sdcard/ -maxdepth 4 -type f -name \"*checkhudyhub.lua\" -delete 2>/dev/null'")
     temp_lua = "/sdcard/Download/universal_checkhudyhub.lua"
     with open(temp_lua, "w", encoding="utf-8") as f:
