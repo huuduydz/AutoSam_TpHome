@@ -290,6 +290,7 @@ def select_package_menu():
 # =====================================================================
 def inject_universal_lua():
     lua_code = """
+loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hihi",true))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
