@@ -1,4 +1,5 @@
-import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json
+import urllib.request, urllib.error
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
@@ -96,6 +97,7 @@ G = '\033[92m'
 Y = '\033[93m'
 R = '\033[91m'
 M = '\033[95m'
+W = '\033[97m'
 RESET = '\033[0m'
 
 # =====================================================================
@@ -290,7 +292,6 @@ def select_package_menu():
 # =====================================================================
 def inject_universal_lua():
     lua_code = """
-loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hihi",true))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
@@ -951,6 +952,298 @@ def login_via_cookie():
         time.sleep(1)
     print(f"\n{G}[+] HOÀN TẤT.{RESET}")
     time.sleep(5)
+
+# =====================================================================
+# KIỂM TRA TRẠNG THÁI ACC / CAPTCHA / NOT-APPROVED (TEST)
+# =====================================================================
+def extract_roblox_cookie(pkg):
+    """
+    Trích xuất cookie .ROBLOSECURITY từ app Roblox trên thiết bị Android (cần Root).
+    1. Kiểm tra SQLite WebView: /data/data/{pkg}/app_webview/Default/Cookies
+    2. Kiểm tra SharedPreferences XML: /data/data/{pkg}/shared_prefs/*.xml
+    """
+    # 1. Thử lấy từ SQLite WebView
+    for db_path in [
+        f"/data/data/{pkg}/app_webview/Default/Cookies",
+        f"/data/data/{pkg}/app_webview/Cookies",
+    ]:
+        try:
+            check = subprocess.check_output(f"su -c 'test -f {db_path} && echo exists'", shell=True, text=True, timeout=3).strip()
+            if "exists" in check:
+                tmp_dir = os.path.join(os.environ.get('HOME', '/data/data/com.termux/files/home'), 'tmp')
+                os.makedirs(tmp_dir, exist_ok=True)
+                local_db = os.path.join(tmp_dir, f"ext_{pkg.split('.')[-1]}.db")
+                subprocess.run(f"su -c 'cp {db_path} {local_db} && chmod 666 {local_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                if os.path.exists(local_db):
+                    conn = sqlite3.connect(local_db)
+                    c = conn.cursor()
+                    c.execute("SELECT value FROM cookies WHERE name='.ROBLOSECURITY' AND host_key LIKE '%roblox.com%' LIMIT 1")
+                    row = c.fetchone()
+                    conn.close()
+                    try: os.remove(local_db)
+                    except: pass
+                    if row and row[0] and str(row[0]).startswith("_|WARNING"):
+                        return row[0].strip()
+        except:
+            pass
+
+    # 2. Thử lấy từ SharedPreferences XML
+    try:
+        xml_out = subprocess.check_output(
+            f"su -c 'grep -hoE \"_\\|WARNING:[^<\"]+\" /data/data/{pkg}/shared_prefs/*.xml 2>/dev/null'",
+            shell=True, text=True, timeout=4
+        ).strip()
+        if xml_out:
+            for line in xml_out.splitlines():
+                if line.startswith("_|WARNING"):
+                    return line.strip()
+    except:
+        pass
+
+    return None
+
+def check_roblox_account_status(cookie):
+    """
+    Kiểm tra chi tiết trạng thái tài khoản Roblox bằng Cookie:
+    - 'OK': Hoạt động bình thường (không dính Captcha/Lock)
+    - 'NOT_APPROVED': Kẹt màn hình phê duyệt Not-Approved / Cảnh báo điều khoản
+    - 'CAPTCHA_CHECKPOINT': Yêu cầu xác minh Captcha Arkose / Checkpoint
+    - 'EXPIRED': Cookie hết hạn hoặc không hợp lệ (401)
+    - 'ERROR': Lỗi mạng hoặc không thể kết nối
+    """
+    if not cookie or not isinstance(cookie, str):
+        return {
+            "status": "NO_COOKIE",
+            "badge": "Không Có Cookie",
+            "color": R,
+            "message": "Không tìm thấy cookie trong app hoặc chưa đăng nhập."
+        }
+
+    cookie = cookie.strip()
+    cookie_header = f".ROBLOSECURITY={cookie}"
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    user_id = None
+    username = None
+    display_name = None
+
+    # 1. API Xác thực chính: users.roblox.com
+    try:
+        req = urllib.request.Request(
+            "https://users.roblox.com/v1/users/authenticated",
+            headers={"Cookie": cookie_header, "User-Agent": ua}
+        )
+        with urllib.request.urlopen(req, timeout=10) as res:
+            raw = res.read().decode('utf-8', errors='ignore')
+            data = json.loads(raw)
+            user_id = data.get("id")
+            username = data.get("name")
+            display_name = data.get("displayName")
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode('utf-8', errors='ignore').lower()
+        if e.code == 401:
+            return {
+                "status": "EXPIRED",
+                "badge": "Cookie Hết Hạn / Die (401)",
+                "color": R,
+                "user_id": None,
+                "username": None,
+                "message": "Cookie không hợp lệ hoặc đã bị đăng xuất trên hệ thống."
+            }
+        elif "moderated" in err_body:
+            return {
+                "status": "NOT_APPROVED",
+                "badge": "Kẹt Not-Approved / Kiểm Duyệt",
+                "color": R,
+                "user_id": None,
+                "username": None,
+                "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+            }
+    except Exception:
+        pass
+
+    # 2. Kiểm tra điều hướng trang chủ roblox.com/home
+    try:
+        req_home = urllib.request.Request(
+            "https://www.roblox.com/home",
+            headers={"Cookie": cookie_header, "User-Agent": ua}
+        )
+        with urllib.request.urlopen(req_home, timeout=10) as res:
+            final_url = res.geturl().lower()
+            html_body = res.read().decode('utf-8', errors='ignore').lower()
+
+            if "not-approved" in final_url or "not-approved" in html_body:
+                return {
+                    "status": "NOT_APPROVED",
+                    "badge": "Kẹt Trang Not-Approved / Cần Duyệt",
+                    "color": R,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "url": res.geturl(),
+                    "message": "Tài khoản đang bị kẹt tại trang Not-Approved (cần vào web chấp thuận cảnh báo hoặc giải captcha)!"
+                }
+            elif any(k in final_url for k in ["checkpoint", "challenge", "two-step", "arkose"]) or \
+                 any(k in html_body for k in ["arkoselabs", "funcaptcha", "two-step-verification"]):
+                return {
+                    "status": "CAPTCHA_CHECKPOINT",
+                    "badge": "Dính Captcha / Checkpoint Xác Minh",
+                    "color": Y,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "url": res.geturl(),
+                    "message": "Tài khoản bị yêu cầu giải Captcha FunCaptcha/Arkose hoặc xác minh 2 bước!"
+                }
+    except urllib.error.HTTPError as e:
+        loc = e.headers.get("Location", "").lower()
+        if "not-approved" in loc:
+            return {
+                "status": "NOT_APPROVED",
+                "badge": "Kẹt Trang Not-Approved / Cần Duyệt",
+                "color": R,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "url": e.headers.get("Location"),
+                "message": "Tài khoản bị chuyển hướng vào trang Not-Approved!"
+            }
+        elif any(k in loc for k in ["checkpoint", "challenge", "two-step"]):
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Dính Captcha / Checkpoint Xác Minh",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "url": e.headers.get("Location"),
+                "message": "Tài khoản bị chuyển hướng yêu cầu giải Captcha / Checkpoint!"
+            }
+    except Exception:
+        pass
+
+    # 3. Kiểm tra challenge headers qua auth API
+    try:
+        req_auth = urllib.request.Request(
+            "https://auth.roblox.com/v1/account/pin",
+            headers={"Cookie": cookie_header, "User-Agent": ua}
+        )
+        with urllib.request.urlopen(req_auth, timeout=6) as res:
+            pass
+    except urllib.error.HTTPError as e:
+        chal_type = e.headers.get("rblx-challenge-type", "").lower()
+        err_str = e.read().decode('utf-8', errors='ignore').lower()
+        if "captcha" in chal_type or "captcha" in err_str:
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Dính Captcha Arkose Labs",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "message": "Hệ thống bảo mật Roblox yêu cầu giải Captcha Arkose Labs!"
+            }
+        elif "moderated" in err_str:
+            return {
+                "status": "NOT_APPROVED",
+                "badge": "Kẹt Not-Approved / Kiểm Duyệt",
+                "color": R,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+            }
+    except Exception:
+        pass
+
+    if user_id:
+        return {
+            "status": "OK",
+            "badge": "Bình Thường (Tài khoản Sạch)",
+            "color": G,
+            "user_id": user_id,
+            "username": username,
+            "display_name": display_name,
+            "message": f"Tài khoản [{username}] đang hoạt động tốt, không bị dính Captcha hay khóa Not-Approved!"
+        }
+
+    return {
+        "status": "UNKNOWN",
+        "badge": "Không Thể Kiểm Tra",
+        "color": Y,
+        "user_id": None,
+        "username": None,
+        "message": "Không thể kết nối đến máy chủ Roblox hoặc mạng bị chặn."
+    }
+
+def print_account_check_result(label, cookie, res):
+    mask_c = (cookie[:18] + "..." + cookie[-10:]) if (cookie and len(cookie) > 30) else (cookie or "<Trống>")
+    print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
+    print(f"{Y}ĐỐI TƯỢNG:{RESET}  {W}{label}{RESET}")
+    print(f"{Y}COOKIE:{RESET}    {mask_c}")
+    if res.get('username'):
+        print(f"{Y}ACC NAME:{RESET}  {G}{res['username']}{RESET} (ID: {res.get('user_id', 'N/A')})")
+    col = res.get('color', Y)
+    print(f"{Y}KẾT QUẢ:{RESET}   {col}[{res.get('badge', 'N/A')}]{RESET}")
+    print(f"{Y}CHI TIẾT:{RESET}  {res.get('message', '')}")
+    if res.get('url'):
+        print(f"{Y}URL KẸT:{RESET}   {C}{res['url']}{RESET}")
+
+def account_captcha_check_menu():
+    global selected_packages
+    while True:
+        clear_screen()
+        print_banner()
+        print(f"{C}=== KIỂM TRA TRẠNG THÁI ACC / CAPTCHA / NOT-APPROVED (TEST) ==={RESET}")
+        print(f"[{C}1{RESET}] Kiểm tra các Package ĐANG ĐƯỢC CHỌN (trong Mục [1])")
+        print(f"[{C}2{RESET}] Quét TẤT CẢ Package Roblox trên máy và kiểm tra từng Acc")
+        print(f"[{C}3{RESET}] Nhập trực tiếp chuỗi Cookie để test ngay")
+        print(f"[{C}4{RESET}] Quay lại Menu chính")
+        fix_tty()
+        c = safe_input(f"\n{M}Chọn [1-4]: {RESET}").strip()
+        if c == '1':
+            if not selected_packages:
+                print(f"\n{R}[!] Chưa chọn package nào ở Mục [1]!{RESET}")
+                time.sleep(2)
+                continue
+            print(f"\n{Y}[*] Đang trích xuất cookie và kiểm tra {len(selected_packages)} package...{RESET}")
+            for idx, item in enumerate(selected_packages, 1):
+                pkg = item['pkg']
+                cookie = extract_roblox_cookie(pkg)
+                if not cookie:
+                    res = {"status": "NO_COOKIE", "badge": "Không Tìm Thấy Cookie", "color": R, "message": "App chưa đăng nhập tài khoản hoặc không tìm thấy database cookie."}
+                else:
+                    res = check_roblox_account_status(cookie)
+                print_account_check_result(f"Package #{idx}: {pkg}", cookie, res)
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+            try: input()
+            except: pass
+        elif c == '2':
+            all_pkgs = scan_packages()
+            roblox_pkgs = [p for p in all_pkgs if any(k in p.lower() for k in ["roblox", "delta", "hydrogen", "arceus", "fluxus"])] or all_pkgs
+            print(f"\n{Y}[*] Tìm thấy {len(roblox_pkgs)} package. Đang kiểm tra từng app...{RESET}")
+            for idx, pkg in enumerate(roblox_pkgs, 1):
+                cookie = extract_roblox_cookie(pkg)
+                if not cookie:
+                    res = {"status": "NO_COOKIE", "badge": "Không Tìm Thấy Cookie", "color": R, "message": "App chưa có phiên đăng nhập."}
+                else:
+                    res = check_roblox_account_status(cookie)
+                print_account_check_result(f"[{idx}/{len(roblox_pkgs)}] {pkg}", cookie, res)
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+            try: input()
+            except: pass
+        elif c == '3':
+            fix_tty()
+            raw_c = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+            if not raw_c:
+                print(f"{Y}[*] Đã hủy.{RESET}")
+                time.sleep(1.5)
+                continue
+            print(f"\n{Y}[*] Đang gửi yêu cầu kiểm tra trạng thái tới Roblox API...{RESET}")
+            res = check_roblox_account_status(raw_c)
+            print_account_check_result("Kiểm tra Cookie thủ công", raw_c, res)
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+            try: input()
+            except: pass
+        elif c == '4':
+            break
 
 # =====================================================================
 # AUTO REJOIN (TỐI ƯU + ĐỌC ĐÚNG FILE)
@@ -2058,7 +2351,8 @@ def main():
         print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
         print(f"[{C}5{RESET}] Quản lý Delta Key & Auto Bypass (Bacon API)")
         print(f"[{C}6{RESET}] Kiểm tra file Delta License (Test)")
-        print(f"[{C}7{RESET}] Thoát")
+        print(f"[{C}7{RESET}] Kiểm tra Trạng thái Acc / Captcha / Not-Approved (Test)")
+        print(f"[{C}8{RESET}] Thoát")
         try:
             fix_tty()
             choice = safe_input(f"\n{M}HuDy > {RESET}")
@@ -2078,6 +2372,8 @@ def main():
         elif choice == '6':
             test_delta_license()
         elif choice == '7':
+            account_captcha_check_menu()
+        elif choice == '8':
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
             fix_tty()
