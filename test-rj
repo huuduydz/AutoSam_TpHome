@@ -6,11 +6,26 @@ import xml.etree.ElementTree as ET
 # =====================================================================
 # ANTI-CRASH & FIX TERMINAL
 # =====================================================================
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 _original_print = builtins.print
 def safe_print(*args, **kwargs):
     if 'end' not in kwargs:
         kwargs['end'] = '\r\n'
-    _original_print(*args, **kwargs)
+    try:
+        _original_print(*args, **kwargs)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or 'utf-8'
+        safe_args = [
+            str(a).encode(enc, errors='replace').decode(enc)
+            for a in args
+        ]
+        _original_print(*safe_args, **kwargs)
 builtins.print = safe_print
 
 try:
@@ -76,7 +91,7 @@ def add_log(msg):
     import time
     t_str = time.strftime("%H:%M:%S")
     system_logs.append(f"[{t_str}] {msg}")
-    if len(system_logs) > 5:
+    if len(system_logs) > 8:
         system_logs.pop(0)
 
 def clear_screen():
@@ -117,6 +132,9 @@ CHANGE_ACCOUNTS_CUSTOM = "Disable"
 CHECK_UI_TIME = 180
 AUTO_BLOCK = "Disable"
 AUTO_RESTORE_DELTA_KEY = "Disable"
+AUTO_CHECK_ACC_HEALTH = "Enable"
+CHECK_ACC_TIME_BLOCKED = 60      # Chu kỳ check lại khi acc bị dính Captcha/Not-Approved (giây)
+CHECK_ACC_TIME_NORMAL = 180      # Chu kỳ check định kỳ khi acc đang farm bình thường (giây)
 
 # Delta key: số giờ trước khi coi key là hết hạn và cần lấy mới
 KEY_EXPIRE_HOURS = 23
@@ -186,6 +204,7 @@ def print_dashboard(states):
     print(f"{C}Change accounts: {Y}{CHANGE_ACCOUNTS}{RESET}")
     print(f"{C}Change accounts custom: {Y}{CHANGE_ACCOUNTS_CUSTOM}{RESET}")
     print(f"{C}Check UI time: {Y}{CHECK_UI_TIME}{RESET}")
+    print(f"{C}Auto check Acc / Cookie: {G}{AUTO_CHECK_ACC_HEALTH}{RESET} ({Y}{CHECK_ACC_TIME_BLOCKED}s re-check{RESET})")
     print(f"{C}Auto block: {Y}{AUTO_BLOCK}{RESET}")
     print(f"{C}Auto restore Delta Key: {Y}{AUTO_RESTORE_DELTA_KEY}{RESET}")
     print("-" * 65)
@@ -242,6 +261,15 @@ def settings_menu():
                 print(f"{Y}[*] Đã tắt Auto Restart.{RESET}")
         else:
             print(f"{R}[!] Số phút không hợp lệ.{RESET}")
+
+    global CHECK_ACC_TIME_BLOCKED, AUTO_CHECK_ACC_HEALTH
+    fix_tty()
+    k_acc_raw = safe_input(f"{M}Thời gian re-check khi Acc dính Captcha/Not-Approved (giây, Enter giữ {CHECK_ACC_TIME_BLOCKED}s): {RESET}").strip()
+    if k_acc_raw != "":
+        nums = re.findall(r'\d+', k_acc_raw)
+        if nums and int(nums[0]) >= 10:
+            CHECK_ACC_TIME_BLOCKED = int(nums[0])
+            print(f"{G}[+] Đã lưu chu kỳ re-check Acc kẹt: {CHECK_ACC_TIME_BLOCKED}s{RESET}")
     time.sleep(2)
 
 def scan_packages():
@@ -1020,6 +1048,8 @@ def check_roblox_account_status(cookie):
         }
 
     cookie = cookie.strip()
+    if cookie.startswith(".ROBLOSECURITY="):
+        cookie = cookie.split("=", 1)[1].strip()
     cookie_header = f".ROBLOSECURITY={cookie}"
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -1033,7 +1063,7 @@ def check_roblox_account_status(cookie):
             "https://users.roblox.com/v1/users/authenticated",
             headers={"Cookie": cookie_header, "User-Agent": ua}
         )
-        with urllib.request.urlopen(req, timeout=10) as res:
+        with urllib.request.urlopen(req, timeout=6) as res:
             raw = res.read().decode('utf-8', errors='ignore')
             data = json.loads(raw)
             user_id = data.get("id")
@@ -1068,7 +1098,7 @@ def check_roblox_account_status(cookie):
             "https://www.roblox.com/home",
             headers={"Cookie": cookie_header, "User-Agent": ua}
         )
-        with urllib.request.urlopen(req_home, timeout=10) as res:
+        with urllib.request.urlopen(req_home, timeout=6) as res:
             final_url = res.geturl().lower()
             html_body = res.read().decode('utf-8', errors='ignore').lower()
 
@@ -1118,27 +1148,42 @@ def check_roblox_account_status(cookie):
     except Exception:
         pass
 
-    # 3. Kiểm tra challenge headers qua auth API
+    # 3. Lấy X-CSRF-TOKEN từ Auth / Join API
+    csrf_token = None
+    req_csrf = urllib.request.Request(
+        "https://auth.roblox.com/v1/authentication-ticket/",
+        data=b"{}",
+        headers={
+            "Cookie": cookie_header,
+            "Content-Type": "application/json",
+            "User-Agent": ua,
+            "Origin": "https://www.roblox.com",
+            "Referer": "https://www.roblox.com/"
+        },
+        method="POST"
+    )
     try:
-        req_auth = urllib.request.Request(
-            "https://auth.roblox.com/v1/account/pin",
-            headers={"Cookie": cookie_header, "User-Agent": ua}
-        )
-        with urllib.request.urlopen(req_auth, timeout=6) as res:
-            pass
+        with urllib.request.urlopen(req_csrf, timeout=6) as resp_c:
+            csrf_token = resp_c.headers.get("x-csrf-token") or resp_c.headers.get("X-CSRF-TOKEN")
     except urllib.error.HTTPError as e:
-        chal_type = e.headers.get("rblx-challenge-type", "").lower()
-        err_str = e.read().decode('utf-8', errors='ignore').lower()
-        if "captcha" in chal_type or "captcha" in err_str:
+        csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
+        chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
+        chal_id = e.headers.get("rblx-challenge-id") or ""
+        chal_meta = e.headers.get("rblx-challenge-metadata") or ""
+        err_body = e.read().decode('utf-8', errors='ignore').lower()
+
+        if "captcha" in chal_type or "captcha" in err_body:
             return {
                 "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha Arkose Labs",
+                "badge": "Dính Captcha Vào Game (Arkose)",
                 "color": Y,
                 "user_id": user_id,
                 "username": username or "N/A",
-                "message": "Hệ thống bảo mật Roblox yêu cầu giải Captcha Arkose Labs!"
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "message": "Roblox chặn xác thực (Auth Ticket 403) và yêu cầu giải Captcha!"
             }
-        elif "moderated" in err_str:
+        elif "moderated" in err_body:
             return {
                 "status": "NOT_APPROVED",
                 "badge": "Kẹt Not-Approved / Kiểm Duyệt",
@@ -1150,6 +1195,149 @@ def check_roblox_account_status(cookie):
     except Exception:
         pass
 
+    if not csrf_token:
+        try:
+            req_l = urllib.request.Request(
+                "https://auth.roblox.com/v1/logout",
+                data=b"{}",
+                headers={"Cookie": cookie_header, "Content-Type": "application/json", "User-Agent": ua},
+                method="POST"
+            )
+            with urllib.request.urlopen(req_l, timeout=6) as resp_l:
+                csrf_token = resp_l.headers.get("x-csrf-token") or resp_l.headers.get("X-CSRF-TOKEN")
+        except urllib.error.HTTPError as e:
+            csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
+        except:
+            pass
+
+    # 4. KIỂM TRA ĐẶC TRỊ: POST https://gamejoin.roblox.com/v1/join-game (Bắt chuẩn 100% Game Join Captcha)
+    pid = 4520749081
+    try:
+        if target_place_id and str(target_place_id).strip().isdigit():
+            pid = int(target_place_id)
+    except:
+        pass
+
+    join_headers = {
+        "Cookie": cookie_header,
+        "Content-Type": "application/json",
+        "User-Agent": ua,
+        "Origin": "https://www.roblox.com",
+        "Referer": "https://www.roblox.com/"
+    }
+    if csrf_token:
+        join_headers["x-csrf-token"] = csrf_token
+        join_headers["X-CSRF-TOKEN"] = csrf_token
+
+    payload = json.dumps({"placeId": pid}).encode('utf-8')
+    req_join = urllib.request.Request(
+        "https://gamejoin.roblox.com/v1/join-game",
+        data=payload,
+        headers=join_headers,
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req_join, timeout=6) as res_j:
+            # 200 OK -> game-join thành công, tài khoản sạch hoàn toàn!
+            pass
+    except urllib.error.HTTPError as e:
+        chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
+        chal_id = e.headers.get("rblx-challenge-id") or ""
+        chal_meta = e.headers.get("rblx-challenge-metadata") or ""
+        err_body = e.read().decode('utf-8', errors='ignore').lower()
+
+        # Nếu 403 do cần token mới thì thử lại 1 lần với token mới
+        if e.code == 403 and (e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")) and not chal_type:
+            new_csrf = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
+            join_headers["x-csrf-token"] = new_csrf
+            join_headers["X-CSRF-TOKEN"] = new_csrf
+            req_retry = urllib.request.Request(
+                "https://gamejoin.roblox.com/v1/join-game",
+                data=payload,
+                headers=join_headers,
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(req_retry, timeout=6) as res_r:
+                    pass
+            except urllib.error.HTTPError as e2:
+                chal_type = (e2.headers.get("rblx-challenge-type") or "").lower()
+                chal_id = e2.headers.get("rblx-challenge-id") or ""
+                chal_meta = e2.headers.get("rblx-challenge-metadata") or ""
+                err_body = e2.read().decode('utf-8', errors='ignore').lower()
+
+        if "captcha" in chal_type or "captcha" in err_body:
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Dính Captcha Vào Game (Arkose)",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "message": "Roblox chặn vào game (join-game HTTP 403) và yêu cầu giải Captcha (Arkose Labs)!"
+            }
+        elif "twostepverification" in chal_type or "two-step" in err_body:
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Yêu Cầu Xác Minh 2FA",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "message": "Roblox yêu cầu xác minh 2 bước trước khi vào game!"
+            }
+        elif "moderated" in err_body:
+            return {
+                "status": "NOT_APPROVED",
+                "badge": "Kẹt Not-Approved / Kiểm Duyệt",
+                "color": R,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+            }
+    except Exception:
+        pass
+
+    # 5. Kiểm tra dự phòng qua POST https://auth.roblox.com/v1/authentication-ticket/
+    if csrf_token:
+        try:
+            req_ticket = urllib.request.Request(
+                "https://auth.roblox.com/v1/authentication-ticket/",
+                data=b"{}",
+                headers=join_headers,
+                method="POST"
+            )
+            with urllib.request.urlopen(req_ticket, timeout=6) as res_t:
+                pass
+        except urllib.error.HTTPError as e:
+            chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
+            chal_id = e.headers.get("rblx-challenge-id") or ""
+            chal_meta = e.headers.get("rblx-challenge-metadata") or ""
+            err_body = e.read().decode('utf-8', errors='ignore').lower()
+
+            if "captcha" in chal_type or "captcha" in err_body:
+                return {
+                    "status": "CAPTCHA_CHECKPOINT",
+                    "badge": "Dính Captcha Vào Game (Arkose)",
+                    "color": Y,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "challenge_id": chal_id,
+                    "challenge_meta": chal_meta,
+                    "message": "Roblox chặn sinh Ticket vào game và yêu cầu giải Captcha!"
+                }
+            elif "moderated" in err_body:
+                return {
+                    "status": "NOT_APPROVED",
+                    "badge": "Kẹt Not-Approved / Kiểm Duyệt",
+                    "color": R,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+                }
+        except Exception:
+            pass
+
     if user_id:
         return {
             "status": "OK",
@@ -1158,7 +1346,7 @@ def check_roblox_account_status(cookie):
             "user_id": user_id,
             "username": username,
             "display_name": display_name,
-            "message": f"Tài khoản [{username}] đang hoạt động tốt, không bị dính Captcha hay khóa Not-Approved!"
+            "message": f"Tài khoản [{username}] hoàn toàn sạch, join game tốt, không bị Captcha hay Not-Approved!"
         }
 
     return {
@@ -1180,8 +1368,74 @@ def print_account_check_result(label, cookie, res):
     col = res.get('color', Y)
     print(f"{Y}KẾT QUẢ:{RESET}   {col}[{res.get('badge', 'N/A')}]{RESET}")
     print(f"{Y}CHI TIẾT:{RESET}  {res.get('message', '')}")
+    if res.get('challenge_id'):
+        print(f"{Y}CHALLENGE ID:{RESET} {C}{res['challenge_id']}{RESET}")
     if res.get('url'):
         print(f"{Y}URL KẸT:{RESET}   {C}{res['url']}{RESET}")
+
+def check_and_handle_account_health(pkg, states, current_time):
+    """
+    Kiểm tra trạng thái tài khoản qua Cookie trong app Roblox:
+    - Nếu acc bị dính lỗi (NOT_APPROVED, CAPTCHA_CHECKPOINT, EXPIRED):
+        + Cập nhật state: is_blocked=True, text, color, block_reason
+        + Ghi add_log chi tiết cảnh báo
+        + Dừng process app để không tốn tài nguyên và không vào game
+        + Trả về True (bị block)
+    - Nếu acc bình thường (OK hoặc không tìm thấy cookie / lỗi mạng tạm thời):
+        + Cập nhật state: is_blocked=False
+        + Trả về False (cho phép chạy / vào game bình thường)
+    """
+    global AUTO_CHECK_ACC_HEALTH
+    if AUTO_CHECK_ACC_HEALTH != "Enable":
+        return False
+
+    state = states.get(pkg)
+    if not state:
+        return False
+
+    cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
+    state['last_acc_check'] = current_time
+    if not cookie:
+        return False
+    state['cached_cookie'] = cookie
+
+    try:
+        res = check_roblox_account_status(cookie)
+    except Exception:
+        return False
+
+    status = res.get('status')
+    state['account_status'] = status
+
+    if res.get('username') and not state.get('bound_name'):
+        state['bound_name'] = res['username']
+        state['display_name'] = res['username']
+
+    if status in ('NOT_APPROVED', 'CAPTCHA_CHECKPOINT', 'EXPIRED'):
+        state['is_blocked'] = True
+        badge = res.get('badge', 'Bị Khóa/Kẹt')
+        state['block_reason'] = badge
+        if status == 'NOT_APPROVED':
+            short_lbl = "Kẹt Not-Approved"
+        elif status == 'CAPTCHA_CHECKPOINT':
+            short_lbl = "Dính Captcha"
+        else:
+            short_lbl = "Cookie Die (401)"
+        state['text'] = short_lbl
+        state['color'] = res.get('color', R)
+        msg_detail = res.get('message', '')
+        add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO ACC] {badge}: {msg_detail}{RESET}")
+        _kill_pkg(pkg)
+        return True
+    elif status == 'OK':
+        if state.get('is_blocked'):
+            state['is_blocked'] = False
+            state['block_reason'] = ''
+            u_name = res.get('username') or state.get('bound_name') or 'Acc'
+            add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] Acc {u_name} đã giải xong / bình thường!{RESET}")
+        return False
+
+    return False
 
 def account_captcha_check_menu():
     global selected_packages
@@ -1254,7 +1508,7 @@ def account_captcha_check_menu():
 
 def monitor_package(pkg, states, last_ok_ping, stop_event):
     """Thread độc lập cho từng package - không ảnh hưởng tab khác."""
-    global kill_all_time, last_restart_time, CLAIMED_NAMES
+    global kill_all_time, last_restart_time, CLAIMED_NAMES, CHECK_ACC_TIME_BLOCKED, CHECK_ACC_TIME_NORMAL, AUTO_CHECK_ACC_HEALTH
     while not stop_event.is_set():
         try:
             current_time = time.time()
@@ -1263,6 +1517,64 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             # rejoin_time: chỉ dùng để tính warmup
             session_uptime = current_time - state['session_start_time']
             uptime_seconds = current_time - state['rejoin_time']
+
+            # === KIỂM TRA TRẠNG THÁI ACC ĐANG BỊ KẸT (NOT_APPROVED / CAPTCHA / EXPIRED) ===
+            if state.get('is_blocked'):
+                # Acc đang bị dính: KHÔNG VÀO GAME! Đảm bảo app tắt để không tốn tài nguyên
+                if is_app_running(pkg):
+                    _kill_pkg(pkg)
+
+                last_check = state.get('last_acc_check', 0)
+                recheck_interval = CHECK_ACC_TIME_BLOCKED
+                time_passed = current_time - last_check
+                time_left = max(0, int(recheck_interval - time_passed))
+
+                short_reason = state.get('block_reason', 'Kẹt Acc')
+                if "Not-Approved" in short_reason or "not-approved" in short_reason.lower():
+                    lbl = "Kẹt Not-Approved"
+                elif "Captcha" in short_reason or "captcha" in short_reason.lower():
+                    lbl = "Dính Captcha"
+                elif "401" in short_reason or "Hết Hạn" in short_reason:
+                    lbl = "Cookie Die (401)"
+                else:
+                    lbl = short_reason[:15]
+
+                state['text'] = f"{lbl} ({time_left}s)"
+                state['color'] = R if ("Not-Approved" in short_reason or "401" in short_reason or "Hết Hạn" in short_reason) else Y
+
+                # Đến chu kỳ kiểm tra lại xem acc đã giải chưa
+                if time_passed >= recheck_interval:
+                    cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
+                    state['last_acc_check'] = current_time
+                    if cookie:
+                        state['cached_cookie'] = cookie
+                        res = check_roblox_account_status(cookie)
+                        if res.get('status') == 'OK':
+                            # Acc đã được giải! Tiến hành Rejoin
+                            state['is_blocked'] = False
+                            state['block_reason'] = ''
+                            state['account_status'] = 'OK'
+                            state['text'] = "Acc Sạch -> Rejoin..."
+                            state['color'] = G
+                            u_name = res.get('username') or state.get('bound_name') or 'Acc'
+                            add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] {u_name} ĐÃ GIẢI/BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
+                            with pkg_restart_locks[pkg]:
+                                force_restart_app(pkg, states, current_time, "Acc Sạch -> Rejoin", G)
+                            last_ok_ping[pkg] = current_time
+                            stop_event.wait(5)
+                            continue
+                        else:
+                            # Vẫn đang bị dính
+                            state['is_blocked'] = True
+                            badge = res.get('badge', 'Kẹt Acc')
+                            state['block_reason'] = badge
+                            state['account_status'] = res.get('status')
+                            add_log(f"[{pkg[-12:]}] Vẫn {badge} (chờ tiếp {recheck_interval}s)")
+                    else:
+                        add_log(f"[{pkg[-12:]}] Chưa lấy được Cookie để kiểm tra lại.")
+
+                stop_event.wait(5)
+                continue
 
             # === KIỂM TRA ĐANG TRONG TIẾN TRÌNH BOOT ===
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
@@ -1273,6 +1585,11 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
             # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
             if uptime_seconds > 15 and not is_app_running(pkg):
+                # Kiểm tra xem acc có bị kẹt Not-Approved/Captcha không trước khi bật lại
+                if check_and_handle_account_health(pkg, states, current_time):
+                    stop_event.wait(5)
+                    continue
+
                 can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
                 if can_restart:
                     with pkg_restart_locks[pkg]:
@@ -1286,7 +1603,10 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
             # === AUTO RESTART THEO THỜI GIAN (dùng session_uptime, tích lũy qua rejoin) ===
             if kill_all_time > 0 and session_uptime / 60 >= kill_all_time:
-                # Dùng lock riêng của pkg - tránh block luồng khác
+                if check_and_handle_account_health(pkg, states, current_time):
+                    stop_event.wait(5)
+                    continue
+
                 with pkg_restart_locks[pkg]:
                     force_restart_app(pkg, states, current_time, f"Auto Restart ({kill_all_time}m)", M)
                 # Reset session timer sau khi auto restart
@@ -1317,6 +1637,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 if is_grace:
                     # Nếu app không chạy sau 30s warmup → restart ngay
                     if uptime_seconds > 30 and not is_app_running(pkg):
+                        if check_and_handle_account_health(pkg, states, current_time):
+                            stop_event.wait(5)
+                            continue
                         can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
                         if can_restart:
                             with pkg_restart_locks[pkg]:
@@ -1329,10 +1652,13 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                         state['text'] = f"Đang Load ({int(150 - uptime_seconds)}s)"
                         state['color'] = Y
                 else:
+                    if check_and_handle_account_health(pkg, states, current_time):
+                        stop_event.wait(5)
+                        continue
                     can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 180
                     if can_restart:
                         with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẻ t Bind!", R)
+                            force_restart_app(pkg, states, current_time, "Chưa Load/Kẹt Bind!", R)
                         last_ok_ping[pkg] = current_time
                     else:
                         wait_sec = int(180 - (current_time - last_restart_time.get(pkg, current_time)))
@@ -1355,7 +1681,10 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['text'] = f"Đang Nạp Data ({max(0,remain)}s)"
                     state['color'] = Y
                 elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90):
-                    # Cần 3 miss liên tiếp (~30s) mới restart - tránh false negative
+                    # Cần 3 miss liên tiếp (~30s) mới restart - kiểm tra acc trước khi restart
+                    if check_and_handle_account_health(pkg, states, current_time):
+                        stop_event.wait(5)
+                        continue
                     with pkg_restart_locks[pkg]:
                         force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
                     last_ok_ping[pkg] = current_time
@@ -1375,6 +1704,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                         state['text'] = f"Vào Server... ({max(0,remain)}s)"
                         state['color'] = Y
                     elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90):
+                        if check_and_handle_account_health(pkg, states, current_time):
+                            stop_event.wait(5)
+                            continue
                         with pkg_restart_locks[pkg]:
                             force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
                         last_ok_ping[pkg] = current_time
@@ -1384,6 +1716,11 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 else:
                     state['text'] = f"Đang Farm ({int(diff)}s trước)"
                     state['color'] = G
+                    # Định kỳ kiểm tra acc khi đang farm (mỗi CHECK_ACC_TIME_NORMAL = 180s)
+                    if current_time - state.get('last_acc_check', 0) >= CHECK_ACC_TIME_NORMAL:
+                        if check_and_handle_account_health(pkg, states, current_time):
+                            stop_event.wait(5)
+                            continue
         except Exception as e:
             # Ghi lỗi nhưng không crash thread - quan trọng cho 24/7
             try:
@@ -2043,21 +2380,36 @@ def start_auto_rejoin():
         pkg_restart_locks[pkg] = threading.Lock()
         pkg_now = time.time()  # Dùng thời gian thực tế cho từng pkg, không dùng `now` chung
         states[pkg] = {
-            'text': 'Đang Mở Sảnh...',
+            'text': 'Đang Khởi Tạo...',
             'color': Y,
             'bound_name': item['name'] if item['name'] else None,
             'display_name': item['name'] if item['name'] else 'Chờ Auto-Bind...',
             'rejoin_time': pkg_now,
             'session_start_time': pkg_now,
             'warmup_until': pkg_now + 90,
-            'heartbeat_misses': 0
+            'heartbeat_misses': 0,
+            'is_blocked': False,
+            'block_reason': '',
+            'account_status': 'UNKNOWN',
+            'last_acc_check': pkg_now,
+            'cached_cookie': None
         }
         last_ok_ping[pkg] = pkg_now
         last_restart_time.pop(pkg, None)
-        force_restart_app(pkg, states, pkg_now, 'Đang Mở Sảnh...', Y)
-        if i < len(selected_packages) - 1:
-            print(f"{Y}[*] Chờ 5s trước khi bật tab tiếp theo...{RESET}")
-            time.sleep(5)
+
+        # Kiểm tra trước trạng thái tài khoản qua Cookie:
+        # Nếu acc đang bị dính Not-Approved / Captcha / Expired -> KHÔNG VÀO GAME
+        is_blocked = False
+        if AUTO_CHECK_ACC_HEALTH == "Enable":
+            is_blocked = check_and_handle_account_health(pkg, states, pkg_now)
+
+        if not is_blocked:
+            force_restart_app(pkg, states, pkg_now, 'Đang Mở Sảnh...', Y)
+            if i < len(selected_packages) - 1:
+                print(f"{Y}[*] Chờ 5s trước khi bật tab tiếp theo...{RESET}")
+                time.sleep(5)
+        else:
+            print(f"{R}[!] Package {pkg[-15:]} bị {states[pkg].get('text')}, tạm dừng không vào game!{RESET}")
 
     os.system("stty sane < /dev/tty > /dev/null 2>&1")
     # Đợi thêm 2s cho các shell command sau safe_root hoàn tất
