@@ -192,7 +192,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.3{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.4{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -838,30 +838,53 @@ def force_restart_app(pkg, states, current_time, reason, color):
 
 def get_pkg_uid_gid(pkg):
     """Lấy chính xác Linux UID và GID của app để phân quyền tránh bị Android/Chromium reset database."""
-    try:
-        uid = subprocess.check_output(f"su -c 'stat -c %u /data/data/{pkg}'", shell=True, text=True, timeout=3).strip()
-        gid = subprocess.check_output(f"su -c 'stat -c %g /data/data/{pkg}'", shell=True, text=True, timeout=3).strip()
-        if uid.isdigit():
-            return uid, (gid if gid.isdigit() else uid)
-    except:
-        pass
+    code, ownership, _ = _run_root_capture(f"stat -c '%u %g' '/data/data/{pkg}'", timeout=3)
+    if code == 0:
+        parts = ownership.split()
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            return parts[0], parts[1]
     return "10000", "10000"
+
+def _normalize_roblosecurity_cookie(cookie):
+    """Trả về riêng giá trị .ROBLOSECURITY, không kèm tên/header Cookie."""
+    cookie = (cookie or "").strip().replace('\r', '').replace('\n', '')
+    match = re.search(r'(?:^|[;\s])\.ROBLOSECURITY\s*=\s*([^;]+)', cookie, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return cookie
+
+def _run_root_capture(command, timeout=15):
+    """Chạy một lệnh root không qua shell lồng nhau và giữ lại mã lỗi thật."""
+    try:
+        result = subprocess.run(
+            ["su", "-c", command],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout
+        )
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return -1, "", f"timeout sau {timeout}s"
+    except Exception as exc:
+        return -1, "", str(exc)
 
 def get_auth_ticket(cookie):
     """
     Tạo Auth Ticket từ Roblox API server thông qua Cookie .ROBLOSECURITY.
     Auth Ticket giúp ứng dụng Android tự động kích hoạt Đăng Nhập tức thì.
     """
-    cookie = cookie.strip()
-    if cookie.startswith(".ROBLOSECURITY="):
-        cookie = cookie.split("=", 1)[1].strip()
+    cookie = _normalize_roblosecurity_cookie(cookie)
 
     headers = {
         "Cookie": f".ROBLOSECURITY={cookie}",
         "Content-Type": "application/json",
         "Referer": "https://www.roblox.com/",
         "Origin": "https://www.roblox.com",
-        "User-Agent": "Roblox/WinInet"
+        "User-Agent": "Roblox/WinInet",
+        # Header bắt buộc của endpoint authentication-ticket.
+        "RBXAuthenticationNegotiation": "1"
     }
 
     # B1: Lấy X-CSRF-TOKEN
@@ -919,17 +942,17 @@ def inject_cookie_webview(pkg, cookie):
     - Xóa sạch file WAL/SHM/journal tránh xung đột ghi đè.
     - Phân quyền chính xác UID:GID và chmod 660 để app không bị từ chối truy cập.
     """
-    cookie = cookie.strip()
-    if cookie.startswith(".ROBLOSECURITY="):
-        cookie = cookie.split("=", 1)[1].strip()
+    cookie = _normalize_roblosecurity_cookie(cookie)
 
     # Tìm tất cả cơ sở dữ liệu cookies trong package
     dbs = []
     try:
-        out = subprocess.check_output(
-            f"su -c 'find /data/data/{pkg}/ -name Cookies -o -iname \"*cookie*.db\" 2>/dev/null'",
-            shell=True, text=True, timeout=5
-        ).strip()
+        code, out, _ = _run_root_capture(
+            f"find '/data/data/{pkg}/' \\( -name 'Cookies' -o -iname '*cookie*.db' \\) -type f 2>/dev/null",
+            timeout=5
+        )
+        if code != 0:
+            out = ""
         if out:
             for line in out.splitlines():
                 p = line.strip()
@@ -948,7 +971,7 @@ def inject_cookie_webview(pkg, cookie):
     for p in default_paths:
         if p not in dbs:
             try:
-                chk = subprocess.check_output(f"su -c 'test -f \"{p}\" && echo exists'", shell=True, text=True, timeout=2).strip()
+                _, chk, _ = _run_root_capture(f"test -f '{p}' && echo exists", timeout=2)
                 if "exists" in chk:
                     dbs.append(p)
             except:
@@ -962,19 +985,20 @@ def inject_cookie_webview(pkg, cookie):
     os.makedirs(tmp_dir, exist_ok=True)
 
     # Tính toán Chromium Epoch 1601 UTC (Microseconds kể từ 1601-01-01)
-    current_sec = int(time.time())
     epoch_offset = 11644473600
-    now_1601 = (current_sec + epoch_offset) * 1000000
-    exp_1601 = (current_sec + (10 * 365 * 86400) + epoch_offset) * 1000000
+    now_1601 = (time.time_ns() // 1000) + (epoch_offset * 1000000)
+    exp_1601 = now_1601 + (10 * 365 * 86400 * 1000000)
 
-    hosts = ['.roblox.com', 'www.roblox.com', 'roblox.com', '.www.roblox.com', 'api.roblox.com', '.api.roblox.com']
-    cookie_names = ['.ROBLOSECURITY', 'ROBLOSECURITY', 'RobloxSecurityToken']
+    # .roblox.com là domain-cookie chuẩn và tự áp dụng cho mọi subdomain Roblox.
+    hosts = ['.roblox.com']
 
     success_count = 0
     for idx, webview_db in enumerate(dbs, 1):
         local_db = os.path.join(tmp_dir, f"inj_db_{idx}.db")
-        subprocess.run(f"su -c 'cp \"{webview_db}\" \"{local_db}\" && chmod 666 \"{local_db}\"'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if not os.path.exists(local_db):
+        copy_code, _, _ = _run_root_capture(
+            f"cp '{webview_db}' '{local_db}' && chmod 666 '{local_db}'"
+        )
+        if copy_code != 0 or not os.path.exists(local_db):
             continue
 
         try:
@@ -988,40 +1012,61 @@ def inject_cookie_webview(pkg, cookie):
                 continue
 
             c.execute("PRAGMA table_info(cookies)")
-            columns = [col[1] for col in c.fetchall()]
+            column_info = c.fetchall()
+            columns = [col[1] for col in column_info]
 
-            for hk in hosts:
-                for cname in cookie_names:
-                    data = {
-                        'creation_utc': now_1601,
+            for row_index, hk in enumerate(hosts):
+                # creation_utc thường là UNIQUE/PRIMARY KEY trong Chromium.
+                # Mỗi row phải có timestamp riêng, nếu không cả transaction rollback.
+                row_time = now_1601 + row_index
+                data = {
+                        'creation_utc': row_time,
                         'top_frame_site_key': 'https://roblox.com',
                         'host_key': hk,
-                        'name': cname,
+                        'name': '.ROBLOSECURITY',
                         'value': cookie,
                         'encrypted_value': b'',
                         'path': '/',
                         'expires_utc': exp_1601,
                         'is_secure': 1,
                         'is_httponly': 1,
-                        'last_access_utc': now_1601,
+                        'last_access_utc': row_time,
+                        'last_update_utc': row_time,
                         'has_expires': 1,
                         'is_persistent': 1,
                         'priority': 1,
                         'samesite': -1,
                         'source_scheme': 2,
                         'source_port': 443,
+                        'source_type': 0,
+                        'has_cross_site_ancestor': 0,
                         'is_same_party': 0
-                    }
-                    valid_cols = [k for k in data if k in columns]
-                    vals = [data[k] for k in valid_cols]
-                    placeholders = ','.join(['?' for _ in valid_cols])
+                }
 
-                    c.execute(
-                        "DELETE FROM cookies WHERE (host_key=? OR host_key=? OR host_key=?) AND name=?",
-                        (hk, hk.lstrip('.'), '.' + hk.lstrip('.'), cname)
-                    )
-                    sql = f"INSERT INTO cookies ({','.join(valid_cols)}) VALUES ({placeholders})"
-                    c.execute(sql, vals)
+                # Chromium/WebView bổ sung cột theo phiên bản. Điền giá trị trung
+                # tính cho cột NOT NULL mới không có DEFAULT để INSERT không vỡ.
+                for _, col_name, col_type, not_null, default_value, _ in column_info:
+                    if col_name in data or not not_null or default_value is not None:
+                        continue
+                    type_upper = (col_type or '').upper()
+                    if 'BLOB' in type_upper:
+                        data[col_name] = b''
+                    elif any(t in type_upper for t in ('INT', 'REAL', 'NUM')):
+                        data[col_name] = 0
+                    else:
+                        data[col_name] = ''
+
+                valid_cols = [k for k in data if k in columns]
+                vals = [data[k] for k in valid_cols]
+                placeholders = ','.join(['?' for _ in valid_cols])
+
+                c.execute(
+                    "DELETE FROM cookies WHERE name=? AND "
+                    "(host_key=? OR host_key=? OR host_key=?)",
+                    ('.ROBLOSECURITY', hk, hk.lstrip('.'), '.' + hk.lstrip('.'))
+                )
+                sql = f"INSERT INTO cookies ({','.join(valid_cols)}) VALUES ({placeholders})"
+                c.execute(sql, vals)
 
             conn.commit()
             conn.close()
@@ -1029,15 +1074,16 @@ def inject_cookie_webview(pkg, cookie):
             # Ghi đè vào app + dọn sạch file WAL journal + gán quyền uid:gid chuẩn
             fix_cmd = (
                 f"cp \"{local_db}\" \"{webview_db}\" && "
-                f"rm -f \"{webview_db}-wal\" \"{webview_db}-shm\" \"{webview_db}-journal\" 2>/dev/null || true && "
+                f"rm -f \"{webview_db}-wal\" \"{webview_db}-shm\" \"{webview_db}-journal\" 2>/dev/null && "
                 f"chown {uid}:{gid} \"{webview_db}\" && "
                 f"chmod 660 \"{webview_db}\" && "
-                f"restorecon \"{webview_db}\" 2>/dev/null || true"
+                f"(restorecon \"{webview_db}\" 2>/dev/null || true)"
             )
-            subprocess.run(f"su -c '{fix_cmd}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            write_code, _, _ = _run_root_capture(fix_cmd)
             try: os.remove(local_db)
             except: pass
-            success_count += 1
+            if write_code == 0:
+                success_count += 1
         except Exception as e:
             try: conn.close()
             except: pass
@@ -1047,15 +1093,12 @@ def inject_cookie_webview(pkg, cookie):
     return success_count > 0
 
 def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
-    """Tiêm Cookie và dữ liệu User vào toàn bộ SharedPrefs XML của package."""
-    cookie = cookie.strip()
-    if cookie.startswith(".ROBLOSECURITY="):
-        cookie = cookie.split("=", 1)[1].strip()
+    """Cập nhật các SharedPrefs liên quan mà không làm mất node bool/int/set."""
+    cookie = _normalize_roblosecurity_cookie(cookie)
 
     shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
-    try:
-        files_str = subprocess.check_output(f"su -c 'ls \"{shared_prefs_dir}\"/*.xml 2>/dev/null'", shell=True, text=True, timeout=5).strip()
-    except:
+    code, files_str, _ = _run_root_capture(f"ls '{shared_prefs_dir}'/*.xml 2>/dev/null", timeout=5)
+    if code != 0:
         return False
     if not files_str:
         return False
@@ -1070,56 +1113,68 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
         xml_path = xml_path.strip()
         if not xml_path:
             continue
-        try:
-            raw = subprocess.check_output(f"su -c 'cat \"{xml_path}\" 2>/dev/null'", shell=True, text=True, timeout=4)
-        except:
+        read_code, raw, _ = _run_root_capture(f"cat '{xml_path}' 2>/dev/null", timeout=4)
+        if read_code != 0:
             continue
         if '<map>' not in raw:
             continue
 
-        existing = {}
+        xml_name = os.path.basename(xml_path).lower()
+        is_target_xml = (
+            'preferences' in xml_name or
+            any(key in xml_name for key in ('roblox', 'auth', 'user', 'session', 'token')) or
+            'ROBLOSECURITY' in raw or 'RobloxSecurityToken' in raw
+        )
+        if not is_target_xml:
+            continue
+
         try:
             root_el = ET.fromstring(raw)
-            for string_tag in root_el.findall('string'):
-                key = string_tag.get('name')
-                if key:
-                    existing[key] = string_tag.text
         except:
-            pass
+            continue
 
-        existing['ROBLOSECURITY'] = cookie
-        existing['.ROBLOSECURITY'] = cookie
-        existing['RobloxSecurityToken'] = cookie
+        updates = {
+            'ROBLOSECURITY': cookie,
+            '.ROBLOSECURITY': cookie,
+            'RobloxSecurityToken': cookie
+        }
         if user_name:
-            existing['Username'] = str(user_name)
-            existing['RobloxUsername'] = str(user_name)
-            existing['RBX_USERNAME'] = str(user_name)
+            updates.update({
+                'Username': str(user_name),
+                'RobloxUsername': str(user_name),
+                'RBX_USERNAME': str(user_name)
+            })
         if user_id:
-            existing['UserId'] = str(user_id)
-            existing['RobloxUserId'] = str(user_id)
-            existing['RBX_USER_ID'] = str(user_id)
+            updates.update({
+                'UserId': str(user_id),
+                'RobloxUserId': str(user_id),
+                'RBX_USER_ID': str(user_id)
+            })
 
-        new_root = ET.Element('map')
-        for k, v in existing.items():
-            el = ET.SubElement(new_root, 'string', name=k)
-            el.text = v if v is not None else ""
+        # Chỉ thay đúng key string cần thiết; giữ nguyên mọi node khác.
+        for key, value in updates.items():
+            old_nodes = [node for node in list(root_el) if node.get('name') == key]
+            for node in old_nodes:
+                root_el.remove(node)
+            el = ET.SubElement(root_el, 'string', name=key)
+            el.text = value
 
-        xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(new_root, encoding='unicode')
+        xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(root_el, encoding='unicode')
         fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(xml_output)
 
         fix_xml_cmd = (
-            f"cp \"{temp_file}\" \"{xml_path}\" && "
-            f"chown {uid}:{gid} \"{xml_path}\" && "
-            f"chmod 660 \"{xml_path}\" && "
-            f"restorecon \"{xml_path}\" 2>/dev/null || true && "
-            f"touch \"{xml_path}\""
+            f"cp '{temp_file}' '{xml_path}' && "
+            f"chown {uid}:{gid} '{xml_path}' && "
+            f"chmod 660 '{xml_path}' && "
+            f"(restorecon '{xml_path}' 2>/dev/null || true)"
         )
-        subprocess.run(f"su -c '{fix_xml_cmd}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        write_code, _, _ = _run_root_capture(fix_xml_cmd)
         try: os.remove(temp_file)
         except: pass
-        success_count += 1
+        if write_code == 0:
+            success_count += 1
 
     return success_count > 0
 
@@ -1133,26 +1188,22 @@ def login_via_cookie():
     print(f"\n{C}--- ĐĂNG NHẬP ROBLOX BẰNG COOKIE (CHUYÊN GIA ROOT / AUTH TICKET) ---{RESET}")
     print(f"{Y}Hỗ trợ: WebView Chromium SQLite DB + SharedPrefs XML + Native Auth Ticket Deeplink{RESET}")
 
-    try:
-        test = subprocess.check_output("su -c 'id'", shell=True, text=True, timeout=5)
-        if "uid=0" not in test:
-            print(f"{R}[!] Không có quyền ROOT (su)! Vui lòng cấp quyền root cho Termux.{RESET}")
-            time.sleep(3)
-            return
-    except:
+    root_code, root_out, root_err = _run_root_capture("id", timeout=5)
+    if root_code != 0 or "uid=0" not in root_out:
         print(f"{R}[!] Lỗi kiểm tra quyền ROOT.{RESET}")
+        if root_err:
+            print(f"{Y}    Chi tiết: {root_err[:120]}{RESET}")
         time.sleep(3)
         return
 
     fix_tty()
-    cookie = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip().replace('\r', '').replace('\n', '')
+    cookie = _normalize_roblosecurity_cookie(
+        safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}")
+    )
     if not cookie:
         print(f"{Y}[*] Đã hủy.{RESET}")
         time.sleep(1.5)
         return
-
-    if cookie.startswith(".ROBLOSECURITY="):
-        cookie = cookie.split("=", 1)[1].strip()
 
     if not cookie.startswith("_|WARNING"):
         print(f"{R}[!] Cảnh báo: Cookie không bắt đầu bằng _|WARNING, có thể không đúng định dạng!{RESET}")
@@ -1174,13 +1225,6 @@ def login_via_cookie():
 
     print(f"{G}[✓] Tài khoản: {C}{u_name}{RESET} (ID: {u_id or 'N/A'})")
 
-    print(f"{Y}[*] Đang khởi tạo Native Auth Ticket từ Roblox Server...{RESET}")
-    ticket, t_msg = get_auth_ticket(cookie)
-    if ticket:
-        print(f"{G}[✓] Lấy Auth Ticket thành công: {ticket[:20]}...{RESET}")
-    else:
-        print(f"{Y}[!] Không lấy được Auth Ticket ({t_msg}). Sẽ dùng cơ chế nạp Cookie trực tiếp.{RESET}")
-
     time.sleep(1)
     for idx, item in enumerate(selected_packages, 1):
         pkg = item['pkg']
@@ -1188,11 +1232,24 @@ def login_via_cookie():
         print(f"{Y}[{idx}/{len(selected_packages)}] Đang xử lý: {W}{pkg}{RESET}")
 
         # Bước 1: Force stop app hoàn toàn
-        subprocess.run(f"su -c 'am force-stop {pkg}'", shell=True, stdout=subprocess.DEVNULL)
+        stop_code, _, stop_err = _run_root_capture(f"am force-stop '{pkg}'", timeout=10)
+        if stop_code != 0:
+            print(f"{R}  ├─ [✗] Không force-stop được app: {stop_err[:100]}{RESET}")
+            continue
         time.sleep(1)
 
         # Bước 2: Tiêm WebView SQLite DB (với Chromium Epoch 1601 UTC và fix permissions)
         ok_wv = inject_cookie_webview(pkg, cookie)
+        if not ok_wv:
+            # App/clone mới có thể chưa tạo WebView DB. Mở màn login một lần để
+            # bootstrap DB, dừng app rồi thử tiêm lại.
+            _run_root_capture(
+                f"am start -n '{pkg}/com.roblox.client.Activity.WebLoginActivity'",
+                timeout=10
+            )
+            time.sleep(2)
+            _run_root_capture(f"am force-stop '{pkg}'", timeout=10)
+            ok_wv = inject_cookie_webview(pkg, cookie)
         if ok_wv:
             print(f"{G}  ├─ [✓] WebView Chromium SQLite DB: Tiêm thành công!{RESET}")
         else:
@@ -1206,26 +1263,42 @@ def login_via_cookie():
             print(f"{Y}  ├─ [i] Bỏ qua bước XML (app chưa khởi tạo file XML).{RESET}")
 
         # Bước 4: Dọn sạch cache rác để app nạp lại phiên mới
-        subprocess.run(f"su -c 'rm -rf /data/data/{pkg}/cache/* /data/data/{pkg}/code_cache/*'", shell=True, stdout=subprocess.DEVNULL)
+        _run_root_capture(
+            f"rm -rf '/data/data/{pkg}/cache/'* '/data/data/{pkg}/code_cache/'*",
+            timeout=15
+        )
 
-        # Bước 5: Khởi động app bằng Auth Ticket Intent (Auto-Login tức thì)
+        # Bước 5: Mỗi package phải dùng Auth Ticket mới; ticket không tái sử dụng.
         print(f"{Y}  └─ [*] Đang kích hoạt ứng dụng đăng nhập...{RESET}")
+        ticket, t_msg = get_auth_ticket(cookie)
         if ticket:
             if target_place_id:
                 deeplink = f"roblox://experiences/start?placeId={target_place_id}&authTicket={ticket}"
             else:
                 deeplink = f"roblox://navigation?authTicket={ticket}"
             launch_cmd = f"am start -a android.intent.action.VIEW -d \"{deeplink}\" -p {pkg} -f 0x14000000"
-            subprocess.run(f"su -c '{launch_cmd}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"{G}     [✓] Đã gửi Auth Ticket Deeplink Intent (Auto-Login)!{RESET}")
+            launch_code, launch_out, launch_err = _run_root_capture(launch_cmd, timeout=15)
+            if launch_code == 0 and "Error:" not in launch_out:
+                print(f"{G}     [✓] Đã gửi Auth Ticket Deeplink Intent!{RESET}")
+            else:
+                print(f"{Y}     [!] Deeplink bị từ chối, chuyển sang mở màn đăng nhập.{RESET}")
+                fallback_cmd = (
+                    f"am start -n '{pkg}/com.roblox.client.Activity.WebLoginActivity' 2>/dev/null || "
+                    f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1"
+                )
+                _run_root_capture(fallback_cmd, timeout=15)
         else:
+            print(f"{Y}     [i] Không tạo được Auth Ticket ({t_msg}). Dùng phiên WebView đã nạp.{RESET}")
             launch_cmd = (
-                f"am start -n {pkg}/com.roblox.client.Activity.WebLoginActivity 2>/dev/null || "
-                f"am start -a android.intent.action.VIEW -d 'roblox://navigation/home' -p {pkg} -f 0x14000000 2>/dev/null || "
-                f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1"
+                f"am start -n '{pkg}/com.roblox.client.Activity.WebLoginActivity' 2>/dev/null || "
+                f"am start -a android.intent.action.VIEW -d 'roblox://navigation/home' -p '{pkg}' -f 0x14000000 2>/dev/null || "
+                f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1"
             )
-            subprocess.run(f"su -c '{launch_cmd}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"{G}     [✓] Đã khởi động App sẵn sàng phiên đăng nhập!{RESET}")
+            fallback_code, _, fallback_err = _run_root_capture(launch_cmd, timeout=15)
+            if fallback_code == 0:
+                print(f"{G}     [✓] Đã khởi động App với phiên WebView đã nạp!{RESET}")
+            else:
+                print(f"{R}     [✗] Không mở được app: {fallback_err[:100]}{RESET}")
 
         time.sleep(2)
 
