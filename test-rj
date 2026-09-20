@@ -120,6 +120,7 @@ RESET = '\033[0m'
 # =====================================================================
 selected_packages = []
 target_place_id = "4520749081"
+COOKIE_LOGIN_REVISION = "2026-09-20-r2"
 kill_all_time = 0
 json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
 heartbeat_last_check = {}     # {pkg: {acc_name: last_check_time}}
@@ -192,7 +193,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.4{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -1186,6 +1187,7 @@ def login_via_cookie():
         return
 
     print(f"\n{C}--- ĐĂNG NHẬP ROBLOX BẰNG COOKIE (CHUYÊN GIA ROOT / AUTH TICKET) ---{RESET}")
+    print(f"{C}Bản vá mục 4: {COOKIE_LOGIN_REVISION}{RESET}")
     print(f"{Y}Hỗ trợ: WebView Chromium SQLite DB + SharedPrefs XML + Native Auth Ticket Deeplink{RESET}")
 
     root_code, root_out, root_err = _run_root_capture("id", timeout=5)
@@ -1219,9 +1221,15 @@ def login_via_cookie():
         time.sleep(3)
         return
     elif acc_info.get('status') == 'NOT_APPROVED':
-        print(f"{R}[!] CẢNH BÁO: Tài khoản này đang bị kẹt Not-Approved / Kiểm Duyệt!{RESET}")
+        print(f"{R}[✗] Tài khoản đang bị kẹt Not-Approved / Kiểm Duyệt.{RESET}")
+        print(f"{Y}[i] Hãy xử lý cảnh báo trong luồng đăng nhập chính thức rồi thử lại.{RESET}")
+        time.sleep(3)
+        return
     elif acc_info.get('status') == 'CAPTCHA_CHECKPOINT':
-        print(f"{Y}[!] CẢNH BÁO: Tài khoản này đang bị yêu cầu giải Captcha vào game!{RESET}")
+        print(f"{R}[✗] Roblox đang yêu cầu Captcha/Checkpoint nên không cấp phiên đăng nhập native.{RESET}")
+        print(f"{Y}[i] Hãy đăng nhập chính thức và hoàn tất Captcha/2FA trước, sau đó lấy cookie mới.{RESET}")
+        time.sleep(3)
+        return
 
     print(f"{G}[✓] Tài khoản: {C}{u_name}{RESET} (ID: {u_id or 'N/A'})")
 
@@ -1302,10 +1310,10 @@ def login_via_cookie():
 
         time.sleep(2)
 
-    print(f"\n{G}====================================================={RESET}")
-    print(f"{G}[+] HOÀN TẤT ĐĂNG NHẬP TẤT CẢ PACKAGE ĐÃ CHỌN!{RESET}")
-    print(f"{C}App đang tự động mở và đăng nhập vào nick: {G}{u_name}{RESET}")
-    print(f"{G}====================================================={RESET}")
+    print(f"\n{C}====================================================={RESET}")
+    print(f"{C}[i] ĐÃ NẠP DỮ LIỆU VÀ GỬI LỆNH MỞ APP.{RESET}")
+    print(f"{Y}[i] Đây không phải xác nhận đăng nhập; hãy kiểm tra tài khoản trong app.{RESET}")
+    print(f"{C}====================================================={RESET}")
     fix_tty()
     print(f"\n{Y}Bấm Enter để quay lại Menu...{RESET}")
     try: input()
