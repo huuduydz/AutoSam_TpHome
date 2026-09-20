@@ -1550,48 +1550,110 @@ def login_via_cookie_legacy(target_pkgs, cookie, u_name=None, u_id=None):
 # =====================================================================
 def extract_roblox_cookie(pkg):
     """
-    Trích xuất cookie .ROBLOSECURITY từ app Roblox trên thiết bị Android (cần Root).
-    1. Kiểm tra SQLite WebView: /data/data/{pkg}/app_webview/Default/Cookies
-    2. Kiểm tra SharedPreferences XML: /data/data/{pkg}/shared_prefs/*.xml
+    Trích xuất cookie .ROBLOSECURITY MỚI NHẤT từ app Roblox trên thiết bị Android (cần Root).
+    1. Quét tìm tất cả DB SQLite Cookies (Network/Cookies, Default/Cookies, Cookies).
+       - Sao chép cả file WAL (-wal) và SHM (-shm) để đọc dữ liệu phiên vừa đăng nhập trong app.
+       - Sắp xếp ORDER BY last_access_utc DESC, creation_utc DESC để lấy Cookie mới nhất.
+    2. Quét SharedPreferences XML theo thứ tự file được sửa đổi mới nhất (mtime DESC).
     """
-    # 1. Thử lấy từ SQLite WebView
-    for db_path in [
+    tmp_dir = os.path.join(tempfile.gettempdir(), 'hudy_cookie_tmp')
+    try:
+        os.makedirs(tmp_dir, exist_ok=True)
+    except:
+        tmp_dir = tempfile.gettempdir()
+
+    # 1. Quét tìm tất cả DB SQLite Cookies theo thứ tự ưu tiên
+    db_candidates = [
+        f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
         f"/data/data/{pkg}/app_webview/Default/Cookies",
         f"/data/data/{pkg}/app_webview/Cookies",
-    ]:
+        f"/data/data/{pkg}/databases/webviewCookiesChromium.db",
+        f"/data/data/{pkg}/databases/webview.db",
+    ]
+    try:
+        code, out, _ = _run_root_capture(
+            f"find '/data/data/{pkg}/' \\( -name 'Cookies' -o -iname '*cookie*.db' \\) -type f 2>/dev/null",
+            timeout=3
+        )
+        if code == 0 and out:
+            for line in out.splitlines():
+                p = line.strip()
+                if p and p not in db_candidates:
+                    db_candidates.append(p)
+    except:
+        pass
+
+    for db_path in db_candidates:
         try:
-            check = subprocess.check_output(f"su -c 'test -f {db_path} && echo exists'", shell=True, text=True, timeout=3).strip()
-            if "exists" in check:
-                tmp_dir = os.path.join(tempfile.gettempdir(), 'hudy_cookie_tmp')
-                try:
-                    os.makedirs(tmp_dir, exist_ok=True)
-                except:
-                    tmp_dir = tempfile.gettempdir()
-                local_db = os.path.join(tmp_dir, f"ext_{pkg.split('.')[-1]}.db")
-                subprocess.run(f"su -c 'cp {db_path} {local_db} && chmod 666 {local_db}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-                if os.path.exists(local_db):
-                    conn = sqlite3.connect(local_db)
-                    c = conn.cursor()
-                    c.execute("SELECT value FROM cookies WHERE name='.ROBLOSECURITY' AND host_key LIKE '%roblox.com%' LIMIT 1")
-                    row = c.fetchone()
+            check = subprocess.check_output(
+                f"su -c 'test -f \"{db_path}\" && echo exists'",
+                shell=True, text=True, timeout=3
+            ).strip()
+            if "exists" not in check:
+                continue
+
+            local_db = os.path.join(tmp_dir, f"ext_{pkg.split('.')[-1]}.db")
+            # Quan trọng: chép kèm WAL và SHM nếu có để không bỏ sót giao dịch vừa đăng nhập
+            cp_cmd = (
+                f"cp \"{db_path}\" \"{local_db}\" 2>/dev/null && "
+                f"(cp \"{db_path}-wal\" \"{local_db}-wal\" 2>/dev/null || true) && "
+                f"(cp \"{db_path}-shm\" \"{local_db}-shm\" 2>/dev/null || true) && "
+                f"chmod 666 \"{local_db}\"* 2>/dev/null || true"
+            )
+            subprocess.run(f"su -c '{cp_cmd}'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+
+            if os.path.exists(local_db):
+                conn = sqlite3.connect(local_db)
+                c = conn.cursor()
+                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+                if not c.fetchone():
                     conn.close()
                     try: os.remove(local_db)
                     except: pass
-                    if row and row[0] and str(row[0]).startswith("_|WARNING"):
-                        return row[0].strip()
+                    continue
+
+                c.execute("PRAGMA table_info(cookies)")
+                cols = [col[1] for col in c.fetchall()]
+                order_by = ""
+                if "last_access_utc" in cols and "creation_utc" in cols:
+                    order_by = "ORDER BY last_access_utc DESC, creation_utc DESC"
+                elif "creation_utc" in cols:
+                    order_by = "ORDER BY creation_utc DESC"
+                elif "last_access_utc" in cols:
+                    order_by = "ORDER BY last_access_utc DESC"
+
+                c.execute(f"SELECT value FROM cookies WHERE name='.ROBLOSECURITY' AND host_key LIKE '%roblox.com%' {order_by} LIMIT 1")
+                row = c.fetchone()
+                conn.close()
+                for f_del in [local_db, f"{local_db}-wal", f"{local_db}-shm"]:
+                    try:
+                        if os.path.exists(f_del): os.remove(f_del)
+                    except: pass
+
+                if row and row[0] and str(row[0]).startswith("_|WARNING"):
+                    return row[0].strip()
         except:
             pass
 
-    # 2. Thử lấy từ SharedPreferences XML
+    # 2. Quét SharedPreferences XML (sắp xếp file sửa đổi mới nhất lên đầu để lấy đúng acc vừa lưu)
     try:
-        xml_out = subprocess.check_output(
-            f"su -c 'grep -hoE \"_\\|WARNING:[^<\"]+\" /data/data/{pkg}/shared_prefs/*.xml 2>/dev/null'",
+        xml_files_raw = subprocess.check_output(
+            f"su -c 'ls -t \"/data/data/{pkg}/shared_prefs/\"*.xml 2>/dev/null'",
             shell=True, text=True, timeout=4
         ).strip()
-        if xml_out:
-            for line in xml_out.splitlines():
-                if line.startswith("_|WARNING"):
-                    return line.strip()
+        if xml_files_raw:
+            for xml_file in xml_files_raw.splitlines():
+                xml_file = xml_file.strip()
+                if not xml_file:
+                    continue
+                match = subprocess.check_output(
+                    f"su -c 'grep -hoE \"_\\|WARNING:[^<\"]+\" \"{xml_file}\" 2>/dev/null'",
+                    shell=True, text=True, timeout=3
+                ).strip()
+                if match:
+                    for line in match.splitlines():
+                        if line.startswith("_|WARNING"):
+                            return line.strip()
     except:
         pass
 
@@ -1960,7 +2022,18 @@ def check_and_handle_account_health(pkg, states, current_time):
     if not state:
         return False
 
-    cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
+    cookie = extract_roblox_cookie(pkg)
+    if not cookie:
+        cookie = state.get('cached_cookie')
+    else:
+        # Nếu phát hiện cookie mới khác cookie cũ trong cache -> người dùng vừa đăng nhập acc mới
+        if state.get('cached_cookie') and state['cached_cookie'] != cookie:
+            add_log(f"[{pkg[-12:]}] {G}[ĐỔI ACC] Phát hiện tài khoản mới! Đang đồng bộ...{RESET}")
+            state['is_blocked'] = False
+            state['block_reason'] = ''
+            state['bound_name'] = None
+            state['display_name'] = 'Đang đồng bộ...'
+
     state['last_acc_check'] = current_time
     if not cookie:
         return False
@@ -1974,7 +2047,8 @@ def check_and_handle_account_health(pkg, states, current_time):
     status = res.get('status')
     state['account_status'] = status
 
-    if res.get('username') and not state.get('bound_name'):
+    # Luôn cập nhật tên hiển thị mới nhất theo kết quả trả về từ API
+    if res.get('username'):
         state['bound_name'] = res['username']
         state['display_name'] = res['username']
 
@@ -2111,20 +2185,34 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
                 # Đến chu kỳ kiểm tra lại xem acc đã giải chưa
                 if time_passed >= recheck_interval:
-                    cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
+                    cookie = extract_roblox_cookie(pkg)
+                    if cookie and state.get('cached_cookie') and state['cached_cookie'] != cookie:
+                        add_log(f"[{pkg[-12:]}] {G}[ĐỔI ACC] Phát hiện cookie mới trong app!{RESET}")
+                        state['is_blocked'] = False
+                        state['block_reason'] = ''
+                        state['bound_name'] = None
+                        state['display_name'] = 'Đang đồng bộ...'
+
+                    if not cookie:
+                        cookie = state.get('cached_cookie')
+
                     state['last_acc_check'] = current_time
                     if cookie:
                         state['cached_cookie'] = cookie
                         res = check_roblox_account_status(cookie)
+                        if res.get('username'):
+                            state['bound_name'] = res['username']
+                            state['display_name'] = res['username']
+
                         if res.get('status') == 'OK':
-                            # Acc đã được giải! Tiến hành Rejoin
+                            # Acc đã được giải hoặc acc mới sạch! Tiến hành Rejoin
                             state['is_blocked'] = False
                             state['block_reason'] = ''
                             state['account_status'] = 'OK'
                             state['text'] = "Acc Sạch -> Rejoin..."
                             state['color'] = G
                             u_name = res.get('username') or state.get('bound_name') or 'Acc'
-                            add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] {u_name} ĐÃ GIẢI/BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
+                            add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
                             with pkg_restart_locks[pkg]:
                                 force_restart_app(pkg, states, current_time, "Acc Sạch -> Rejoin", G)
                             last_ok_ping[pkg] = current_time
