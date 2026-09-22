@@ -2416,31 +2416,69 @@ def setup_kiwi_extension():
         print(f"{R}[!] Chưa cài đặt Kiwi Browser (com.kiwibrowser.browser)! Hãy tải Kiwi Browser từ CH Play hoặc APK trước.{RESET}")
         return False
 
-    # 2. Tìm thư mục extension trên máy
+    # 2. Tìm thư mục extension trên máy hoặc tự động tải về từ Cloud
     src_ext_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha extension")
     src_zip = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha_extension.zip")
     target_dl_zip = "/sdcard/Download/yescaptcha_extension.zip"
 
-    # Tạo file zip nếu chưa có
+    # Tạo file zip nếu chưa có từ thư mục nguồn
     try:
         if os.path.exists(src_ext_dir) and not os.path.exists(src_zip):
             print(f"{Y}[*] Đang nén thư mục extension thành file zip...{RESET}")
             shutil.make_archive(os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha_extension"), 'zip', src_ext_dir)
     except Exception as e:
-        print(f"{Y}[!] Cảnh báo nén zip: {e}{RESET}")
+        pass
 
-    # Copy file zip vào /sdcard/Download/
-    if os.path.exists(src_zip):
-        try:
-            shutil.copy2(src_zip, target_dl_zip)
-            safe_root(f"chmod 666 '{target_dl_zip}' 2>/dev/null || true")
-            print(f"{G}[✓] Đã sao chép file cài đặt vào: {W}{target_dl_zip}{RESET}")
-        except:
-            safe_root(f"cp '{src_zip}' '{target_dl_zip}' && chmod 666 '{target_dl_zip}' 2>/dev/null || true")
-            print(f"{G}[✓] Đã sao chép file cài đặt vào: {W}{target_dl_zip}{RESET}")
-    elif os.path.exists(src_ext_dir):
-        print(f"{Y}[*] Đang đẩy thư mục extension trực tiếp vào bộ nhớ máy...{RESET}")
-        safe_root(f"mkdir -p /sdcard/Download/yescaptcha_extension && cp -r '{src_ext_dir}/'* /sdcard/Download/yescaptcha_extension/ 2>/dev/null || true")
+    # Kiểm tra xem file đã có trong /sdcard/Download/ chưa
+    code_chk, out_chk, _ = _run_root_capture(f"ls -la '{target_dl_zip}' 2>/dev/null", timeout=3)
+    file_ready = (code_chk == 0 and "yescaptcha_extension.zip" in out_chk)
+
+    if not file_ready:
+        if os.path.exists(src_zip):
+            print(f"{C}[*] Đang sao chép file cài đặt vào bộ nhớ máy...{RESET}")
+            try:
+                shutil.copy2(src_zip, target_dl_zip)
+            except:
+                safe_root(f"cp '{src_zip}' '{target_dl_zip}' 2>/dev/null || true")
+        elif os.path.exists(src_ext_dir):
+            safe_root(f"mkdir -p /sdcard/Download/yescaptcha_extension && cp -r '{src_ext_dir}/'* /sdcard/Download/yescaptcha_extension/ 2>/dev/null || true")
+        else:
+            # Máy Cloud / Termux chạy script đơn lẻ không có sẵn file -> TỰ ĐỘNG TẢI TRỰC TIẾP
+            print(f"{Y}[*] Đang chạy trên Cloud/Termux, tự động tải bộ cài Extension (1MB) về máy...{RESET}")
+            download_urls = [
+                "https://files.catbox.moe/uf2hvd.zip",
+                "https://tmpfiles.org/dl/wGwt8F0QNo5j/yescaptcha_extension.zip",
+                "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/yescaptcha_extension.zip"
+            ]
+            downloaded = False
+            for d_url in download_urls:
+                try:
+                    import urllib.request
+                    host_name = d_url.split('/')[2]
+                    print(f"{C}[*] Đang tải từ cloud ({host_name})...{RESET}")
+                    req = urllib.request.Request(d_url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        if resp.status == 200:
+                            content = resp.read()
+                            with open(target_dl_zip, "wb") as f_out:
+                                f_out.write(content)
+                            downloaded = True
+                            print(f"{G}[✓] Tải thành công ({len(content) // 1024} KB)!{RESET}")
+                            break
+                except Exception as ex:
+                    # Thử tải qua curl của Termux/Linux
+                    code_curl = os.system(f"curl -sL '{d_url}' -o '{target_dl_zip}'")
+                    if code_curl == 0 and os.path.exists(target_dl_zip) and os.path.getsize(target_dl_zip) > 100000:
+                        downloaded = True
+                        print(f"{G}[✓] Tải thành công qua curl!{RESET}")
+                        break
+
+            if not downloaded and not os.path.exists(target_dl_zip):
+                print(f"{R}[!] Không thể tự động tải file extension về máy. Hãy kiểm tra kết nối mạng!{RESET}")
+                return False
+
+    safe_root(f"chmod 666 '{target_dl_zip}' 2>/dev/null || true")
+    print(f"{G}[✓] File cài đặt đã sẵn sàng tại: {W}{target_dl_zip}{RESET}")
 
     # 3. Mở thẳng trang chrome://extensions trên Kiwi Browser
     print(f"{C}[*] Đang mở trang quản lý Tiện ích mở rộng (chrome://extensions) trên Kiwi Browser...{RESET}")
