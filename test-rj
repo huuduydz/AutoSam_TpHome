@@ -1,4 +1,4 @@
-import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json, base64
 import urllib.request, urllib.error
 from datetime import datetime
 import xml.etree.ElementTree as ET
@@ -771,6 +771,29 @@ def boot_pkg_with_verify(pkg, max_retries=4):
     time.sleep(2)
     safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
     return False
+
+def launch_roblox_to_game(pkg):
+    """Bắn thẳng package vào game target_place_id để load trải nghiệm và kích hoạt captcha/bảo mật nếu có"""
+    global target_place_id
+    pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
+    if not _is_pkg_active(pkg):
+        safe_root(
+            f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
+            f"-d \"roblox://experiences/start?placeId={pid}\" 2>/dev/null'"
+        )
+        time.sleep(3)
+        if not _is_pkg_active(pkg):
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+            time.sleep(2)
+            safe_root(
+                f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
+                f"-d \"roblox://experiences/start?placeId={pid}\" 2>/dev/null'"
+            )
+    else:
+        safe_root(
+            f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
+            f"-d \"roblox://experiences/start?placeId={pid}\" 2>/dev/null'"
+        )
 
 def _boot_worker(pkg, states):
     """Background thread: boot pkg không block monitor thread."""
@@ -1742,8 +1765,22 @@ def check_roblox_account_status(cookie):
                     "url": res.geturl(),
                     "message": "Tài khoản đang bị kẹt tại trang Not-Approved (cần vào web chấp thuận cảnh báo hoặc giải captcha)!"
                 }
-            elif any(k in final_url for k in ["checkpoint", "challenge", "two-step", "arkose"]) or \
-                 any(k in html_body for k in ["arkoselabs", "funcaptcha", "two-step-verification"]):
+            elif any(k in html_body for k in ["nhấn giữ nút", "nhấn và giữ", "người thật", "id tham chiếu", "press and hold", "press & hold", "reference id"]):
+                ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', html_body, re.I)
+                ref_id = ref_m.group(1) if ref_m else "N/A"
+                return {
+                    "status": "CAPTCHA_CHECKPOINT",
+                    "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
+                    "color": Y,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "challenge_type": "PRESS_AND_HOLD",
+                    "challenge_id": ref_id,
+                    "url": res.geturl(),
+                    "message": f"Tài khoản bị chặn bởi màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {ref_id})!"
+                }
+            elif any(k in final_url for k in ["checkpoint", "challenge", "two-step", "arkose", "security"]) or \
+                 any(k in html_body for k in ["arkoselabs", "funcaptcha", "two-step-verification", "challenge", "kasada", "bảo mật"]):
                 return {
                     "status": "CAPTCHA_CHECKPOINT",
                     "badge": "Dính Captcha / Checkpoint Xác Minh",
@@ -1800,20 +1837,10 @@ def check_roblox_account_status(cookie):
         chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
         chal_id = e.headers.get("rblx-challenge-id") or ""
         chal_meta = e.headers.get("rblx-challenge-metadata") or ""
-        err_body = e.read().decode('utf-8', errors='ignore').lower()
+        raw_body = e.read().decode('utf-8', errors='ignore')
+        err_body = raw_body.lower()
 
-        if "captcha" in chal_type or "captcha" in err_body:
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha Vào Game (Arkose)",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "message": "Roblox chặn xác thực (Auth Ticket 403) và yêu cầu giải Captcha!"
-            }
-        elif "moderated" in err_body:
+        if "moderated" in err_body:
             return {
                 "status": "NOT_APPROVED",
                 "badge": "Kẹt Not-Approved / Kiểm Duyệt",
@@ -1821,6 +1848,69 @@ def check_roblox_account_status(cookie):
                 "user_id": user_id,
                 "username": username or "N/A",
                 "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+            }
+        is_press_and_hold = (
+            any(k in err_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold", "người thật", "human", "reference id", "id tham chiếu"]) or
+            any(k in chal_type for k in ["security", "generic", "proof-of-work", "press", "hold"])
+        )
+        if is_press_and_hold:
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "challenge_type": "PRESS_AND_HOLD",
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'security'}, body={raw_body.strip()[:150]}",
+                "message": f"Roblox chặn (Auth Ticket 403) và yêu cầu vượt qua màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {chal_id or 'N/A'})!"
+            }
+        elif "captchav2" in chal_type or ("challenge is required" in err_body and ("captchav2" in chal_type or "captcha" in chal_type)):
+            meta_json = {}
+            if chal_meta:
+                try:
+                    meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
+                except:
+                    pass
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Dính CaptchaV2 Vào Game (Arkose)",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "challenge_type": "CAPTCHAV2",
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "meta_data": meta_json,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
+                "message": f"Roblox chặn xác thực (Auth Ticket 403, challenge_type=captchav2) và yêu cầu giải CaptchaV2 Arkose (ID: {chal_id or 'N/A'})!"
+            }
+        elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body:
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Dính Captcha Vào Game (Arkose)",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "challenge_type": "ARKOSE_CAPTCHA",
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
+                "message": "Roblox chặn xác thực (Auth Ticket 403) và yêu cầu giải Captcha!"
+            }
+        elif chal_id or chal_type or chal_meta:
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": f"Dính Checkpoint Bảo Mật ({chal_type or 'Challenge'})",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "challenge_type": chal_type or "CHALLENGE",
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
+                "message": f"Roblox chặn xác thực (Auth Ticket 403) và kích hoạt Thử Thách Bảo Mật (ID tham chiếu: {chal_id or 'N/A'})!"
             }
     except Exception:
         pass
@@ -1874,7 +1964,8 @@ def check_roblox_account_status(cookie):
         chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
         chal_id = e.headers.get("rblx-challenge-id") or ""
         chal_meta = e.headers.get("rblx-challenge-metadata") or ""
-        err_body = e.read().decode('utf-8', errors='ignore').lower()
+        raw_body = e.read().decode('utf-8', errors='ignore')
+        err_body = raw_body.lower()
 
         # Nếu 403 do cần token mới thì thử lại 1 lần với token mới
         if e.code == 403 and (e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")) and not chal_type:
@@ -1894,18 +1985,34 @@ def check_roblox_account_status(cookie):
                 chal_type = (e2.headers.get("rblx-challenge-type") or "").lower()
                 chal_id = e2.headers.get("rblx-challenge-id") or ""
                 chal_meta = e2.headers.get("rblx-challenge-metadata") or ""
-                err_body = e2.read().decode('utf-8', errors='ignore').lower()
+                raw_body = e2.read().decode('utf-8', errors='ignore')
+                err_body = raw_body.lower()
 
-        if "captcha" in chal_type or "captcha" in err_body:
+        if "moderated" in err_body:
+            return {
+                "status": "NOT_APPROVED",
+                "badge": "Kẹt Not-Approved / Kiểm Duyệt",
+                "color": R,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+            }
+        is_press_and_hold = (
+            any(k in err_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold", "người thật", "human", "reference id", "id tham chiếu"]) or
+            any(k in chal_type for k in ["security", "generic", "proof-of-work", "press", "hold"])
+        )
+        if is_press_and_hold:
             return {
                 "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha Vào Game (Arkose)",
+                "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
                 "color": Y,
                 "user_id": user_id,
                 "username": username or "N/A",
+                "challenge_type": "PRESS_AND_HOLD",
                 "challenge_id": chal_id,
                 "challenge_meta": chal_meta,
-                "message": "Roblox chặn vào game (join-game HTTP 403) và yêu cầu giải Captcha (Arkose Labs)!"
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'security'}, body={raw_body.strip()[:150]}",
+                "message": f"Roblox chặn vào game (join-game 403) yêu cầu vượt qua màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {chal_id or 'N/A'})!"
             }
         elif "twostepverification" in chal_type or "two-step" in err_body:
             return {
@@ -1914,16 +2021,57 @@ def check_roblox_account_status(cookie):
                 "color": Y,
                 "user_id": user_id,
                 "username": username or "N/A",
+                "challenge_type": "TWO_STEP_VERIFICATION",
+                "challenge_id": chal_id,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
                 "message": "Roblox yêu cầu xác minh 2 bước trước khi vào game!"
             }
-        elif "moderated" in err_body:
+        elif "captchav2" in chal_type or ("challenge is required" in err_body and ("captchav2" in chal_type or not chal_type or "captcha" in chal_type)):
+            meta_json = {}
+            if chal_meta:
+                try:
+                    meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
+                except:
+                    pass
+            action_type = meta_json.get("actionType", "JoinGame") if isinstance(meta_json, dict) else "JoinGame"
             return {
-                "status": "NOT_APPROVED",
-                "badge": "Kẹt Not-Approved / Kiểm Duyệt",
-                "color": R,
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Dính CaptchaV2 Vào Game (Arkose)",
+                "color": Y,
                 "user_id": user_id,
                 "username": username or "N/A",
-                "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+                "challenge_type": "CAPTCHAV2",
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "meta_data": meta_json,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
+                "message": f"Roblox chặn vào game (join-game HTTP 403, challenge_type=captchav2) và yêu cầu giải CaptchaV2 Arkose (Action: {action_type}, ID: {chal_id or 'N/A'})!"
+            }
+        elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body:
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": "Dính Captcha Vào Game (Arkose)",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "challenge_type": "ARKOSE_CAPTCHA",
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
+                "message": "Roblox chặn vào game (join-game HTTP 403) và yêu cầu giải Captcha (Arkose Labs)!"
+            }
+        elif chal_id or chal_type or chal_meta:
+            return {
+                "status": "CAPTCHA_CHECKPOINT",
+                "badge": f"Dính Checkpoint Bảo Mật ({chal_type or 'Challenge'})",
+                "color": Y,
+                "user_id": user_id,
+                "username": username or "N/A",
+                "challenge_type": chal_type or "CHALLENGE",
+                "challenge_id": chal_id,
+                "challenge_meta": chal_meta,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
+                "message": f"Roblox chặn vào game (join-game 403) và kích hoạt Thử Thách Bảo Mật (ID tham chiếu: {chal_id or 'N/A'})!"
             }
     except Exception:
         pass
@@ -1943,20 +2091,10 @@ def check_roblox_account_status(cookie):
             chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
             chal_id = e.headers.get("rblx-challenge-id") or ""
             chal_meta = e.headers.get("rblx-challenge-metadata") or ""
-            err_body = e.read().decode('utf-8', errors='ignore').lower()
+            raw_body = e.read().decode('utf-8', errors='ignore')
+            err_body = raw_body.lower()
 
-            if "captcha" in chal_type or "captcha" in err_body:
-                return {
-                    "status": "CAPTCHA_CHECKPOINT",
-                    "badge": "Dính Captcha Vào Game (Arkose)",
-                    "color": Y,
-                    "user_id": user_id,
-                    "username": username or "N/A",
-                    "challenge_id": chal_id,
-                    "challenge_meta": chal_meta,
-                    "message": "Roblox chặn sinh Ticket vào game và yêu cầu giải Captcha!"
-                }
-            elif "moderated" in err_body:
+            if "moderated" in err_body:
                 return {
                     "status": "NOT_APPROVED",
                     "badge": "Kẹt Not-Approved / Kiểm Duyệt",
@@ -1964,6 +2102,69 @@ def check_roblox_account_status(cookie):
                     "user_id": user_id,
                     "username": username or "N/A",
                     "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+                }
+            is_press_and_hold = (
+                any(k in err_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold", "người thật", "human", "reference id", "id tham chiếu"]) or
+                any(k in chal_type for k in ["security", "generic", "proof-of-work", "press", "hold"])
+            )
+            if is_press_and_hold:
+                return {
+                    "status": "CAPTCHA_CHECKPOINT",
+                    "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
+                    "color": Y,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "challenge_type": "PRESS_AND_HOLD",
+                    "challenge_id": chal_id,
+                    "challenge_meta": chal_meta,
+                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'security'}, body={raw_body.strip()[:150]}",
+                    "message": f"Roblox chặn sinh Ticket và yêu cầu vượt qua màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {chal_id or 'N/A'})!"
+                }
+            elif "captchav2" in chal_type or ("challenge is required" in err_body and ("captchav2" in chal_type or "captcha" in chal_type)):
+                meta_json = {}
+                if chal_meta:
+                    try:
+                        meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
+                    except:
+                        pass
+                return {
+                    "status": "CAPTCHA_CHECKPOINT",
+                    "badge": "Dính CaptchaV2 Vào Game (Arkose)",
+                    "color": Y,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "challenge_type": "CAPTCHAV2",
+                    "challenge_id": chal_id,
+                    "challenge_meta": chal_meta,
+                    "meta_data": meta_json,
+                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
+                    "message": f"Roblox chặn sinh Ticket vào game (challenge_type=captchav2) và yêu cầu giải CaptchaV2 Arkose (ID: {chal_id or 'N/A'})!"
+                }
+            elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body:
+                return {
+                    "status": "CAPTCHA_CHECKPOINT",
+                    "badge": "Dính Captcha Vào Game (Arkose)",
+                    "color": Y,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "challenge_type": "ARKOSE_CAPTCHA",
+                    "challenge_id": chal_id,
+                    "challenge_meta": chal_meta,
+                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
+                    "message": "Roblox chặn sinh Ticket vào game và yêu cầu giải Captcha!"
+                }
+            elif chal_id or chal_type or chal_meta:
+                return {
+                    "status": "CAPTCHA_CHECKPOINT",
+                    "badge": f"Dính Checkpoint Bảo Mật ({chal_type or 'Challenge'})",
+                    "color": Y,
+                    "user_id": user_id,
+                    "username": username or "N/A",
+                    "challenge_type": chal_type or "CHALLENGE",
+                    "challenge_id": chal_id,
+                    "challenge_meta": chal_meta,
+                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
+                    "message": f"Roblox chặn sinh Ticket và kích hoạt Thử Thách Bảo Mật (ID tham chiếu: {chal_id or 'N/A'})!"
                 }
         except Exception:
             pass
@@ -1988,6 +2189,97 @@ def check_roblox_account_status(cookie):
         "message": "Không thể kết nối đến máy chủ Roblox hoặc mạng bị chặn."
     }
 
+def detect_press_and_hold_screen(pkg=None, auto_solve=False):
+    """
+    Quét màn hình Android (bằng uiautomator dump) để nhận biết cửa sổ thử thách Bảo Mật:
+    - Tiêu đề: 'Bảo Mật' / 'Security'
+    - Nội dung: 'Nhấn giữ nút để xác nhận bạn là người thật' / 'Press and hold to confirm you are human'
+    - Nút: 'Nhấn và Giữ' / 'Press and Hold'
+    - ID tham chiếu: 'ID tham chiếu cdc336c0-...' / 'Reference ID ...'
+    
+    Nếu auto_solve=True:
+    - Tự động lấy tọa độ tâm của nút 'Nhấn và Giữ'
+    - Thực hiện long-press: input swipe cx cy cx cy 4500 (nhấn giữ 4.5s)
+    - Trả về kết quả giải quyết.
+    """
+    try:
+        dump_file = "/data/local/tmp/dump_security.xml"
+        _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
+        code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
+        _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
+        if code != 0 or not xml_str:
+            return {"detected": False}
+
+        xml_lower = xml_str.lower()
+        keywords_vn = ["nhấn giữ nút", "xác nhận bạn là người thật", "nhấn và giữ", "nhấn giữ"]
+        keywords_en = ["press and hold to confirm", "confirm you are human", "press and hold", "press & hold", "confirm that you are human"]
+        has_vn = any(k in xml_lower for k in keywords_vn)
+        has_en = any(k in xml_lower for k in keywords_en)
+        has_sec = ("bảo mật" in xml_lower or "security" in xml_lower) and ("người thật" in xml_lower or "human" in xml_lower or "id tham chiếu" in xml_lower or "reference id" in xml_lower)
+
+        if not (has_vn or has_en or has_sec):
+            return {"detected": False}
+
+        ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', xml_str, re.I)
+        ref_id = ref_m.group(1) if ref_m else "N/A"
+
+        btn_coords = None
+        btn_patterns = [
+            r'text="([^"]*(?:Nhấn và Giữ|Nhấn giữ|Press and Hold|Press & Hold)[^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+            r'content-desc="([^"]*(?:Nhấn và Giữ|Nhấn giữ|Press and Hold|Press & Hold)[^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+            r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="([^"]*(?:Nhấn và Giữ|Nhấn giữ|Press and Hold|Press & Hold)[^"]*)"',
+            r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*content-desc="([^"]*(?:Nhấn và Giữ|Nhấn giữ|Press and Hold|Press & Hold)[^"]*)"'
+        ]
+        for pat in btn_patterns:
+            m = re.search(pat, xml_str, re.I)
+            if m:
+                if pat.startswith(r'bounds='):
+                    x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                else:
+                    x1, y1, x2, y2 = int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5))
+                btn_coords = ((x1 + x2) // 2, (y1 + y2) // 2)
+                break
+
+        if not btn_coords:
+            btn_m = re.search(r'class="android\.widget\.Button"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str, re.I)
+            if not btn_m:
+                btn_m = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*class="android\.widget\.Button"', xml_str, re.I)
+            if btn_m:
+                x1, y1, x2, y2 = int(btn_m.group(1)), int(btn_m.group(2)), int(btn_m.group(3)), int(btn_m.group(4))
+                btn_coords = ((x1 + x2) // 2, (y1 + y2) // 2)
+
+        if not btn_coords:
+            w, h = get_screen_resolution()
+            btn_coords = (w // 2, int(h * 0.45))
+
+        solved = False
+        if auto_solve and btn_coords:
+            cx, cy = btn_coords
+            add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {Y}Phát hiện 'Nhấn và Giữ' (ID: {ref_id[:8]}..)! Đang tự động giữ nút ({cx}, {cy}) 5.0s...{RESET}")
+            safe_root(f"su -c 'input swipe {cx} {cy} {cx} {cy} 5000'")
+            time.sleep(2.5)
+
+            _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
+            _, chk_xml, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
+            _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
+            if chk_xml:
+                chk_lower = chk_xml.lower()
+                still_has = any(k in chk_lower for k in keywords_vn + keywords_en)
+                if not still_has:
+                    solved = True
+                    add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {G}[✓] Đã giải quyết thành công màn hình 'Nhấn và Giữ'!{RESET}")
+
+        return {
+            "detected": True,
+            "type": "PRESS_AND_HOLD",
+            "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
+            "ref_id": ref_id,
+            "btn_coords": btn_coords,
+            "solved": solved
+        }
+    except Exception:
+        return {"detected": False}
+
 def print_account_check_result(label, cookie, res):
     mask_c = (cookie[:18] + "..." + cookie[-10:]) if (cookie and len(cookie) > 30) else (cookie or "<Trống>")
     print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
@@ -1999,7 +2291,16 @@ def print_account_check_result(label, cookie, res):
     print(f"{Y}KẾT QUẢ:{RESET}   {col}[{res.get('badge', 'N/A')}]{RESET}")
     print(f"{Y}CHI TIẾT:{RESET}  {res.get('message', '')}")
     if res.get('challenge_id'):
-        print(f"{Y}CHALLENGE ID:{RESET} {C}{res['challenge_id']}{RESET}")
+        print(f"{Y}ID THAM CHIẾU (CHALLENGE ID):{RESET} {C}{res['challenge_id']}{RESET}")
+    if res.get('challenge_type'):
+        print(f"{Y}LOẠI THỬ THÁCH:{RESET}               {C}{res['challenge_type']}{RESET}")
+    if res.get('raw_response'):
+        print(f"{Y}TÍN HIỆU DEBUG:{RESET}               {M}[DBG] {res['raw_response']}{RESET}")
+    if res.get('meta_data'):
+        try:
+            print(f"{Y}CHALLENGE METADATA:{RESET}           {W}{json.dumps(res['meta_data'], ensure_ascii=False)}{RESET}")
+        except:
+            pass
     if res.get('url'):
         print(f"{Y}URL KẸT:{RESET}   {C}{res['url']}{RESET}")
 
@@ -2053,14 +2354,12 @@ def check_and_handle_account_health(pkg, states, current_time):
         state['bound_name'] = res['username']
         state['display_name'] = res['username']
 
-    if status in ('NOT_APPROVED', 'CAPTCHA_CHECKPOINT', 'EXPIRED'):
+    if status in ('NOT_APPROVED', 'EXPIRED'):
         state['is_blocked'] = True
         badge = res.get('badge', 'Bị Khóa/Kẹt')
         state['block_reason'] = badge
         if status == 'NOT_APPROVED':
             short_lbl = "Kẹt Not-Approved"
-        elif status == 'CAPTCHA_CHECKPOINT':
-            short_lbl = "Dính Captcha"
         else:
             short_lbl = "Cookie Die (401)"
         state['text'] = short_lbl
@@ -2069,6 +2368,23 @@ def check_and_handle_account_health(pkg, states, current_time):
         add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO ACC] {badge}: {msg_detail}{RESET}")
         _kill_pkg(pkg)
         return True
+    elif status == 'CAPTCHA_CHECKPOINT':
+        badge = res.get('badge', 'Dính Captcha')
+        msg_detail = res.get('message', '')
+
+        # THÔNG MINH: Nếu dính CaptchaV2 / Nhấn và Giữ -> Bắn vào game để kích hoạt bảng và tự động giữ nút giải!
+        add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] {badge}: {msg_detail}{RESET}")
+        add_log(f"[{pkg[-12:]}] {C}[TỰ ĐỘNG GIẢI] Đang bắn vào game để kích hoạt bảng 'Nhấn và Giữ'...{RESET}")
+
+        state['handling_captcha_solve'] = True
+        state['captcha_solve_start'] = current_time
+        state['is_blocked'] = False
+        state['block_reason'] = badge
+        state['text'] = "Bắn Game Giải Captcha..."
+        state['color'] = Y
+
+        launch_roblox_to_game(pkg)
+        return False
     elif status == 'OK':
         if state.get('is_blocked'):
             state['is_blocked'] = False
@@ -2088,9 +2404,10 @@ def account_captcha_check_menu():
         print(f"[{C}1{RESET}] Kiểm tra các Package ĐANG ĐƯỢC CHỌN (trong Mục [1])")
         print(f"[{C}2{RESET}] Quét TẤT CẢ Package Roblox trên máy và kiểm tra từng Acc")
         print(f"[{C}3{RESET}] Nhập trực tiếp chuỗi Cookie để test ngay")
-        print(f"[{C}4{RESET}] Quay lại Menu chính")
+        print(f"[{C}4{RESET}] Quét MÀN HÌNH App Roblox xem có dính popup 'Bảo Mật / Nhấn và Giữ' (và tự giữ)")
+        print(f"[{C}5{RESET}] Quay lại Menu chính")
         fix_tty()
-        c = safe_input(f"\n{M}Chọn [1-4]: {RESET}").strip()
+        c = safe_input(f"\n{M}Chọn [1-5]: {RESET}").strip()
         if c == '1':
             if not selected_packages:
                 print(f"\n{R}[!] Chưa chọn package nào ở Mục [1]!{RESET}")
@@ -2139,6 +2456,28 @@ def account_captcha_check_menu():
             try: input()
             except: pass
         elif c == '4':
+            print(f"\n{Y}[*] Đang quét màn hình thiết bị tìm popup 'Bảo Mật / Nhấn và Giữ'...{RESET}")
+            res = detect_press_and_hold_screen(auto_solve=True)
+            if res.get("detected"):
+                print(f"\n{G}╔═══════════════════════════════════════════════════════════╗{RESET}")
+                print(f"{G}║   [✓] PHÁT HIỆN POPUP BẢO MẬT: 'NHẤN VÀ GIỮ' TRÊN APP!    ║{RESET}")
+                print(f"{G}╚═══════════════════════════════════════════════════════════╝{RESET}")
+                print(f"  • Tiêu đề:       {C}Bảo Mật (Security Challenge){RESET}")
+                print(f"  • Yêu cầu:       {W}Nhấn giữ nút để xác nhận bạn là người thật.{RESET}")
+                print(f"  • ID tham chiếu: {C}{res.get('ref_id', 'N/A')}{RESET}")
+                if res.get("btn_coords"):
+                    print(f"  • Tọa độ nút:    Pixel {res['btn_coords']}")
+                if res.get("solved"):
+                    print(f"\n{G}[✓] ĐÃ TỰ ĐỘNG GIỮ NÚT 4.5s VÀ GIẢI XONG THÀNH CÔNG!{RESET}")
+                else:
+                    print(f"\n{Y}[!] Đã thực hiện thao tác nhấn giữ 4.5s lên nút. Hãy kiểm tra màn hình điện thoại!{RESET}")
+            else:
+                print(f"\n{C}[i] Màn hình hiện tại không có popup 'Bảo Mật / Nhấn và Giữ'.{RESET}")
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+            try: input()
+            except: pass
+        elif c == '5':
             break
 
 # =====================================================================
@@ -2160,6 +2499,55 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             session_uptime = current_time - state['session_start_time']
             uptime_seconds = current_time - state['rejoin_time']
 
+            # === XỬ LÝ TỰ ĐỘNG GIẢI CAPTCHAV2 / NHẤN VÀ GIỮ KHI ĐƯỢC BẮN VÀO GAME ===
+            if state.get('handling_captcha_solve'):
+                solve_elapsed = current_time - state.get('captcha_solve_start', current_time)
+                time_left_solve = max(0, int(90 - solve_elapsed))
+                state['text'] = f"Chờ Giữ Nút ({time_left_solve}s)"
+                state['color'] = Y
+
+                # Đảm bảo app đang chạy và đang load vào game
+                if not is_app_running(pkg):
+                    launch_roblox_to_game(pkg)
+                    time.sleep(2)
+
+                # Quét màn hình liên tục tìm popup "Bảo Mật / Nhấn và Giữ" và tự động giữ nút 5s
+                sec_res = detect_press_and_hold_screen(pkg, auto_solve=True)
+                if sec_res.get("detected"):
+                    if sec_res.get("solved"):
+                        add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã nhấn giữ 5.0s vượt qua CaptchaV2! Acc đã sạch!{RESET}")
+                        state['handling_captcha_solve'] = False
+                        state['is_blocked'] = False
+                        state['block_reason'] = ''
+                        state['account_status'] = 'OK'
+                        state['text'] = "Đã Giải Xong -> Game"
+                        state['color'] = G
+                        stop_event.wait(5)
+                        continue
+                    else:
+                        add_log(f"[{pkg[-12:]}] {Y}[*] Đang thao tác nhấn giữ nút xác nhận trên màn hình...{RESET}")
+
+                # Nếu tài khoản đã vào được trong game (có heartbeat checkhudyhub)
+                if state.get('in_game'):
+                    add_log(f"[{pkg[-12:]}] {G}[✓] Phát hiện tài khoản đã vào game thành công (vượt qua CaptchaV2)!{RESET}")
+                    state['handling_captcha_solve'] = False
+                    state['is_blocked'] = False
+                    state['block_reason'] = ''
+                    state['account_status'] = 'OK'
+                    continue
+
+                # Nếu hết 90s mà không giải được (ví dụ captcha dạng xoay ảnh cần mắt người giải)
+                if solve_elapsed >= 90:
+                    add_log(f"[{pkg[-12:]}] {R}[!] Hết 90s chờ bảng 'Nhấn và Giữ'. Tạm dừng để tránh treo máy.{RESET}")
+                    state['handling_captcha_solve'] = False
+                    state['is_blocked'] = True
+                    state['block_reason'] = "Dính CaptchaV2 (Chờ Giải)"
+                    state['last_acc_check'] = current_time
+                    _kill_pkg(pkg)
+
+                stop_event.wait(3)
+                continue
+
             # === KIỂM TRA TRẠNG THÁI ACC ĐANG BỊ KẸT (NOT_APPROVED / CAPTCHA / EXPIRED) ===
             if state.get('is_blocked'):
                 # Acc đang bị dính: KHÔNG VÀO GAME! Đảm bảo app tắt để không tốn tài nguyên
@@ -2174,6 +2562,10 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 short_reason = state.get('block_reason', 'Kẹt Acc')
                 if "Not-Approved" in short_reason or "not-approved" in short_reason.lower():
                     lbl = "Kẹt Not-Approved"
+                elif "Nhấn và Giữ" in short_reason or "Nhấn&Giữ" in short_reason or "Press & Hold" in short_reason or "Bảo Mật" in short_reason:
+                    lbl = "Dính Nhấn&Giữ"
+                elif "captchav2" in short_reason.lower() or "captchav2" in str(state.get('account_status')).lower():
+                    lbl = "Dính CaptchaV2"
                 elif "Captcha" in short_reason or "captcha" in short_reason.lower():
                     lbl = "Dính Captcha"
                 elif "401" in short_reason or "Hết Hạn" in short_reason:
@@ -2219,8 +2611,19 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             last_ok_ping[pkg] = current_time
                             stop_event.wait(5)
                             continue
+                        elif res.get('status') == 'CAPTCHA_CHECKPOINT':
+                            # Khi recheck vẫn thấy dính CaptchaV2 -> Lại bắn vào game để hiện bảng 'Nhấn và Giữ' tự giải!
+                            add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Bắn vào game để kích hoạt bảng 'Nhấn và Giữ' tự giải...{RESET}")
+                            state['is_blocked'] = False
+                            state['handling_captcha_solve'] = True
+                            state['captcha_solve_start'] = current_time
+                            state['text'] = "Bắn Game Giải Captcha..."
+                            state['color'] = Y
+                            launch_roblox_to_game(pkg)
+                            stop_event.wait(3)
+                            continue
                         else:
-                            # Vẫn đang bị dính
+                            # Vẫn đang bị dính Not-Approved hoặc Cookie Die
                             state['is_blocked'] = True
                             badge = res.get('badge', 'Kẹt Acc')
                             state['block_reason'] = badge
@@ -2238,6 +2641,23 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 state['color'] = Y
                 stop_event.wait(5)
                 continue
+
+            # === KIỂM TRA POPUP 'BẢO MẬT / NHẤN VÀ GIỮ' KHI APP ĐANG CHẠY MÀ CHƯA VÀO ĐƯỢC GAME ===
+            if uptime_seconds > 15 and is_app_running(pkg) and not state.get('in_game'):
+                last_scr_chk = state.get('last_screen_security_check', 0)
+                if current_time - last_scr_chk >= 8:
+                    state['last_screen_security_check'] = current_time
+                    sec_res = detect_press_and_hold_screen(pkg, auto_solve=True)
+                    if sec_res.get("detected"):
+                        ref = sec_res.get('ref_id', 'N/A')
+                        if sec_res.get("solved"):
+                            add_log(f"[{pkg[-12:]}] {G}[BẢO MẬT] Đã tự động 'Nhấn và Giữ' thành công! Đang vào game...{RESET}")
+                        else:
+                            add_log(f"[{pkg[-12:]}] {Y}[BẢO MẬT] Phát hiện màn hình 'Nhấn và Giữ' (ID: {ref[:8]}..)! Đang chuyển chế độ giữ nút...{RESET}")
+                            state['handling_captcha_solve'] = True
+                            state['captcha_solve_start'] = current_time
+                            stop_event.wait(2)
+                            continue
 
             # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
             if uptime_seconds > 15 and not is_app_running(pkg):
