@@ -2382,16 +2382,78 @@ def resolve_not_approved_with_kiwi(cookie, pkg=None):
         safe_root("am force-stop com.kiwibrowser.browser", timeout=5)
         time.sleep(1)
 
-    # 4. Tiêm Cookie vào WebView/Chromium DB của Kiwi
-    ok = inject_cookie_webview("com.kiwibrowser.browser", cookie)
-    if not ok:
-        add_log(f"[{pkg_tag}] {R}[KIWI] Không tiêm được Cookie vào Kiwi DB!{RESET}")
+    # 4. Thử tiêm Cookie vào WebView/Chromium DB của Kiwi (dự phòng)
+    clean_cookie = _normalize_roblosecurity_cookie(cookie)
+    try:
+        inject_cookie_webview("com.kiwibrowser.browser", clean_cookie)
+    except:
+        pass
+
+    # 5. Mở Kiwi Browser kèm tham số hash #rbx_cookie=...
+    # Extension YesCaptcha (roblox_helper.js) sẽ tự động bắt hash, gọi chrome.cookies.set()
+    # để đăng nhập trực tiếp trên trình duyệt và tự động bấm 'Tiếp tục' / 'Reactivate'!
+    add_log(f"[{pkg_tag}] {G}[KIWI] Đang mở Kiwi Browser nạp Cookie & giải Not-Approved qua Extension...{RESET}")
+    import urllib.parse
+    encoded_cookie = urllib.parse.quote(clean_cookie)
+    open_url = f"https://www.roblox.com/login#rbx_cookie={encoded_cookie}"
+    open_cmd = f"am start -a android.intent.action.VIEW -d '{open_url}' -p com.kiwibrowser.browser"
+    safe_root(open_cmd, timeout=6)
+    return True
+
+def setup_kiwi_extension():
+    """
+    Tự động chuẩn bị và mở trang cài đặt Extension trên Kiwi Browser:
+    1. Tự động đóng gói và sao chép yescaptcha_extension.zip vào /sdcard/Download/
+    2. Mở trực tiếp trang chrome://extensions trên Kiwi Browser
+    3. Hướng dẫn người dùng bật Developer mode và bấm + (from .zip)
+    """
+    import shutil
+    print(f"\n{C}=== CÀI ĐẶT YESCAPTCHA EXTENSION VÀO KIWI BROWSER ==={RESET}")
+
+    # 1. Kiểm tra Kiwi Browser đã cài trên máy chưa
+    code, out, _ = _run_root_capture("pm path com.kiwibrowser.browser 2>/dev/null", timeout=3)
+    if code != 0 or not out.strip():
+        print(f"{R}[!] Chưa cài đặt Kiwi Browser (com.kiwibrowser.browser)! Hãy tải Kiwi Browser từ CH Play hoặc APK trước.{RESET}")
         return False
 
-    add_log(f"[{pkg_tag}] {G}[KIWI] Đã tiêm Cookie thành công! Đang mở trang roblox.com/not-approved...{RESET}")
-    # 5. Mở thẳng trang not-approved trên Kiwi Browser
-    open_cmd = "am start -a android.intent.action.VIEW -d 'https://www.roblox.com/not-approved' -p com.kiwibrowser.browser"
-    safe_root(open_cmd, timeout=6)
+    # 2. Tìm thư mục extension trên máy
+    src_ext_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha extension")
+    src_zip = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha_extension.zip")
+    target_dl_zip = "/sdcard/Download/yescaptcha_extension.zip"
+
+    # Tạo file zip nếu chưa có
+    try:
+        if os.path.exists(src_ext_dir) and not os.path.exists(src_zip):
+            print(f"{Y}[*] Đang nén thư mục extension thành file zip...{RESET}")
+            shutil.make_archive(os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha_extension"), 'zip', src_ext_dir)
+    except Exception as e:
+        print(f"{Y}[!] Cảnh báo nén zip: {e}{RESET}")
+
+    # Copy file zip vào /sdcard/Download/
+    if os.path.exists(src_zip):
+        try:
+            shutil.copy2(src_zip, target_dl_zip)
+            safe_root(f"chmod 666 '{target_dl_zip}' 2>/dev/null || true")
+            print(f"{G}[✓] Đã sao chép file cài đặt vào: {W}{target_dl_zip}{RESET}")
+        except:
+            safe_root(f"cp '{src_zip}' '{target_dl_zip}' && chmod 666 '{target_dl_zip}' 2>/dev/null || true")
+            print(f"{G}[✓] Đã sao chép file cài đặt vào: {W}{target_dl_zip}{RESET}")
+    elif os.path.exists(src_ext_dir):
+        print(f"{Y}[*] Đang đẩy thư mục extension trực tiếp vào bộ nhớ máy...{RESET}")
+        safe_root(f"mkdir -p /sdcard/Download/yescaptcha_extension && cp -r '{src_ext_dir}/'* /sdcard/Download/yescaptcha_extension/ 2>/dev/null || true")
+
+    # 3. Mở thẳng trang chrome://extensions trên Kiwi Browser
+    print(f"{C}[*] Đang mở trang quản lý Tiện ích mở rộng (chrome://extensions) trên Kiwi Browser...{RESET}")
+    safe_root("am start -a android.intent.action.VIEW -d 'chrome://extensions' -p com.kiwibrowser.browser", timeout=6)
+
+    print(f"\n{G}╔═══════════════════════════════════════════════════════════════════════╗{RESET}")
+    print(f"{G}║             HƯỚNG DẪN CÀI ĐẶT 1 LẦN DUY NHẤT TRÊN KIWI:               ║{RESET}")
+    print(f"{G}╚═══════════════════════════════════════════════════════════════════════╝{RESET}")
+    print(f"  {Y}1.{RESET} Trên Kiwi Browser vừa mở, gạt bật {G}Chế độ cho nhà phát triển (Developer mode){RESET} ở góc trên bên phải.")
+    print(f"  {Y}2.{RESET} Bấm vào nút {C}+(from .zip / .crx / .user.js){RESET}.")
+    print(f"  {Y}3.{RESET} Chọn file {W}yescaptcha_extension.zip{RESET} trong thư mục {W}Download{RESET} vừa được tool chuẩn bị sẵn!")
+    print(f"  {Y}4.{RESET} Bấm vào chi tiết tiện ích YesCaptcha, nhập ClientKey của bạn (nếu có).")
+    print(f"\n{G}[✓] Xong! Extension sẽ lưu vĩnh viễn trong Kiwi Browser. Mọi lần sau Tool sẽ tự động 100%!{RESET}")
     return True
 
 def check_and_handle_account_health(pkg, states, current_time):
@@ -2523,9 +2585,10 @@ def account_captcha_check_menu():
         print(f"[{C}3{RESET}] Nhập trực tiếp chuỗi Cookie để test ngay")
         print(f"[{C}4{RESET}] Quét MÀN HÌNH App Roblox xem có dính popup 'Bảo Mật / Nhấn và Giữ' (và tự giữ)")
         print(f"[{C}5{RESET}] Tiêm Cookie vào Kiwi Browser & Mở roblox.com/not-approved (Duyệt qua Extension)")
-        print(f"[{C}6{RESET}] Quay lại Menu chính")
+        print(f"[{C}6{RESET}] Hỗ trợ cài Extension vào Kiwi Browser (Tự đẩy file zip & Mở trang cài)")
+        print(f"[{C}7{RESET}] Quay lại Menu chính")
         fix_tty()
-        c = safe_input(f"\n{M}Chọn [1-6]: {RESET}").strip()
+        c = safe_input(f"\n{M}Chọn [1-7]: {RESET}").strip()
         if c == '1':
             if not selected_packages:
                 print(f"\n{R}[!] Chưa chọn package nào ở Mục [1]!{RESET}")
@@ -2637,6 +2700,12 @@ def account_captcha_check_menu():
             try: input()
             except: pass
         elif c == '6':
+            setup_kiwi_extension()
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+            try: input()
+            except: pass
+        elif c == '7':
             break
 
 # =====================================================================
