@@ -194,7 +194,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.4{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.3{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -1765,7 +1765,7 @@ def check_roblox_account_status(cookie):
                     "url": res.geturl(),
                     "message": "Tài khoản đang bị kẹt tại trang Not-Approved (cần vào web chấp thuận cảnh báo hoặc giải captcha)!"
                 }
-            elif any(k in html_body for k in ["nhấn giữ nút", "nhấn và giữ", "người thật", "id tham chiếu", "press and hold", "press & hold", "reference id"]):
+            elif any(k in html_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold"]):
                 ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', html_body, re.I)
                 ref_id = ref_m.group(1) if ref_m else "N/A"
                 return {
@@ -1779,8 +1779,8 @@ def check_roblox_account_status(cookie):
                     "url": res.geturl(),
                     "message": f"Tài khoản bị chặn bởi màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {ref_id})!"
                 }
-            elif any(k in final_url for k in ["checkpoint", "challenge", "two-step", "arkose", "security"]) or \
-                 any(k in html_body for k in ["arkoselabs", "funcaptcha", "two-step-verification", "challenge", "kasada", "bảo mật"]):
+            elif any(k in final_url for k in ["/checkpoint", "/challenge", "/two-step", "arkoselabs.com"]) or \
+                 any(k in html_body for k in ["api.arkoselabs.com", "funcaptcha.com", "id=\"challenge-container\"", "id=\"two-step-verification\""]):
                 return {
                     "status": "CAPTCHA_CHECKPOINT",
                     "badge": "Dính Captcha / Checkpoint Xác Minh",
@@ -2363,6 +2363,21 @@ def check_and_handle_account_health(pkg, states, current_time):
     if not state:
         return False
 
+    # BẢO VỆ TUYỆT ĐỐI: Nếu acc đang ở trong game hoặc đang có heartbeat bình thường
+    # -> TUYỆT ĐỐI KHÔNG làm phiền, không check API làm gián đoạn, không bắn lại vào game!
+    if state.get('in_game'):
+        return False
+    bound = state.get('bound_name')
+    if bound:
+        hb = get_heartbeat(bound, pkg)
+        if hb != -1 and (current_time - hb <= 120):
+            state['in_game'] = True
+            return False
+
+    # Nếu đang trong tiến trình giải captcha -> để tiến trình giải hoàn tất, không kích hoạt lặp
+    if state.get('handling_captcha_solve'):
+        return False
+
     cookie = extract_roblox_cookie(pkg)
     if not cookie:
         cookie = state.get('cached_cookie')
@@ -2561,18 +2576,25 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                         state['account_status'] = 'OK'
                         state['text'] = "Đã Giải Xong -> Game"
                         state['color'] = G
+                        state['last_acc_check'] = current_time
+                        state['rejoin_time'] = current_time
+                        state['warmup_until'] = current_time + 45
                         stop_event.wait(5)
                         continue
                     else:
                         add_log(f"[{pkg[-12:]}] {Y}[*] Đang thao tác nhấn giữ nút xác nhận trên màn hình...{RESET}")
 
                 # Nếu tài khoản đã vào được trong game (có heartbeat checkhudyhub)
-                if state.get('in_game'):
+                bound_curr = state.get('bound_name')
+                hb_curr = get_heartbeat(bound_curr, pkg) if bound_curr else -1
+                if state.get('in_game') or (hb_curr != -1 and current_time - hb_curr <= 120):
                     add_log(f"[{pkg[-12:]}] {G}[✓] Phát hiện tài khoản đã vào game thành công (vượt qua CaptchaV2)!{RESET}")
                     state['handling_captcha_solve'] = False
                     state['is_blocked'] = False
                     state['block_reason'] = ''
                     state['account_status'] = 'OK'
+                    state['in_game'] = True
+                    state['last_acc_check'] = current_time
                     continue
 
                 # Nếu hết 90s mà không giải được (ví dụ captcha dạng xoay ảnh cần mắt người giải)
@@ -2682,6 +2704,11 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 continue
 
             # === KIỂM TRA POPUP 'BẢO MẬT / NHẤN VÀ GIỮ' KHI APP ĐANG CHẠY MÀ CHƯA VÀO ĐƯỢC GAME ===
+            bound = state.get('bound_name')
+            hb = get_heartbeat(bound, pkg) if bound else -1
+            if hb != -1 and (current_time - hb <= 120):
+                state['in_game'] = True
+
             if uptime_seconds > 15 and is_app_running(pkg) and not state.get('in_game'):
                 last_scr_chk = state.get('last_screen_security_check', 0)
                 if current_time - last_scr_chk >= 8:
@@ -2691,6 +2718,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                         ref = sec_res.get('ref_id', 'N/A')
                         if sec_res.get("solved"):
                             add_log(f"[{pkg[-12:]}] {G}[BẢO MẬT] Đã tự động 'Nhấn và Giữ' thành công! Đang vào game...{RESET}")
+                            state['last_acc_check'] = current_time
+                            state['rejoin_time'] = current_time
+                            state['warmup_until'] = current_time + 45
                         else:
                             add_log(f"[{pkg[-12:]}] {Y}[BẢO MẬT] Phát hiện màn hình 'Nhấn và Giữ' (ID: {ref[:8]}..)! Đang chuyển chế độ giữ nút...{RESET}")
                             state['handling_captcha_solve'] = True
@@ -2812,8 +2842,10 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 diff = current_time - last_ping
                 if diff <= 120:
                     last_ok_ping[pkg] = current_time
+                    state['in_game'] = True
                 real_diff = current_time - last_ok_ping.get(pkg, current_time)
                 if diff > 120:
+                    state['in_game'] = False
                     if is_grace or other_just_restarted:
                         remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
                         state['text'] = f"Vào Server... ({max(0,remain)}s)"
@@ -2829,13 +2861,11 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                         state['text'] = f"Cảnh báo lag ({int(diff)}s)"
                         state['color'] = Y
                 else:
+                    state['in_game'] = True
                     state['text'] = f"Đang Farm ({int(diff)}s trước)"
                     state['color'] = G
-                    # Định kỳ kiểm tra acc khi đang farm (mỗi CHECK_ACC_TIME_NORMAL = 180s)
-                    if current_time - state.get('last_acc_check', 0) >= CHECK_ACC_TIME_NORMAL:
-                        if check_and_handle_account_health(pkg, states, current_time):
-                            stop_event.wait(5)
-                            continue
+                    # Acc đang farm bình thường trong game -> cập nhật last_acc_check, tuyệt đối không làm gián đoạn
+                    state['last_acc_check'] = current_time
         except Exception as e:
             # Ghi lỗi nhưng không crash thread - quan trọng cho 24/7
             try:
