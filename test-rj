@@ -2343,6 +2343,57 @@ def print_account_check_result(label, cookie, res):
     if res.get('url'):
         print(f"{Y}URL KẸT:{RESET}   {C}{res['url']}{RESET}")
 
+def resolve_not_approved_with_kiwi(cookie, pkg=None):
+    """
+    Tự động xử lý tài khoản bị kẹt Not-Approved / Checkpoint duyệt:
+    1. Kiểm tra Kiwi Browser (com.kiwibrowser.browser) đã cài trên máy chưa.
+    2. Tắt Kiwi Browser, trích xuất cookie và tiêm .ROBLOSECURITY vào Cookies DB của Kiwi.
+    3. Mở thẳng https://www.roblox.com/not-approved trên Kiwi Browser để người dùng
+       hoặc extension YesCaptcha tự động giải Arkose Captcha và bấm Re-activate / Đồng ý.
+    """
+    if not cookie:
+        add_log(f"{R}[KIWI] Không có cookie để tiêm vào Kiwi Browser!{RESET}")
+        return False
+
+    pkg_tag = pkg[-12:] if pkg else "KIWI"
+
+    # 1. Kiểm tra Kiwi Browser đã cài trên máy chưa
+    code, out, _ = _run_root_capture("pm path com.kiwibrowser.browser 2>/dev/null", timeout=3)
+    if code != 0 or not out.strip():
+        add_log(f"[{pkg_tag}] {R}[KIWI] Chưa cài Kiwi Browser (com.kiwibrowser.browser) trên máy! Hãy cài Kiwi Browser từ CH Play hoặc APK.{RESET}")
+        return False
+
+    add_log(f"[{pkg_tag}] {C}[KIWI] Đang chuẩn bị tiêm Cookie tài khoản vào Kiwi Browser...{RESET}")
+
+    # 2. Đảm bảo Kiwi tắt trước khi can thiệp SQLite DB
+    safe_root("am force-stop com.kiwibrowser.browser", timeout=5)
+    time.sleep(1)
+
+    # 3. Kiểm tra xem Kiwi đã có file DB chưa
+    code_find, out_find, _ = _run_root_capture(
+        "find '/data/data/com.kiwibrowser.browser/' \\( -name 'Cookies' -o -iname '*cookie*.db' \\) -type f 2>/dev/null",
+        timeout=3
+    )
+    if not out_find.strip():
+        # Chưa có DB -> Khởi chạy Kiwi 3s để sinh profile Chromium mặc định
+        add_log(f"[{pkg_tag}] {Y}[KIWI] Khởi tạo profile mặc định cho Kiwi...{RESET}")
+        safe_root("am start -n com.kiwibrowser.browser/com.google.android.apps.chrome.Main", timeout=5)
+        time.sleep(3)
+        safe_root("am force-stop com.kiwibrowser.browser", timeout=5)
+        time.sleep(1)
+
+    # 4. Tiêm Cookie vào WebView/Chromium DB của Kiwi
+    ok = inject_cookie_webview("com.kiwibrowser.browser", cookie)
+    if not ok:
+        add_log(f"[{pkg_tag}] {R}[KIWI] Không tiêm được Cookie vào Kiwi DB!{RESET}")
+        return False
+
+    add_log(f"[{pkg_tag}] {G}[KIWI] Đã tiêm Cookie thành công! Đang mở trang roblox.com/not-approved...{RESET}")
+    # 5. Mở thẳng trang not-approved trên Kiwi Browser
+    open_cmd = "am start -a android.intent.action.VIEW -d 'https://www.roblox.com/not-approved' -p com.kiwibrowser.browser"
+    safe_root(open_cmd, timeout=6)
+    return True
+
 def check_and_handle_account_health(pkg, states, current_time):
     """
     Kiểm tra trạng thái tài khoản qua Cookie trong app Roblox:
@@ -2408,16 +2459,28 @@ def check_and_handle_account_health(pkg, states, current_time):
         state['bound_name'] = res['username']
         state['display_name'] = res['username']
 
-    if status in ('NOT_APPROVED', 'EXPIRED'):
+    if status == 'NOT_APPROVED':
         state['is_blocked'] = True
-        badge = res.get('badge', 'Bị Khóa/Kẹt')
+        badge = res.get('badge', 'Kẹt Not-Approved / Cần Duyệt')
         state['block_reason'] = badge
-        if status == 'NOT_APPROVED':
-            short_lbl = "Kẹt Not-Approved"
-        else:
-            short_lbl = "Cookie Die (401)"
-        state['text'] = short_lbl
-        state['color'] = res.get('color', R)
+        state['text'] = "Kẹt Not-Approved"
+        state['color'] = R
+        msg_detail = res.get('message', '')
+        add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO ACC] {badge}: {msg_detail}{RESET}")
+        _kill_pkg(pkg)
+
+        # TỰ ĐỘNG TIÊM COOKIE VÀO KIWI BROWSER & MỞ TRANG NOT-APPROVED ĐỂ YESCAPTCHA GIẢI
+        if not state.get('kiwi_opened'):
+            state['kiwi_opened'] = True
+            resolve_not_approved_with_kiwi(cookie, pkg)
+
+        return True
+    elif status == 'EXPIRED':
+        state['is_blocked'] = True
+        badge = res.get('badge', 'Cookie Die (401)')
+        state['block_reason'] = badge
+        state['text'] = "Cookie Die (401)"
+        state['color'] = R
         msg_detail = res.get('message', '')
         add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO ACC] {badge}: {msg_detail}{RESET}")
         _kill_pkg(pkg)
@@ -2459,9 +2522,10 @@ def account_captcha_check_menu():
         print(f"[{C}2{RESET}] Quét TẤT CẢ Package Roblox trên máy và kiểm tra từng Acc")
         print(f"[{C}3{RESET}] Nhập trực tiếp chuỗi Cookie để test ngay")
         print(f"[{C}4{RESET}] Quét MÀN HÌNH App Roblox xem có dính popup 'Bảo Mật / Nhấn và Giữ' (và tự giữ)")
-        print(f"[{C}5{RESET}] Quay lại Menu chính")
+        print(f"[{C}5{RESET}] Tiêm Cookie vào Kiwi Browser & Mở roblox.com/not-approved (Duyệt qua Extension)")
+        print(f"[{C}6{RESET}] Quay lại Menu chính")
         fix_tty()
-        c = safe_input(f"\n{M}Chọn [1-5]: {RESET}").strip()
+        c = safe_input(f"\n{M}Chọn [1-6]: {RESET}").strip()
         if c == '1':
             if not selected_packages:
                 print(f"\n{R}[!] Chưa chọn package nào ở Mục [1]!{RESET}")
@@ -2532,6 +2596,47 @@ def account_captcha_check_menu():
             try: input()
             except: pass
         elif c == '5':
+            print(f"\n{C}=== TIÊM COOKIE VÀO KIWI BROWSER ĐỂ GIẢI NOT-APPROVED ==={RESET}")
+            print(f"[{C}1{RESET}] Lấy Cookie từ Package đang chọn (Mục [1])")
+            print(f"[{C}2{RESET}] Nhập Cookie trực tiếp bằng tay")
+            sub_c = safe_input(f"{M}Chọn [1-2]: {RESET}").strip()
+            cookie_target = None
+            target_p = None
+            if sub_c == '1':
+                if not selected_packages:
+                    print(f"{R}[!] Chưa chọn package nào ở Mục [1]!{RESET}")
+                    time.sleep(2)
+                    continue
+                print(f"\n{Y}Danh sách package đang chọn:{RESET}")
+                for i, item in enumerate(selected_packages, 1):
+                    print(f"  [{i}] {item['pkg']}")
+                p_idx = safe_input(f"{M}Chọn số package [1-{len(selected_packages)}]: {RESET}").strip()
+                try:
+                    p_idx = int(p_idx) - 1
+                    target_p = selected_packages[p_idx]['pkg']
+                    print(f"{Y}[*] Đang trích xuất cookie từ {target_p}...{RESET}")
+                    cookie_target = extract_roblox_cookie(target_p)
+                except:
+                    print(f"{R}[!] Lựa chọn không hợp lệ!{RESET}")
+                    time.sleep(1.5)
+                    continue
+            elif sub_c == '2':
+                cookie_target = safe_input(f"{M}Nhập Cookie Roblox: {RESET}").strip()
+            
+            if cookie_target:
+                print(f"{Y}[*] Đang tiến hành tiêm Cookie vào Kiwi Browser và mở trang roblox.com/not-approved...{RESET}")
+                ok = resolve_not_approved_with_kiwi(cookie_target, target_p)
+                if ok:
+                    print(f"{G}[✓] Đã gửi lệnh mở Kiwi Browser! Hãy kiểm tra trình duyệt trên máy.{RESET}")
+                else:
+                    print(f"{R}[!] Thao tác thất bại! Kiểm tra lại Kiwi Browser trên máy.{RESET}")
+            else:
+                print(f"{R}[!] Không có cookie hợp lệ để tiêm!{RESET}")
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+            try: input()
+            except: pass
+        elif c == '6':
             break
 
 # =====================================================================
@@ -2663,10 +2768,12 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             state['is_blocked'] = False
                             state['block_reason'] = ''
                             state['account_status'] = 'OK'
+                            state['kiwi_opened'] = False
                             state['text'] = "Acc Sạch -> Rejoin..."
                             state['color'] = G
                             u_name = res.get('username') or state.get('bound_name') or 'Acc'
                             add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
+                            safe_root("am force-stop com.kiwibrowser.browser 2>/dev/null || true")
                             with pkg_restart_locks[pkg]:
                                 force_restart_app(pkg, states, current_time, "Acc Sạch -> Rejoin", G)
                             last_ok_ping[pkg] = current_time
@@ -2689,6 +2796,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             badge = res.get('badge', 'Kẹt Acc')
                             state['block_reason'] = badge
                             state['account_status'] = res.get('status')
+                            if res.get('status') == 'NOT_APPROVED' and not state.get('kiwi_opened'):
+                                state['kiwi_opened'] = True
+                                resolve_not_approved_with_kiwi(cookie, pkg)
                             add_log(f"[{pkg[-12:]}] Vẫn {badge} (chờ tiếp {recheck_interval}s)")
                     else:
                         add_log(f"[{pkg[-12:]}] Chưa lấy được Cookie để kiểm tra lại.")
