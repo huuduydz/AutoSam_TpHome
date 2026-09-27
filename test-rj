@@ -1,4 +1,4 @@
-import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json, base64, html, socket, http.server, io, random
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json, base64, html, socket, http.server, io, random, hashlib
 from collections import deque
 import urllib.request, urllib.error
 from datetime import datetime
@@ -3408,6 +3408,345 @@ def handle_not_approved_in_app(pkg=None):
         pass
     return False
 
+# =====================================================================
+# CHROME CDP + DRISSIONPAGE ARKOSE FUNCAPTCHA SOLVER (KHÔNG CẦN EXTENSION)
+# =====================================================================
+try:
+    from DrissionPage import ChromiumPage, ChromiumOptions
+    HAS_DRISSION_PAGE = True
+except ImportError:
+    HAS_DRISSION_PAGE = False
+
+def get_match_image(frame):
+    """Đọc ảnh blob match-game Arkose từ Canvas HTML5 trực tiếp trong Chrome (chuẩn OMO extension)."""
+    try:
+        source = frame.run_js(
+            """
+            const els = document.querySelectorAll('div[class*="match-game box screen"] *');
+            let url = '';
+            for (const el of els) {
+              if (el.tagName === 'IMG' && el.src && el.src.startsWith('blob:')) {
+                url = el.src; break;
+              }
+              const bg = getComputedStyle(el).backgroundImage || '';
+              const match = bg.match(/url\\(["']?(blob:[^"')]+)["']?\\)/);
+              if (match) { url = match[1]; break; }
+            }
+            return url;
+            """
+        )
+        if not isinstance(source, str) or not source.startswith("blob:"):
+            return None
+        frame.run_js(
+            """
+            window.__omoImageData = 'pending';
+            const image = new Image();
+            image.onload = () => {
+              try {
+                const canvas = document.createElement('canvas');
+                canvas.width = image.naturalWidth;
+                canvas.height = image.naturalHeight;
+                canvas.getContext('2d').drawImage(image, 0, 0);
+                window.__omoImageData = canvas.toDataURL('image/jpeg', .92);
+              } catch (e) { window.__omoImageData = 'error'; }
+            };
+            image.onerror = () => { window.__omoImageData = 'error'; };
+            image.src = arguments[0];
+            return true;
+            """,
+            source,
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            image = frame.run_js("return window.__omoImageData || ''")
+            if isinstance(image, str) and image.startswith("data:"):
+                return image
+            if image == "error":
+                return None
+            time.sleep(0.1)
+    except Exception:
+        pass
+    return None
+
+class OmoArkoseSolver:
+    """Tự động phát hiện iframe Arkose, lấy ảnh qua Canvas JS, gọi OMOCaptcha API và click CDP."""
+    def __init__(self, client_key, log=None, api_url=API_URL, delay_click_ms=1000):
+        self.client_key = client_key
+        self.log = log or (lambda msg: None)
+        self.api_url = api_url
+        self.delay = max(1.0, int(delay_click_ms) / 1000.0)
+        self.last_signature = None
+        self.last_attempt_at = 0
+
+    def on_failed_round(self):
+        self.last_signature = None
+        self.last_attempt_at = 0
+        self.log("[OMO] Arkose từ chối chuỗi trước; bắt đầu chuỗi mới.")
+
+    @staticmethod
+    def _trusted_human_click(frame, element):
+        """Mô phỏng thao tác di chuột và click thật bằng CDP (Trusted Human Input)."""
+        actions = frame.actions
+        actions.move_to(element, duration=random.uniform(0.35, 0.75))
+        time.sleep(random.uniform(0.08, 0.22))
+        actions.click()
+
+    def step(self, tab, stop_event=None):
+        try:
+            frames = tab.get_frames()
+        except Exception:
+            return False
+        for frame in frames:
+            try:
+                if not frame.states.is_displayed:
+                    continue
+                if not any(x in (frame.url or "").lower() for x in ("arkoselabs", "funcaptcha")):
+                    continue
+                home = frame.ele(
+                    'css:button[data-theme="home.verifyButton"], '
+                    'button#home_children_button, '
+                    'button[aria-describedby="descriptionVerify"]',
+                    timeout=0.1,
+                )
+                if home and home.states.is_displayed:
+                    self._trusted_human_click(frame, home)
+                    self.log("[OMO] Đã click Start Puzzle / Xác minh bằng CDP trusted input.")
+                    return True
+                state = frame.run_js(
+                    """
+                    const game = document.querySelector('div[class*="match-game box screen"]');
+                    const text = game && game.querySelector('.text, h2[class*="text"], [role="text"]');
+                    return {active: !!game, question: text ? (text.innerText || text.textContent || '') : ''};
+                    """
+                )
+                if not isinstance(state, dict) or not state.get("active"):
+                    continue
+                question = (state.get("question") or "").split("(", 1)[0].strip().rstrip(".")
+                if not question:
+                    continue
+                image = get_match_image(frame)
+                if not image:
+                    continue
+                signature = hashlib.sha256((question + image).encode("utf-8")).hexdigest()
+                if signature == self.last_signature and time.monotonic() - self.last_attempt_at < 30:
+                    continue
+                self.last_signature = signature
+                self.last_attempt_at = time.monotonic()
+                api_index = classify_match_image(
+                    self.client_key, image, question, stop_event, self.api_url
+                )
+                rotations = api_index - 1  # OMO index trả về 1-based.
+                self.log(f"[OMO] API index={api_index} -> Cần quay phải {rotations} lần.")
+                for _ in range(rotations):
+                    arrow = frame.ele('css:.right-arrow', timeout=1)
+                    if not arrow:
+                        raise OmoCaptchaError("Không tìm thấy mũi tên phải")
+                    self._trusted_human_click(frame, arrow)
+                    if stop_event and stop_event.wait(max(0.05, self.delay - 0.07)):
+                        return False
+                if stop_event and stop_event.wait(self.delay):
+                    return False
+                submit = frame.ele(
+                    'css:div[class*="match-game box screen"] button:not([class*="reload-button"])',
+                    timeout=1,
+                )
+                if not submit:
+                    raise OmoCaptchaError("Không tìm thấy nút Submit")
+                self._trusted_human_click(frame, submit)
+                self.log("[OMO] Đã click Submit bằng CDP trusted input.")
+                return True
+            except OmoCaptchaError as exc:
+                self.log(f"[OMO] {exc}")
+                return False
+            except Exception as exc:
+                self.log(f"[OMO] Không xử lý được iframe: {type(exc).__name__}")
+                return False
+        return False
+
+_cdp_bridge_thread = None
+_cdp_bridge_running = False
+
+def setup_chrome_cdp(port=9222):
+    """Khởi động Chrome trên Android với cổng gỡ lỗi từ xa (CDP Port 9222) cho DrissionPage."""
+    global _cdp_bridge_thread, _cdp_bridge_running
+    cmdline_file = "/data/local/tmp/chrome-command-line"
+    flags = f"chrome --remote-debugging-port={port} --disable-fre --no-default-browser-check --no-first-run --disable-notifications"
+    safe_root(f"echo '{flags}' > '{cmdline_file}'")
+    safe_root(f"chmod 777 '{cmdline_file}'")
+    safe_root("am set-debug-app --persistent com.android.chrome 2>/dev/null || true")
+
+    safe_root("am force-stop com.android.chrome 2>/dev/null")
+    time.sleep(1)
+    safe_root("am start -n com.android.chrome/com.google.android.apps.chrome.Main -d 'about:blank' 2>/dev/null")
+    time.sleep(2.5)
+
+    # 1. Kiểm tra cổng 9222 qua TCP
+    for _ in range(5):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/json/version")
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            time.sleep(0.5)
+
+    # 2. Nếu Chrome bind qua Unix Abstract Socket (@chrome_devtools_remote):
+    code, out, _ = _run_root_capture("cat /proc/net/unix 2>/dev/null | grep devtools_remote", timeout=2)
+    if "devtools_remote" in out:
+        m = re.search(r'(@chrome_devtools_remote\w*)', out)
+        abs_name = m.group(1).lstrip('@') if m else "chrome_devtools_remote"
+        if not _cdp_bridge_running:
+            def bridge_worker():
+                global _cdp_bridge_running
+                srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    srv.bind(("127.0.0.1", port))
+                    srv.listen(5)
+                    srv.settimeout(1.0)
+                    _cdp_bridge_running = True
+                    while _cdp_bridge_running:
+                        try:
+                            cli, _ = srv.accept()
+                        except socket.timeout:
+                            continue
+                        except:
+                            break
+                        try:
+                            unx = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                            unx.connect(f"\0{abs_name}")
+                        except:
+                            cli.close()
+                            continue
+                        def fwd(a, b):
+                            try:
+                                while True:
+                                    buf = a.recv(4096)
+                                    if not buf: break
+                                    b.sendall(buf)
+                            except: pass
+                            finally:
+                                a.close(); b.close()
+                        threading.Thread(target=fwd, args=(cli, unx), daemon=True).start()
+                        threading.Thread(target=fwd, args=(unx, cli), daemon=True).start()
+                except Exception:
+                    pass
+                finally:
+                    srv.close()
+                    _cdp_bridge_running = False
+
+            _cdp_bridge_thread = threading.Thread(target=bridge_worker, daemon=True)
+            _cdp_bridge_thread.start()
+            time.sleep(1.0)
+            return True
+
+    return False
+
+def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_event=None, pkg=None):
+    """
+    Giải Arkose match-game trực tiếp trên Google Chrome qua CDP + DrissionPage:
+    1. Bật Chrome với CDP Port 9222.
+    2. Nạp Cookie .ROBLOSECURITY trực tiếp vào Chrome.
+    3. Mở trang Game/Roblox Web để kích hoạt thử thách Arkose.
+    4. Trích xuất ảnh gốc qua HTML5 Canvas JS và giải bằng OmoArkoseSolver.
+    5. Đóng Chrome khi hoàn tất!
+    """
+    global OMOCAPTCHA_KEY
+    if not HAS_DRISSION_PAGE:
+        add_log(f"[{pkg[-12:] if pkg else 'CHROME'}] {R}[CHROME OMO] Chưa cài thư viện DrissionPage! Cần chạy: pip install DrissionPage{RESET}")
+        return {"detected": False, "solved": False, "error": "MISSING_DRISSIONPAGE"}
+
+    if not client_key:
+        client_key = OMOCAPTCHA_KEY or load_omocaptcha_key()
+    if not client_key:
+        add_log(f"[{pkg[-12:] if pkg else 'CHROME'}] {R}[CHROME OMO] Chưa có OMOCaptcha Key!{RESET}")
+        return {"detected": False, "solved": False, "error": "MISSING_KEY"}
+
+    tag = pkg[-12:] if pkg else "CHROME_OMO"
+    add_log(f"[{tag}] {C}[CHROME OMO] Đang cấu hình & mở Google Chrome (CDP Port 9222)...{RESET}")
+    ok = setup_chrome_cdp(port=9222)
+    if not ok:
+        add_log(f"[{tag}] {Y}[CHROME OMO] Không thể bật CDP port 9222 trên Chrome.{RESET}")
+        return {"detected": False, "solved": False, "error": "CDP_FAILED"}
+
+    try:
+        co = ChromiumOptions()
+        co.set_address("127.0.0.1:9222")
+        co.set_load_mode.eager()
+        page = ChromiumPage(co)
+    except Exception as exc:
+        add_log(f"[{tag}] {R}[CHROME OMO] Lỗi kết nối DrissionPage tới Chrome: {exc}{RESET}")
+        return {"detected": False, "solved": False, "error": str(exc)}
+
+    # Nạp Cookie vào Chrome qua CDP
+    if cookie:
+        clean_cookie = _normalize_roblosecurity_cookie(cookie)
+        add_log(f"[{tag}] {C}[CHROME OMO] Đang nạp Cookie .ROBLOSECURITY vào Chrome...{RESET}")
+        try:
+            page.get("https://www.roblox.com/home")
+            time.sleep(1.0)
+            page.set.cookies({'name': '.ROBLOSECURITY', 'value': clean_cookie, 'domain': '.roblox.com', 'path': '/'})
+            page.refresh()
+            time.sleep(2.0)
+        except Exception as e:
+            add_log(f"[{tag}] {Y}[CHROME OMO] Cảnh báo nạp cookie: {e}{RESET}")
+
+    # Điều hướng tới trang cần giải
+    target_url = f"https://www.roblox.com/games/{place_id}" if place_id else "https://www.roblox.com/home"
+    add_log(f"[{tag}] {C}[CHROME OMO] Mở trang {target_url} tìm Captcha...{RESET}")
+    try:
+        page.get(target_url)
+        time.sleep(3.0)
+        
+        # Nếu ở trang game, thử click nút Play để trigger join-game challenge modal nếu chưa hiện
+        play_btn = page.ele('css:button.btn-common-play-game, button#game-play-button, button[class*="play-button"]', timeout=2)
+        if play_btn and play_btn.states.is_displayed:
+            add_log(f"[{tag}] {C}[CHROME OMO] Click nút Play trên web để kích hoạt popup Captcha...{RESET}")
+            play_btn.click()
+            time.sleep(3.0)
+    except Exception:
+        pass
+
+    solver = OmoArkoseSolver(client_key, log=lambda m: add_log(f"[{tag}] {m}"))
+    add_log(f"[{tag}] {G}[CHROME OMO] Bắt đầu quét iframe Arkose bằng Canvas JS + OMO API...{RESET}")
+
+    max_seconds = 120
+    t0 = time.time()
+    rounds_solved = 0
+    detected = False
+
+    while time.time() - t0 < max_seconds:
+        if stop_event and stop_event.is_set():
+            break
+
+        try:
+            frames = page.get_frames()
+            has_arkose = any(
+                "arkoselabs" in (f.url or "").lower() or "funcaptcha" in (f.url or "").lower()
+                for f in frames if f.states.is_displayed
+            )
+            if has_arkose:
+                detected = True
+
+            if not has_arkose and rounds_solved > 0:
+                add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã hoàn thành giải Captcha qua {rounds_solved} vòng! Màn hình Captcha đã đóng.{RESET}")
+                try: safe_root("am force-stop com.android.chrome 2>/dev/null")
+                except: pass
+                return {"detected": True, "solved": True, "rounds": rounds_solved}
+
+            step_ok = solver.step(page, stop_event)
+            if step_ok:
+                rounds_solved += 1
+                time.sleep(2.5)
+            else:
+                time.sleep(1.5)
+        except Exception:
+            time.sleep(2.0)
+
+    try: safe_root("am force-stop com.android.chrome 2>/dev/null")
+    except: pass
+    return {"detected": detected, "solved": (rounds_solved > 0), "rounds": rounds_solved}
+
 def capture_arkose_screen_image(tag="OMO"):
     """
     Chụp ảnh màn hình bằng quyền root (su -c) với 3 cơ chế dự phòng:
@@ -3886,10 +4225,11 @@ def account_captcha_check_menu():
         print(f"[{C}3{RESET}] Nhập trực tiếp chuỗi Cookie để test ngay")
         print(f"[{C}4{RESET}] Quét MÀN HÌNH App Roblox xem có dính popup 'Bảo Mật / Nhấn và Giữ' (và tự giữ)")
         print(f"[{C}5{RESET}] Cấu hình / Nhập OMOCaptcha API Key (Key: {G}{mask_secret(OMOCAPTCHA_KEY)}{RESET})")
-        print(f"[{C}6{RESET}] Quét màn hình & Test giải Captcha V1 in-app (OMOCaptcha API)")
-        print(f"[{C}7{RESET}] Quay lại Menu chính")
+        print(f"[{C}6{RESET}] Test giải Captcha V1 bằng Google Chrome (DrissionPage CDP + OMOCaptcha)")
+        print(f"[{C}7{RESET}] Quét màn hình & Test giải Captcha V1 trực tiếp in-app (Screencap + OMO)")
+        print(f"[{C}8{RESET}] Quay lại Menu chính")
         fix_tty()
-        c = safe_input(f"\n{M}Chọn [1-7]: {RESET}").strip()
+        c = safe_input(f"\n{M}Chọn [1-8]: {RESET}").strip()
         if c == '1':
             if not selected_packages:
                 print(f"\n{R}[!] Chưa chọn package nào ở Mục [1]!{RESET}")
@@ -3970,7 +4310,32 @@ def account_captcha_check_menu():
                     print(f"{R}[!] Lỗi lưu file omocaptcha_key.txt!{RESET}")
             time.sleep(1.5)
         elif c == '6':
-            print(f"\n{C}=== TEST GIẢI CAPTCHA V1 ARKOSE IN-APP (OMOCAPTCHA) ==={RESET}")
+            print(f"\n{C}=== TEST GIẢI CAPTCHA V1 BẰNG GOOGLE CHROME (CDP + OMOCAPTCHA) ==={RESET}")
+            if not OMOCAPTCHA_KEY:
+                print(f"{R}[!] Chưa cấu hình OMOCaptcha Key! Hãy chọn Mục [5] để nhập Key trước.{RESET}")
+                time.sleep(2)
+                continue
+            test_c = None
+            if selected_packages:
+                test_c = extract_roblox_cookie(selected_packages[0]['pkg'])
+            if not test_c:
+                fix_tty()
+                test_c = safe_input(f"{M}Nhập Cookie .ROBLOSECURITY để nạp vào Chrome (hoặc Enter để quét tự động): {RESET}").strip()
+            pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
+            print(f"{Y}[*] Đang khởi động Google Chrome và kích hoạt OmoArkoseSolver (CDP Port 9222)...{RESET}")
+            c_res = solve_arkose_with_chrome_omo(test_c, place_id=pid, client_key=OMOCAPTCHA_KEY)
+            if c_res.get("solved"):
+                print(f"\n{G}[✓] ĐÃ GIẢI XONG THÀNH CÔNG CAPTCHA V1 TRÊN GOOGLE CHROME! (Số vòng: {c_res.get('rounds', 1)}){RESET}")
+            elif c_res.get("detected"):
+                print(f"\n{Y}[!] Đã phát hiện giao diện Arkose trên Chrome nhưng chưa giải xong. Thử chạy lại!{RESET}")
+            else:
+                print(f"\n{C}[i] Không phát hiện thấy iframe Arkose FunCaptcha trên Chrome (hoặc đã đóng).{RESET}")
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+            try: input()
+            except: pass
+        elif c == '7':
+            print(f"\n{C}=== TEST GIẢI CAPTCHA V1 ARKOSE TRỰC TIẾP IN-APP (OMOCAPTCHA) ==={RESET}")
             if not OMOCAPTCHA_KEY:
                 print(f"{R}[!] Chưa cấu hình OMOCaptcha Key! Hãy chọn Mục [5] để nhập Key trước.{RESET}")
                 time.sleep(2)
@@ -3988,7 +4353,7 @@ def account_captcha_check_menu():
             print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
             try: input()
             except: pass
-        elif c == '7':
+        elif c == '8':
             break
 
 # =====================================================================
@@ -4075,8 +4440,32 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     stop_event.wait(5)
 
                 # 2. XỬ LÝ THEO LOẠI CAPTCHA:
-                # Nếu là Captcha V1 (Arkose FunCaptcha): Dùng OMOCaptcha API in-app
+                # Nếu là Captcha V1 (Arkose FunCaptcha): Dùng Google Chrome CDP + OMOCaptcha API (hoặc in-app fallback)
                 if state.get('captcha_type') == 'CAPTCHA_V1':
+                    cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
+                    pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
+
+                    # ƯU TIÊN 1: Giải trên Chrome qua CDP (Canvas JS + OMOCaptcha API, không cần Extension)
+                    add_log(f"[{pkg[-12:]}] {C}[CAPTCHA V1] Thử giải qua Google Chrome (CDP + OMOCaptcha API)...{RESET}")
+                    chrome_res = solve_arkose_with_chrome_omo(cookie, place_id=pid, client_key=OMOCAPTCHA_KEY, stop_event=stop_event, pkg=pkg)
+                    if chrome_res.get("solved"):
+                        add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã giải xong Captcha V1 trên Chrome bằng OMOCaptcha! Rejoin...{RESET}")
+                        state['handling_captcha_solve'] = False
+                        state['is_blocked'] = False
+                        state['block_reason'] = ''
+                        state['account_status'] = 'OK'
+                        state['last_acc_check'] = current_time
+                        state['rejoin_time'] = current_time
+                        state['warmup_until'] = current_time + 45
+                        state['captcha_app_launched'] = False
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, "Chrome OMO V1 Xong -> Rejoin", G)
+                        last_ok_ping[pkg] = current_time
+                        stop_event.wait(5)
+                        continue
+
+                    # ƯU TIÊN 2 (Dự phòng): Giải trực tiếp trong app Roblox nếu Chrome không giải được
+                    add_log(f"[{pkg[-12:]}] {Y}[FALLBACK] Chuyển sang giải trực tiếp trong app Roblox bằng OMOCaptcha...{RESET}")
                     omo_res = solve_arkose_in_app_with_omo(pkg, OMOCAPTCHA_KEY, stop_event)
                     if omo_res.get("solved"):
                         add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã giải xong Captcha V1 bằng OMOCaptcha API in-app! Rejoin...{RESET}")
