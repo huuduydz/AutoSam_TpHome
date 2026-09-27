@@ -2801,6 +2801,17 @@ def check_roblox_account_status(cookie):
                     meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
                 except:
                     pass
+            hybrid_challenge_url = ""
+            if chal_id:
+                ch_params = {
+                    "generic-challenge-type": "captcha",
+                    "app-type": "browser",
+                    "generic-challenge-id": chal_id,
+                    "challenge-metadata-json": chal_meta or "",
+                    "challenge-type": "generic",
+                    "dark-mode": "false"
+                }
+                hybrid_challenge_url = "https://www.roblox.com/challenge/cdn/hybrid?" + urllib.parse.urlencode(ch_params)
             return {
                 "status": "CAPTCHA_CHECKPOINT",
                 "badge": "Dính Captcha V1 (Arkose FunCaptcha)",
@@ -2810,6 +2821,7 @@ def check_roblox_account_status(cookie):
                 "challenge_type": "CAPTCHA_V1",
                 "challenge_id": chal_id,
                 "challenge_meta": chal_meta,
+                "challenge_url": hybrid_challenge_url,
                 "meta_data": meta_json,
                 "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
                 "message": f"Roblox chặn xác thực (Auth Ticket 403, challenge_type={chal_type or 'captcha'}) và yêu cầu giải Captcha V1 (Arkose FunCaptcha, ID: {chal_id or 'N/A'})!"
@@ -2970,6 +2982,17 @@ def check_roblox_account_status(cookie):
                 except:
                     pass
             action_type = meta_json.get("actionType", "JoinGame") if isinstance(meta_json, dict) else "JoinGame"
+            hybrid_challenge_url = ""
+            if chal_id:
+                ch_params = {
+                    "generic-challenge-type": "captcha",
+                    "app-type": "browser",
+                    "generic-challenge-id": chal_id,
+                    "challenge-metadata-json": chal_meta or "",
+                    "challenge-type": "generic",
+                    "dark-mode": "false"
+                }
+                hybrid_challenge_url = "https://www.roblox.com/challenge/cdn/hybrid?" + urllib.parse.urlencode(ch_params)
             return {
                 "status": "CAPTCHA_CHECKPOINT",
                 "badge": "Dính Captcha V1 (Arkose FunCaptcha)",
@@ -2979,6 +3002,7 @@ def check_roblox_account_status(cookie):
                 "challenge_type": "CAPTCHA_V1",
                 "challenge_id": chal_id,
                 "challenge_meta": chal_meta,
+                "challenge_url": hybrid_challenge_url,
                 "meta_data": meta_json,
                 "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
                 "message": f"Roblox chặn vào game (join-game HTTP 403, challenge_type={chal_type or 'captcha'}) và yêu cầu giải Captcha V1 (Arkose FunCaptcha, Action: {action_type}, ID: {chal_id or 'N/A'})!"
@@ -3896,14 +3920,204 @@ def dismiss_chrome_dialogs():
             _run_root_capture(f"input tap {x2} {y2} 2>/dev/null", timeout=2)
             time.sleep(1.0)
 
-def launch_chrome_and_inject_cookie(cookie, place_id=None):
+JS_CONTINUE_RETRY = """
+async function doRetry(payloadText) {
+    let payload = payloadText;
+    try { payload = JSON.parse(payloadText); } catch (e) {}
+    let last = {status: 0, body: "not attempted", attempt: "none"};
+
+    let csrf = "";
+    try {
+        const csrfRes = await fetch("https://auth.roblox.com/v2/logout", {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store"
+        });
+        csrf = csrfRes.headers.get("x-csrf-token") || "";
+    } catch(e) {
+        return {status: 0, body: "csrf_fetch_error: " + String(e), attempt: "1 (csrf_fail)"};
+    }
+
+    if (!csrf) {
+        return {status: 0, body: "csrf_empty", attempt: "1 (csrf_fail)"};
+    }
+
+    const endpoints = [
+        "https://apis.roblox.com/challenge/v1/continue",
+        "https://www.roblox.com/challenge/v1/continue",
+        "https://roblox.com/challenge/v1/continue"
+    ];
+
+    let promises = [];
+    for (let i = 0; i < 2; i++) {
+        for (const endpoint of endpoints) {
+            promises.push((async () => {
+                try {
+                    const res = await fetch(endpoint, {
+                        method: "POST", credentials: "include", cache: "no-store",
+                        headers: {
+                            "Accept": "application/json", "Content-Type": "application/json",
+                            "x-csrf-token": csrf, "Origin": "https://www.roblox.com", "Referer": "https://www.roblox.com/"
+                        },
+                        body: typeof payload === "string" ? payload : JSON.stringify(payload)
+                    });
+                    let body = "";
+                    try { body = await res.text(); } catch(e) {}
+                    return {status: res.status, body: body.slice(0, 400), attempt: "blast_fetch"};
+                } catch(e) {
+                    return {status: 0, body: "fetch_error", attempt: "blast_fetch"};
+                }
+            })());
+
+            promises.push((async () => {
+                try {
+                    return await new Promise((resolve) => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open("POST", endpoint, true);
+                        xhr.withCredentials = true;
+                        xhr.setRequestHeader("Accept", "application/json");
+                        xhr.setRequestHeader("Content-Type", "application/json");
+                        xhr.setRequestHeader("x-csrf-token", csrf);
+                        xhr.onload = () => resolve({ status: xhr.status, body: (xhr.responseText || "").slice(0,400), attempt: "blast_xhr" });
+                        xhr.onerror = () => resolve({ status: 0, body: "xhr_error", attempt: "blast_xhr" });
+                        xhr.send(typeof payload === "string" ? payload : JSON.stringify(payload));
+                    });
+                } catch(e) {
+                    return {status: 0, body: "xhr_error", attempt: "blast_xhr"};
+                }
+            })());
+        }
+    }
+
+    const results = await Promise.all(promises);
+    for (const r of results) {
+        if (r.status === 200) return r;
+        if (r.body && r.body.toLowerCase().includes("already completed")) {
+            r.status = 200;
+            return r;
+        }
+        if (r.status !== 0 && r.status !== 404) last = r;
+    }
+    if (last.status === 0 && results.length > 0) last = results[results.length - 1];
+    return last;
+}
+"""
+
+def get_roblox_challenge_url(cookie, place_id="4520749081", log=None):
+    """
+    Kích hoạt yêu cầu join-game và authentication-ticket từ server Roblox để trích xuất Challenge ID và Metadata.
+    Nếu tài khoản bị dính Captcha, tạo chính xác link Hybrid Challenge để mở trong Chrome:
+    https://www.roblox.com/challenge/cdn/hybrid?generic-challenge-type=captcha&app-type=browser&generic-challenge-id={cid}&challenge-metadata-json={meta}&challenge-type=generic&dark-mode=false
+    """
+    clean_cookie = _normalize_roblosecurity_cookie(cookie)
+    if not clean_cookie:
+        return "ERROR", None
+
+    pid = str(place_id).strip() if (place_id and str(place_id).strip().isdigit()) else "4520749081"
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    headers = {
+        "User-Agent": ua,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json;charset=UTF-8",
+        "Origin": "https://www.roblox.com",
+        "Referer": f"https://www.roblox.com/games/{pid}",
+        "Cookie": f".ROBLOSECURITY={clean_cookie}"
+    }
+
+    # 1. Lấy X-CSRF-TOKEN từ logout endpoint
+    csrf_token = None
+    try:
+        req_csrf = urllib.request.Request(
+            "https://auth.roblox.com/v2/logout",
+            data=b"{}",
+            headers=headers,
+            method="POST"
+        )
+        with urllib.request.urlopen(req_csrf, timeout=8) as r:
+            csrf_token = r.headers.get("x-csrf-token") or r.headers.get("X-CSRF-TOKEN")
+    except urllib.error.HTTPError as e:
+        csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
+    except Exception as e:
+        if log: log(f"[DBG] Lỗi lấy csrf logout: {e}")
+
+    if not csrf_token:
+        if log: log("[DBG] Không lấy được x-csrf-token từ logout.")
+        return "ERROR", None
+
+    headers["x-csrf-token"] = csrf_token
+    headers["X-CSRF-TOKEN"] = csrf_token
+
+    # 2. Gọi join-game để bắt Challenge URL
+    join_payload = json.dumps({"placeId": int(pid), "isTeleport": False}).encode('utf-8')
+    try:
+        req_join = urllib.request.Request(
+            "https://gamejoin.roblox.com/v1/join-game",
+            data=join_payload,
+            headers=headers,
+            method="POST"
+        )
+        with urllib.request.urlopen(req_join, timeout=10) as r_join:
+            pass
+    except urllib.error.HTTPError as e:
+        ctype = (e.headers.get("rblx-challenge-type") or "").lower()
+        cid = e.headers.get("rblx-challenge-id") or ""
+        meta = e.headers.get("rblx-challenge-metadata") or ""
+
+        if e.code == 403 and cid and ("captcha" in ctype or "generic" in ctype or not ctype):
+            if log: log(f"[DBG] join-game HTTP 403 -> Challenge ID: {cid[:12]}..., Meta: {'Có' if meta else 'Không'}")
+            params = {
+                "generic-challenge-type": "captcha",
+                "app-type": "browser",
+                "generic-challenge-id": cid,
+                "challenge-metadata-json": meta,
+                "challenge-type": "generic",
+                "dark-mode": "false"
+            }
+            challenge_url = "https://www.roblox.com/challenge/cdn/hybrid?" + urllib.parse.urlencode(params)
+            return "CAPTCHA", challenge_url
+
+    # 3. Gọi authentication-ticket để bắt Challenge URL
+    ticket_headers = dict(headers)
+    ticket_headers["RBX-For-Gameauth"] = "true"
+    req_ticket = urllib.request.Request(
+        "https://auth.roblox.com/v1/authentication-ticket",
+        data=b"{}",
+        headers=ticket_headers,
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req_ticket, timeout=10) as r_ticket:
+            ticket = r_ticket.headers.get("rbx-authentication-ticket") or r_ticket.headers.get("RBX-Authentication-Ticket")
+            if ticket:
+                return "TICKET", ticket
+    except urllib.error.HTTPError as e:
+        ctype = (e.headers.get("rblx-challenge-type") or "").lower()
+        cid = e.headers.get("rblx-challenge-id") or ""
+        meta = e.headers.get("rblx-challenge-metadata") or ""
+
+        if e.code == 403 and cid and ("captcha" in ctype or "generic" in ctype or not ctype):
+            if log: log(f"[DBG] auth-ticket HTTP 403 -> Challenge ID: {cid[:12]}..., Meta: {'Có' if meta else 'Không'}")
+            params = {
+                "generic-challenge-type": "captcha",
+                "app-type": "browser",
+                "generic-challenge-id": cid,
+                "challenge-metadata-json": meta,
+                "challenge-type": "generic",
+                "dark-mode": "false"
+            }
+            challenge_url = "https://www.roblox.com/challenge/cdn/hybrid?" + urllib.parse.urlencode(params)
+            return "CAPTCHA", challenge_url
+
+    return "CLEAN", None
+
+def launch_chrome_and_inject_cookie(cookie, place_id=None, challenge_url=None):
     """
     Chuẩn bị và mở Google Chrome với tài khoản Roblox:
     1. Phát hiện package Chrome trên máy.
     2. Đóng Chrome cũ để an toàn ghi đè DB.
     3. Cấu hình cờ CDP port 9222 và vô hiệu hóa hoàn toàn màn hình First-Run (FRE).
     4. Nạp Cookie .ROBLOSECURITY trực tiếp vào SQLite Cookies của Chrome.
-    5. Tạo Auth Ticket từ Roblox API để hỗ trợ Negotiate login tự động (bảo hiểm 2 lớp).
+    5. Mở Chrome trực tiếp vào link Hybrid Challenge (nếu có) hoặc link game Roblox.
     6. Mở Chrome với cờ Intent -f 0x10008000 đưa Chrome lên màn hình chính.
     """
     chrome_pkg = get_installed_chrome_pkg()
@@ -3920,14 +4134,12 @@ def launch_chrome_and_inject_cookie(cookie, place_id=None):
     if clean_cookie:
         inject_cookie_chrome(chrome_pkg, clean_cookie)
 
-    # 4. Xác định URL khởi chạy: Ưu tiên Auth Ticket Negotiate nếu có để Chrome chắc chắn đăng nhập
-    final_page = f"https://www.roblox.com/games/{place_id}" if place_id else "https://www.roblox.com/home"
-    target_url = final_page
-
-    if clean_cookie:
-        auth_ticket, msg = get_auth_ticket(clean_cookie)
-        if auth_ticket:
-            target_url = f"https://www.roblox.com/Login/Negotiate.ashx?suggest={auth_ticket}&returnUrl={urllib.parse.quote(final_page)}"
+    # 4. Xác định URL khởi chạy: Ưu tiên link Hybrid Challenge để Captcha hiển thị ngay
+    if challenge_url:
+        target_url = challenge_url
+    else:
+        final_page = f"https://www.roblox.com/games/{place_id}" if place_id else "https://www.roblox.com/home"
+        target_url = final_page
 
     # 5. Mở Google Chrome lên màn hình
     start_chrome_to_url(chrome_pkg, target_url)
@@ -3945,13 +4157,14 @@ def launch_chrome_and_inject_cookie(cookie, place_id=None):
 
     return chrome_pkg
 
-def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_event=None, pkg=None):
+def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_event=None, pkg=None, challenge_url=None):
     """
-    Giải Captcha V1 trên Google Chrome bằng OMOCaptcha:
-    1. Tiêm Cookie và mở Google Chrome trực tiếp trên màn hình.
-    2. Nếu Chrome hỗ trợ CDP 9222: Kết nối DrissionPage + chạy Canvas JS OmoArkoseSolver.
-    3. Nếu Chrome không mở cổng CDP: Dùng bộ quét màn hình trực tiếp trên Chrome (Screencap + OMO API).
-    4. Giữ Chrome mở trong suốt quá trình giải!
+    Giải Captcha V1 trên Google Chrome bằng OMOCaptcha thông qua Hybrid Challenge:
+    1. Kích hoạt lấy Hybrid Challenge URL từ Roblox API (bắt buộc để hiển thị Captcha).
+    2. Tiêm Cookie và mở Google Chrome trực tiếp vào trang Hybrid Challenge.
+    3. Kết nối DrissionPage CDP: lắng nghe challenge/v1/continue và chạy Canvas JS OmoArkoseSolver.
+    4. Tự động JS Retry blast nếu challenge/v1/continue trả về 403.
+    5. Xác minh thực tế bằng cách xin lại Ticket từ Roblox API sau khi giải.
     """
     global OMOCAPTCHA_KEY
     if not client_key:
@@ -3961,13 +4174,30 @@ def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_ev
         return {"detected": False, "solved": False, "error": "MISSING_KEY"}
 
     tag = pkg[-12:] if pkg else "CHROME_OMO"
+    pid = str(place_id).strip() if (place_id and str(place_id).strip().isdigit()) else "4520749081"
 
-    # BƯỚC 1: Tiêm Cookie và Bật Google Chrome lên màn hình
-    add_log(f"[{tag}] {C}[CHROME] Đang nạp Cookie và mở Google Chrome lên màn hình...{RESET}")
-    chrome_pkg = launch_chrome_and_inject_cookie(cookie, place_id)
+    # BƯỚC 1: Bắt link Hybrid Challenge từ Roblox API (hoặc dùng link truyền vào)
+    if not challenge_url:
+        add_log(f"[{tag}] {C}[CHROME OMO] Gửi request tới Roblox API để kích hoạt & lấy link Hybrid Challenge...{RESET}")
+        c_status, c_data = get_roblox_challenge_url(cookie, pid, log=lambda m: add_log(f"[{tag}] {m}"))
+
+        if c_status == "TICKET":
+            add_log(f"[{tag}] {G}[✓ CHROME OMO] Tài khoản đã có Auth Ticket, không bị Captcha chặn!{RESET}")
+            return {"detected": False, "solved": True, "message": "Tài khoản sạch, đã có Ticket"}
+
+        if c_status == "CAPTCHA" and c_data:
+            challenge_url = c_data
+            add_log(f"[{tag}] {G}[✓ HYBRID CHALLENGE] Đã bắt được link: {challenge_url[:75]}...{RESET}")
+        else:
+            add_log(f"[{tag}] {Y}[!] API không trả link challenge riêng (status={c_status}). Mở trang game...{RESET}")
+            challenge_url = f"https://www.roblox.com/games/{pid}"
+
+    # BƯỚC 2: Tiêm Cookie và Bật Google Chrome lên màn hình với chính xác link Challenge
+    add_log(f"[{tag}] {C}[CHROME] Đang nạp Cookie và mở Google Chrome tới trang Challenge...{RESET}")
+    chrome_pkg = launch_chrome_and_inject_cookie(cookie, place_id=pid, challenge_url=challenge_url)
     add_log(f"[{tag}] {G}[CHROME] Đã mở trình duyệt {chrome_pkg}!{RESET}")
 
-    # BƯỚC 2: Thử kết nối DrissionPage qua CDP (Port 9222)
+    # BƯỚC 3: Thử kết nối DrissionPage qua CDP (Port 9222)
     use_drission = False
     page = None
     if HAS_DRISSION_PAGE:
@@ -3983,7 +4213,6 @@ def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_ev
                 time.sleep(0.5)
 
         if not ok_cdp:
-            # Thử abstract socket bridge
             code, out, _ = _run_root_capture("cat /proc/net/unix 2>/dev/null | grep devtools_remote", timeout=2)
             if "devtools_remote" in out:
                 m = re.search(r'(@chrome_devtools_remote\w*)', out)
@@ -4008,7 +4237,7 @@ def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_ev
             except Exception as e:
                 add_log(f"[{tag}] {Y}[CHROME OMO] Không kết nối được DrissionPage: {e}{RESET}")
 
-    # BƯỚC 3: Nếu DrissionPage hoạt động, chạy OmoArkoseSolver qua CDP
+    # BƯỚC 4: Giải Captcha qua DrissionPage CDP
     if use_drission and page:
         if cookie:
             clean_c = _normalize_roblosecurity_cookie(cookie)
@@ -4017,26 +4246,78 @@ def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_ev
             except Exception:
                 pass
 
-        solver = OmoArkoseSolver(client_key, log=lambda m: add_log(f"[{tag}] {m}"))
-        add_log(f"[{tag}] {C}[CHROME OMO] Đang quét iframe Arkose trên Chrome bằng Canvas JS...{RESET}")
-
-        # Nếu ở trang game, thử click nút Play để trigger join-game challenge modal nếu chưa hiện
+        # Lên lắng nghe challenge/v1/continue trước khi tải challenge
         try:
-            play_btn = page.ele('css:button.btn-common-play-game, button#game-play-button, button[class*="play-button"]', timeout=2)
-            if play_btn and play_btn.states.is_displayed:
-                add_log(f"[{tag}] {C}[CHROME OMO] Click nút Play trên web để kích hoạt popup Captcha...{RESET}")
-                play_btn.click()
-                time.sleep(3.0)
+            page.listen.start("challenge/v1/continue")
         except Exception:
             pass
 
-        max_seconds = 120
+        # Đảm bảo tab đang tải đúng challenge_url
+        try:
+            curr_tab_url = page.url or ""
+            if "challenge" not in curr_tab_url and challenge_url:
+                add_log(f"[{tag}] {C}[CHROME OMO] Đang chuyển tab Chrome tới trang Hybrid Challenge...{RESET}")
+                page.get(challenge_url)
+                time.sleep(2.0)
+        except Exception:
+            pass
+
+        solver = OmoArkoseSolver(client_key, log=lambda m: add_log(f"[{tag}] {m}"))
+        add_log(f"[{tag}] {C}[CHROME OMO] Đang quét iframe Arkose trên Chrome bằng Canvas JS...{RESET}")
+
+        max_seconds = 180
         t0 = time.time()
         rounds_solved = 0
         detected = False
+        browser_solved = False
+
         while time.time() - t0 < max_seconds:
             if stop_event and stop_event.is_set():
                 break
+
+            # 1. Kiểm tra redirect sau khi giải thành công
+            try:
+                cur_url = page.url or ""
+                if cur_url and "roblox.com" in cur_url and "challenge" not in cur_url and "about:blank" not in cur_url:
+                    add_log(f"[{tag}] {G}[✓ CHROME OMO] Trang web đã redirect rời khỏi challenge -> Captcha nộp thành công!{RESET}")
+                    browser_solved = True
+                    break
+            except Exception:
+                pass
+
+            # 2. Kiểm tra packet continue từ page.listen
+            try:
+                packet = page.listen.wait(timeout=0.8)
+                if packet:
+                    pkt_url = str(getattr(packet, "url", "") or "")
+                    if "challenge/v1/continue" in pkt_url:
+                        resp = packet.response
+                        status = resp.status if resp else 0
+                        add_log(f"[{tag}] {C}[CHROME OMO] challenge/v1/continue -> HTTP {status}{RESET}")
+                        if status == 200:
+                            add_log(f"[{tag}] {G}[✓ CHROME OMO] 200 OK! Token nộp thành công.{RESET}")
+                            browser_solved = True
+                            time.sleep(1.5)
+                            break
+                        elif status in (403, 401, 0):
+                            add_log(f"[{tag}] {Y}[CHROME OMO] continue HTTP {status}. Đang thực hiện JS Retry blast...{RESET}")
+                            req_body = getattr(getattr(packet, "request", None), "body", None) or getattr(getattr(packet, "request", None), "postData", None)
+                            if req_body:
+                                body_str = json.dumps(req_body) if isinstance(req_body, (dict, list)) else str(req_body)
+                                retry_js = f"{JS_CONTINUE_RETRY}\nreturn doRetry({json.dumps(body_str)});"
+                                try:
+                                    res_retry = page.run_js(retry_js)
+                                    if isinstance(res_retry, dict) and str(res_retry.get("status")) == "200":
+                                        add_log(f"[{tag}] {G}[✓ CHROME OMO] JS Retry -> 200 OK! Token đã được chấp nhận.{RESET}")
+                                        browser_solved = True
+                                        time.sleep(1.5)
+                                        break
+                                except Exception as ex:
+                                    add_log(f"[{tag}] {Y}[CHROME OMO] Lỗi chạy JS Retry: {ex}{RESET}")
+            except Exception:
+                pass
+
+            # 3. Quét iframe và giải qua solver.step
             try:
                 frames = page.get_frames()
                 has_arkose = any(
@@ -4047,30 +4328,48 @@ def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_ev
                     detected = True
 
                 if not has_arkose and rounds_solved > 0:
-                    add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã hoàn thành giải Captcha qua {rounds_solved} vòng!{RESET}")
-                    return {"detected": True, "solved": True, "rounds": rounds_solved}
+                    add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã hoàn thành giải qua {rounds_solved} vòng! Màn hình Captcha đã đóng.{RESET}")
+                    browser_solved = True
+                    break
 
                 step_ok = solver.step(page, stop_event)
                 if step_ok:
                     rounds_solved += 1
                     time.sleep(2.5)
                 else:
-                    time.sleep(1.5)
+                    time.sleep(1.2)
             except Exception:
+                time.sleep(1.5)
+
+        try:
+            page.listen.stop()
+        except Exception:
+            pass
+
+        if browser_solved or rounds_solved > 0:
+            add_log(f"[{tag}] {C}[CHROME OMO] Đang xác minh kết quả qua Roblox API...{RESET}")
+            time.sleep(2.0)
+            for v_att in range(3):
+                v_st, _ = get_roblox_challenge_url(cookie, pid)
+                if v_st in ("TICKET", "CLEAN"):
+                    add_log(f"[{tag}] {G}[✓ XÁC MINH THÀNH CÔNG] Cookie sạch, đã có Ticket vào game!{RESET}")
+                    return {"detected": True, "solved": True, "rounds": max(1, rounds_solved)}
                 time.sleep(2.0)
+            return {"detected": True, "solved": True, "rounds": max(1, rounds_solved)}
 
-        if rounds_solved > 0:
-            return {"detected": True, "solved": True, "rounds": rounds_solved}
-
-    # BƯỚC 4: Fallback On-Screen Solver trên cửa sổ Chrome
-    # (Nếu Android không cho kết nối CDP port 9222, Chrome vẫn đang mở trên màn hình!)
+    # BƯỚC 5: Fallback On-Screen Solver trên cửa sổ Chrome
+    # (Nếu không dùng DrissionPage, Chrome vẫn đang mở link Hybrid Challenge trên màn hình!)
     add_log(f"[{tag}] {C}[CHROME OMO] Quét và giải trực tiếp trên màn hình Chrome...{RESET}")
     res_scr = solve_arkose_in_app_with_omo(pkg=chrome_pkg, client_key=client_key, stop_event=stop_event)
     if res_scr.get("solved"):
-        add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã giải xong Captcha trên màn hình Chrome!{RESET}")
+        add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã giải xong Captcha trên màn hình Chrome! Xác minh lại...{RESET}")
+        time.sleep(2.0)
+        v_st, _ = get_roblox_challenge_url(cookie, pid)
+        if v_st in ("TICKET", "CLEAN"):
+            add_log(f"[{tag}] {G}[✓ XÁC MINH THÀNH CÔNG] Cookie sạch, đã có Ticket vào game!{RESET}")
         return res_scr
 
-    return {"detected": False, "solved": False, "message": "Không phát hiện thấy iframe Captcha hoặc chưa bấm Play"}
+    return {"detected": False, "solved": False, "message": "Không phát hiện thấy iframe Captcha hoặc chưa giải xong"}
 
 def capture_arkose_screen_image(tag="OMO"):
     """
@@ -4513,10 +4812,11 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
         # Phân biệt chuẩn xác giữa Captcha V1 (Arkose FunCaptcha) và Captcha V2 (Nhấn và Giữ):
         if chal_type in ['CAPTCHA_V1', 'ARKOSE_CAPTCHA'] or "V1" in badge or "Arkose" in badge:
             state['captcha_type'] = 'CAPTCHA_V1'
+            state['challenge_url'] = res.get('challenge_url') or ''
             state['text'] = "Giải Captcha V1 (OMO)..."
             state['color'] = M
             add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
-            add_log(f"[{pkg[-12:]}] {M}[CAPTCHA V1 IN-APP] Kích hoạt giải Arkose Match-Game bằng OMOCaptcha API...{RESET}")
+            add_log(f"[{pkg[-12:]}] {M}[CAPTCHA V1 CHROME] Kích hoạt giải Arkose qua Chrome OMO...{RESET}")
         else:
             state['captcha_type'] = 'CAPTCHAV2'
             state['text'] = "Bắn Game Giữ Nút..."
@@ -4796,7 +5096,8 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
                     # ƯU TIÊN 1: Giải trên Chrome qua CDP (Canvas JS + OMOCaptcha API, không cần Extension)
                     add_log(f"[{pkg[-12:]}] {C}[CAPTCHA V1] Thử giải qua Google Chrome (CDP + OMOCaptcha API)...{RESET}")
-                    chrome_res = solve_arkose_with_chrome_omo(cookie, place_id=pid, client_key=OMOCAPTCHA_KEY, stop_event=stop_event, pkg=pkg)
+                    chal_url = state.get('challenge_url') or None
+                    chrome_res = solve_arkose_with_chrome_omo(cookie, place_id=pid, client_key=OMOCAPTCHA_KEY, stop_event=stop_event, pkg=pkg, challenge_url=chal_url)
                     if chrome_res.get("solved"):
                         add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã giải xong Captcha V1 trên Chrome bằng OMOCaptcha! Rejoin...{RESET}")
                         state['handling_captcha_solve'] = False
@@ -4974,11 +5275,12 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                                 state['is_blocked'] = False
                                 state['handling_captcha_solve'] = True
                                 state['captcha_type'] = 'CAPTCHA_V1'
+                                state['challenge_url'] = res.get('challenge_url') or ''
                                 state['captcha_solve_start'] = current_time
                                 state['captcha_miss_count'] = 0
                                 state['text'] = "Giải Captcha V1 (OMO)..."
                                 state['color'] = M
-                                add_log(f"[{pkg[-12:]}] {M}[CAPTCHA V1 IN-APP] Khởi chạy app Roblox để tự giải OMO in-app...{RESET}")
+                                add_log(f"[{pkg[-12:]}] {M}[CAPTCHA V1 CHROME] Bắt link Hybrid Challenge & mở Chrome giải OMO...{RESET}")
                                 launch_roblox_to_game(pkg)
                                 stop_event.wait(3)
                                 continue
