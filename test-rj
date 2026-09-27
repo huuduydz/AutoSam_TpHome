@@ -4280,6 +4280,7 @@ def delta_key_menu():
             break
 
 def main():
+    global SELECTED_SCRIPT_KEY, selected_packages
     fix_tty()
     load_settings()
     # Mặc định luôn là script số 1 (Hop Fin_Tail) trừ khi người dùng đã chủ động tùy chỉnh
