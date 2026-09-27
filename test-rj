@@ -1879,27 +1879,16 @@ def inject_cookie_webview(pkg, cookie):
 
     # Tìm tất cả cơ sở dữ liệu cookies trong package
     dbs = []
-    try:
-        code, out, _ = _run_root_capture(
-            f"find '/data/data/{pkg}/' \\( -name 'Cookies' -o -iname '*cookie*.db' \\) -type f 2>/dev/null",
-            timeout=5
-        )
-        if code != 0:
-            out = ""
-        if out:
-            for line in out.splitlines():
-                p = line.strip()
-                if p and p not in dbs:
-                    dbs.append(p)
-    except:
-        pass
-
     default_paths = [
+        f"/data/data/{pkg}/app_chrome/Default/Network/Cookies",
+        f"/data/data/{pkg}/app_chrome/Default/Cookies",
+        f"/data/data/{pkg}/app_chrome/Cookies",
         f"/data/data/{pkg}/app_webview/Default/Cookies",
         f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
         f"/data/data/{pkg}/app_webview/Cookies",
         f"/data/data/{pkg}/databases/webview.db",
-        f"/data/data/{pkg}/databases/webviewCookiesChromium.db"
+        f"/data/data/{pkg}/databases/webviewCookiesChromium.db",
+        f"/data/data/{pkg}/databases/Cookies"
     ]
     for p in default_paths:
         if p not in dbs:
@@ -1909,6 +1898,20 @@ def inject_cookie_webview(pkg, cookie):
                     dbs.append(p)
             except:
                 pass
+
+    try:
+        # Dùng find chuẩn toybox không dùng -iname tránh lỗi unknown option
+        code, out, _ = _run_root_capture(
+            f"find '/data/data/{pkg}/' -type f \\( -name 'Cookies' -o -name '*cookie*' \\) 2>/dev/null",
+            timeout=5
+        )
+        if code == 0 and out:
+            for line in out.splitlines():
+                p = line.strip()
+                if p and p not in dbs and not p.endswith(('-journal', '-wal', '-shm')):
+                    dbs.append(p)
+    except:
+        pass
 
     if not dbs:
         return False
@@ -3566,186 +3569,508 @@ class OmoArkoseSolver:
 _cdp_bridge_thread = None
 _cdp_bridge_running = False
 
-def setup_chrome_cdp(port=9222):
-    """Khởi động Chrome trên Android với cổng gỡ lỗi từ xa (CDP Port 9222) cho DrissionPage."""
+def _start_abstract_socket_bridge(abstract_name, port=9222):
     global _cdp_bridge_thread, _cdp_bridge_running
-    cmdline_file = "/data/local/tmp/chrome-command-line"
-    flags = f"chrome --remote-debugging-port={port} --disable-fre --no-default-browser-check --no-first-run --disable-notifications"
-    safe_root(f"echo '{flags}' > '{cmdline_file}'")
-    safe_root(f"chmod 777 '{cmdline_file}'")
-    safe_root("am set-debug-app --persistent com.android.chrome 2>/dev/null || true")
-
-    safe_root("am force-stop com.android.chrome 2>/dev/null")
-    time.sleep(1)
-    safe_root("am start -n com.android.chrome/com.google.android.apps.chrome.Main -d 'about:blank' 2>/dev/null")
-    time.sleep(2.5)
-
-    # 1. Kiểm tra cổng 9222 qua TCP
-    for _ in range(5):
+    if _cdp_bridge_running:
+        return
+    def bridge_worker():
+        global _cdp_bridge_running
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            req = urllib.request.Request(f"http://127.0.0.1:{port}/json/version")
-            with urllib.request.urlopen(req, timeout=1.0) as resp:
-                if resp.status == 200:
-                    return True
-        except Exception:
-            time.sleep(0.5)
-
-    # 2. Nếu Chrome bind qua Unix Abstract Socket (@chrome_devtools_remote):
-    code, out, _ = _run_root_capture("cat /proc/net/unix 2>/dev/null | grep devtools_remote", timeout=2)
-    if "devtools_remote" in out:
-        m = re.search(r'(@chrome_devtools_remote\w*)', out)
-        abs_name = m.group(1).lstrip('@') if m else "chrome_devtools_remote"
-        if not _cdp_bridge_running:
-            def bridge_worker():
-                global _cdp_bridge_running
-                srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("127.0.0.1", port))
+            srv.listen(5)
+            srv.settimeout(1.0)
+            _cdp_bridge_running = True
+            while _cdp_bridge_running:
                 try:
-                    srv.bind(("127.0.0.1", port))
-                    srv.listen(5)
-                    srv.settimeout(1.0)
-                    _cdp_bridge_running = True
-                    while _cdp_bridge_running:
-                        try:
-                            cli, _ = srv.accept()
-                        except socket.timeout:
-                            continue
-                        except:
-                            break
-                        try:
-                            unx = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                            unx.connect(f"\0{abs_name}")
-                        except:
-                            cli.close()
-                            continue
-                        def fwd(a, b):
-                            try:
-                                while True:
-                                    buf = a.recv(4096)
-                                    if not buf: break
-                                    b.sendall(buf)
-                            except: pass
-                            finally:
-                                a.close(); b.close()
-                        threading.Thread(target=fwd, args=(cli, unx), daemon=True).start()
-                        threading.Thread(target=fwd, args=(unx, cli), daemon=True).start()
-                except Exception:
-                    pass
-                finally:
-                    srv.close()
-                    _cdp_bridge_running = False
+                    cli, _ = srv.accept()
+                except socket.timeout:
+                    continue
+                except:
+                    break
+                try:
+                    unx = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    unx.connect(f"\0{abstract_name}")
+                except:
+                    cli.close()
+                    continue
+                def fwd(a, b):
+                    try:
+                        while True:
+                            buf = a.recv(4096)
+                            if not buf: break
+                            b.sendall(buf)
+                    except: pass
+                    finally:
+                        a.close(); b.close()
+                threading.Thread(target=fwd, args=(cli, unx), daemon=True).start()
+                threading.Thread(target=fwd, args=(unx, cli), daemon=True).start()
+        except Exception:
+            pass
+        finally:
+            srv.close()
+            _cdp_bridge_running = False
 
-            _cdp_bridge_thread = threading.Thread(target=bridge_worker, daemon=True)
-            _cdp_bridge_thread.start()
+    _cdp_bridge_thread = threading.Thread(target=bridge_worker, daemon=True)
+    _cdp_bridge_thread.start()
+
+def get_installed_chrome_pkg():
+    """Tự động phát hiện package Chrome / Chromium đang cài trên thiết bị."""
+    candidates = [
+        "com.android.chrome",
+        "com.google.android.apps.chrome",
+        "com.chrome.beta",
+        "com.chrome.dev",
+        "com.chrome.canary",
+        "com.sec.android.app.sbrowser"
+    ]
+    for c in candidates:
+        code, out, _ = _run_root_capture(f"pm path {c} 2>/dev/null", timeout=3)
+        if code == 0 and "package:" in out:
+            return c
+    return "com.android.chrome"
+
+def bypass_chrome_fre(chrome_pkg="com.android.chrome"):
+    """
+    Vượt qua màn hình chào mừng 'Welcome to Chrome / First Run Experience (FRE)' của Chrome:
+    1. Ghi cờ --disable-fre vào /data/local/tmp/chrome-command-line
+    2. Ghi đè SharedPreferences xác nhận đã hoàn thành First Run
+    3. Đặt set-debug-app để Chrome đọc chrome-command-line
+    """
+    uid, gid = get_pkg_uid_gid(chrome_pkg)
+    
+    cmdline_file = "/data/local/tmp/chrome-command-line"
+    flags = "chrome --remote-debugging-port=9222 --disable-fre --no-default-browser-check --no-first-run --disable-notifications"
+    _run_root_capture(f'echo "{flags}" > "{cmdline_file}" && chmod 777 "{cmdline_file}"')
+    _run_root_capture(f"am set-debug-app --persistent {chrome_pkg} 2>/dev/null || true")
+
+    sp_dir = f"/data/data/{chrome_pkg}/shared_prefs"
+    _run_root_capture(f"mkdir -p '{sp_dir}' && chown {uid}:{gid} '{sp_dir}' && chmod 771 '{sp_dir}' 2>/dev/null")
+    
+    pref_files = [
+        f"{sp_dir}/{chrome_pkg}_preferences.xml",
+        f"{sp_dir}/com.android.chrome_preferences.xml"
+    ]
+    xml_content = (
+        '<?xml version=\'1.0\' encoding=\'utf-8\' standalone=\'yes\' ?>\n'
+        '<map>\n'
+        '    <boolean name="first_run_flow_complete" value="true" />\n'
+        '    <boolean name="lightweight_first_run_flow_complete" value="true" />\n'
+        '    <boolean name="tos_acknowledged" value="true" />\n'
+        '    <boolean name="signin_promo_dismissed" value="true" />\n'
+        '    <boolean name="fre_promo_opt_out" value="true" />\n'
+        '</map>\n'
+    )
+    for pf in pref_files:
+        _run_root_capture(f'cat << \'EOF\' > "{pf}"\n{xml_content}\nEOF\nchown {uid}:{gid} "{pf}" && chmod 660 "{pf}" 2>/dev/null')
+
+def inject_cookie_chrome(pkg, cookie):
+    """
+    Tiêm trực tiếp Cookie .ROBLOSECURITY vào tất cả cơ sở dữ liệu SQLite Cookies của Google Chrome / Chromium:
+    - Tìm và nạp vào app_chrome/Default/Network/Cookies, app_chrome/Default/Cookies, v.v.
+    - Nếu Chrome chưa từng tạo file Cookies, tự động tạo cấu trúc thư mục và file SQLite Cookies chuẩn.
+    - Sử dụng Chromium Epoch 1601 UTC microseconds.
+    - Dọn dẹp WAL/SHM/journal và chown uid:gid chuẩn của Chrome.
+    """
+    cookie = _normalize_roblosecurity_cookie(cookie)
+    if not cookie:
+        return False
+
+    uid, gid = get_pkg_uid_gid(pkg)
+    chrome_dirs = [
+        f"/data/data/{pkg}/app_chrome/Default/Network",
+        f"/data/data/{pkg}/app_chrome/Default",
+        f"/data/data/{pkg}/app_webview/Default/Network",
+        f"/data/data/{pkg}/app_webview/Default",
+    ]
+    for d in chrome_dirs:
+        _run_root_capture(f"mkdir -p '{d}' && chown {uid}:{gid} '{d}' && chmod 771 '{d}' 2>/dev/null")
+
+    dbs = []
+    candidate_files = [
+        f"/data/data/{pkg}/app_chrome/Default/Network/Cookies",
+        f"/data/data/{pkg}/app_chrome/Default/Cookies",
+        f"/data/data/{pkg}/app_chrome/Cookies",
+        f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
+        f"/data/data/{pkg}/app_webview/Default/Cookies",
+        f"/data/data/{pkg}/app_webview/Cookies",
+        f"/data/data/{pkg}/databases/Cookies",
+        f"/data/data/{pkg}/databases/webviewCookiesChromium.db"
+    ]
+    for p in candidate_files:
+        _, chk, _ = _run_root_capture(f"test -f '{p}' && echo exists", timeout=2)
+        if "exists" in chk and p not in dbs:
+            dbs.append(p)
+
+    try:
+        code, out, _ = _run_root_capture(
+            f"find '/data/data/{pkg}/' -type f \\( -name 'Cookies' -o -name '*cookie*' \\) 2>/dev/null",
+            timeout=4
+        )
+        if code == 0 and out:
+            for line in out.splitlines():
+                p = line.strip()
+                if p and p not in dbs and not p.endswith(('-journal', '-wal', '-shm')):
+                    dbs.append(p)
+    except:
+        pass
+
+    if not dbs:
+        primary_cookie_db = f"/data/data/{pkg}/app_chrome/Default/Network/Cookies"
+        _run_root_capture(f"touch '{primary_cookie_db}' && chown {uid}:{gid} '{primary_cookie_db}' && chmod 660 '{primary_cookie_db}'")
+        dbs.append(primary_cookie_db)
+
+    tmp_dir = os.path.join(tempfile.gettempdir(), 'hudy_chrome_cookie_tmp')
+    try: os.makedirs(tmp_dir, exist_ok=True)
+    except: tmp_dir = tempfile.gettempdir()
+
+    epoch_offset = 11644473600
+    now_1601 = (time.time_ns() // 1000) + (epoch_offset * 1000000)
+    exp_1601 = now_1601 + (10 * 365 * 86400 * 1000000)
+    hosts = ['.roblox.com', 'www.roblox.com', 'roblox.com', '.www.roblox.com']
+
+    success_count = 0
+    for idx, db_path in enumerate(dbs, 1):
+        local_db = os.path.join(tmp_dir, f"chrome_inj_{idx}.db")
+        copy_code, _, _ = _run_root_capture(f"cp '{db_path}' '{local_db}' && chmod 666 '{local_db}'")
+        try:
+            conn = sqlite3.connect(local_db)
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
+            if not c.fetchone():
+                c.execute("""
+                    CREATE TABLE cookies (
+                        creation_utc INTEGER NOT NULL,
+                        host_key TEXT NOT NULL,
+                        top_frame_site_key TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        value TEXT NOT NULL,
+                        encrypted_value BLOB NOT NULL,
+                        path TEXT NOT NULL,
+                        expires_utc INTEGER NOT NULL,
+                        is_secure INTEGER NOT NULL,
+                        is_httponly INTEGER NOT NULL,
+                        last_access_utc INTEGER NOT NULL,
+                        has_expires INTEGER NOT NULL,
+                        is_persistent INTEGER NOT NULL,
+                        priority INTEGER NOT NULL,
+                        samesite INTEGER NOT NULL,
+                        source_scheme INTEGER NOT NULL,
+                        source_port INTEGER NOT NULL,
+                        is_same_party INTEGER NOT NULL,
+                        last_update_utc INTEGER NOT NULL,
+                        source_type INTEGER NOT NULL,
+                        has_cross_site_ancestor INTEGER NOT NULL,
+                        PRIMARY KEY (creation_utc)
+                    )
+                """)
+                conn.commit()
+
+            c.execute("PRAGMA table_info(cookies)")
+            column_info = c.fetchall()
+            columns = [col[1] for col in column_info]
+
+            for row_index, hk in enumerate(hosts):
+                row_time = now_1601 + row_index
+                data = {
+                    'creation_utc': row_time,
+                    'top_frame_site_key': 'https://roblox.com',
+                    'host_key': hk,
+                    'name': '.ROBLOSECURITY',
+                    'value': cookie,
+                    'encrypted_value': b'',
+                    'path': '/',
+                    'expires_utc': exp_1601,
+                    'is_secure': 1,
+                    'is_httponly': 1,
+                    'last_access_utc': row_time,
+                    'last_update_utc': row_time,
+                    'has_expires': 1,
+                    'is_persistent': 1,
+                    'priority': 1,
+                    'samesite': -1,
+                    'source_scheme': 2,
+                    'source_port': 443,
+                    'source_type': 0,
+                    'has_cross_site_ancestor': 0,
+                    'is_same_party': 0
+                }
+                for _, col_name, col_type, not_null, default_value, _ in column_info:
+                    if col_name in data or not not_null or default_value is not None:
+                        continue
+                    type_upper = (col_type or '').upper()
+                    if 'BLOB' in type_upper:
+                        data[col_name] = b''
+                    elif any(t in type_upper for t in ('INT', 'REAL', 'NUM')):
+                        data[col_name] = 0
+                    else:
+                        data[col_name] = ''
+
+                valid_cols = [k for k in data if k in columns]
+                vals = [data[k] for k in valid_cols]
+                placeholders = ','.join(['?' for _ in valid_cols])
+
+                c.execute(
+                    "DELETE FROM cookies WHERE name=? AND (host_key=? OR host_key=? OR host_key=?)",
+                    ('.ROBLOSECURITY', hk, hk.lstrip('.'), '.' + hk.lstrip('.'))
+                )
+                c.execute(f"INSERT INTO cookies ({','.join(valid_cols)}) VALUES ({placeholders})", vals)
+
+            conn.commit()
+            conn.close()
+
+            fix_cmd = (
+                f'cp "{local_db}" "{db_path}" && '
+                f'rm -f "{db_path}-wal" "{db_path}-shm" "{db_path}-journal" 2>/dev/null && '
+                f'chown {uid}:{gid} "{db_path}" && '
+                f'chmod 660 "{db_path}" && '
+                f'(restorecon "{db_path}" 2>/dev/null || true)'
+            )
+            write_code, _, _ = _run_root_capture(fix_cmd)
+            try: os.remove(local_db)
+            except: pass
+            if write_code == 0:
+                success_count += 1
+                if "Default/Network/Cookies" in db_path:
+                    alt_path = db_path.replace("Default/Network/Cookies", "Default/Cookies")
+                    _run_root_capture(f'cp "{db_path}" "{alt_path}" && chown {uid}:{gid} "{alt_path}" && chmod 660 "{alt_path}" 2>/dev/null')
+        except Exception as e:
+            try: conn.close()
+            except: pass
+            try: os.remove(local_db)
+            except: pass
+
+    return success_count > 0
+
+def start_chrome_to_url(chrome_pkg, target_url):
+    """
+    Khởi chạy Google Chrome và điều hướng tới target_url với nhiều tầng dự phòng:
+    - Bắt buộc có cờ -f 0x10008000 (FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TOP).
+    - Dự phòng 1: Component Activity chính com.google.android.apps.chrome.Main
+    - Dự phòng 2: Intent Action VIEW với Package
+    - Dự phòng 3: Monkey khởi động Launcher rồi gửi VIEW intent
+    """
+    # 1. Thử Component chính
+    code, _, _ = _run_root_capture(
+        f'am start -n {chrome_pkg}/com.google.android.apps.chrome.Main -f 0x10008000 -a android.intent.action.VIEW -d "{target_url}" 2>/dev/null',
+        timeout=5
+    )
+    if code == 0:
+        return True
+
+    # 2. Thử VIEW intent với package
+    code, _, _ = _run_root_capture(
+        f'am start -p {chrome_pkg} -f 0x10008000 -a android.intent.action.VIEW -d "{target_url}" 2>/dev/null',
+        timeout=5
+    )
+    if code == 0:
+        return True
+
+    # 3. Thử qua monkey trước
+    _run_root_capture(f"monkey -p {chrome_pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null", timeout=4)
+    time.sleep(1.2)
+    code, _, _ = _run_root_capture(
+        f'am start -p {chrome_pkg} -f 0x10008000 -a android.intent.action.VIEW -d "{target_url}" 2>/dev/null',
+        timeout=5
+    )
+    return code == 0
+
+def dismiss_chrome_dialogs():
+    """Tự động đóng các popup màn hình chào mừng (FRE) của Chrome nếu còn sót."""
+    dump_file = "/data/local/tmp/dump_chrome_fre.xml"
+    _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=3)
+    code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=2)
+    _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=1)
+    if code == 0 and xml_str:
+        m = re.search(r'text="([^"]*accept[^"]*|[^"]*tiếp tục[^"]*|[^"]*chấp nhận[^"]*|[^"]*đồng ý[^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str, re.IGNORECASE)
+        if m:
+            x = (int(m.group(2)) + int(m.group(4))) // 2
+            y = (int(m.group(3)) + int(m.group(5))) // 2
+            _run_root_capture(f"input tap {x} {y} 2>/dev/null", timeout=2)
+            time.sleep(1.5)
+        m2 = re.search(r'text="([^"]*no thanks[^"]*|[^"]*không, cảm ơn[^"]*|[^"]*bỏ qua[^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str, re.IGNORECASE)
+        if m2:
+            x2 = (int(m2.group(2)) + int(m2.group(4))) // 2
+            y2 = (int(m2.group(3)) + int(m2.group(5))) // 2
+            _run_root_capture(f"input tap {x2} {y2} 2>/dev/null", timeout=2)
             time.sleep(1.0)
-            return True
 
-    return False
+def launch_chrome_and_inject_cookie(cookie, place_id=None):
+    """
+    Chuẩn bị và mở Google Chrome với tài khoản Roblox:
+    1. Phát hiện package Chrome trên máy.
+    2. Đóng Chrome cũ để an toàn ghi đè DB.
+    3. Cấu hình cờ CDP port 9222 và vô hiệu hóa hoàn toàn màn hình First-Run (FRE).
+    4. Nạp Cookie .ROBLOSECURITY trực tiếp vào SQLite Cookies của Chrome.
+    5. Tạo Auth Ticket từ Roblox API để hỗ trợ Negotiate login tự động (bảo hiểm 2 lớp).
+    6. Mở Chrome với cờ Intent -f 0x10008000 đưa Chrome lên màn hình chính.
+    """
+    chrome_pkg = get_installed_chrome_pkg()
+    clean_cookie = _normalize_roblosecurity_cookie(cookie) if cookie else None
+
+    # 1. Đóng Chrome để nạp DB an toàn
+    _run_root_capture(f"am force-stop {chrome_pkg} 2>/dev/null")
+    time.sleep(1.0)
+
+    # 2. Vô hiệu hóa First-Run Experience (FRE) và đặt cờ debug port 9222
+    bypass_chrome_fre(chrome_pkg)
+
+    # 3. Tiêm Cookie vào SQLite của Chrome
+    if clean_cookie:
+        inject_cookie_chrome(chrome_pkg, clean_cookie)
+
+    # 4. Xác định URL khởi chạy: Ưu tiên Auth Ticket Negotiate nếu có để Chrome chắc chắn đăng nhập
+    final_page = f"https://www.roblox.com/games/{place_id}" if place_id else "https://www.roblox.com/home"
+    target_url = final_page
+
+    if clean_cookie:
+        auth_ticket, msg = get_auth_ticket(clean_cookie)
+        if auth_ticket:
+            target_url = f"https://www.roblox.com/Login/Negotiate.ashx?suggest={auth_ticket}&returnUrl={urllib.parse.quote(final_page)}"
+
+    # 5. Mở Google Chrome lên màn hình
+    start_chrome_to_url(chrome_pkg, target_url)
+    time.sleep(3.5)
+
+    # 6. Kiểm tra nếu Chrome chưa ở Foreground, kích hoạt lại
+    if not is_pkg_in_foreground(chrome_pkg):
+        _run_root_capture(f"monkey -p {chrome_pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null", timeout=3)
+        time.sleep(1.0)
+        _run_root_capture(f'am start -p {chrome_pkg} -f 0x10008000 -a android.intent.action.VIEW -d "{target_url}" 2>/dev/null', timeout=4)
+        time.sleep(2.0)
+
+    # 7. Tự động xử lý nếu xuất hiện nút 'Chấp nhận & tiếp tục' hoặc 'Không, cảm ơn' của FRE
+    dismiss_chrome_dialogs()
+
+    return chrome_pkg
 
 def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_event=None, pkg=None):
     """
-    Giải Arkose match-game trực tiếp trên Google Chrome qua CDP + DrissionPage:
-    1. Bật Chrome với CDP Port 9222.
-    2. Nạp Cookie .ROBLOSECURITY trực tiếp vào Chrome.
-    3. Mở trang Game/Roblox Web để kích hoạt thử thách Arkose.
-    4. Trích xuất ảnh gốc qua HTML5 Canvas JS và giải bằng OmoArkoseSolver.
-    5. Đóng Chrome khi hoàn tất!
+    Giải Captcha V1 trên Google Chrome bằng OMOCaptcha:
+    1. Tiêm Cookie và mở Google Chrome trực tiếp trên màn hình.
+    2. Nếu Chrome hỗ trợ CDP 9222: Kết nối DrissionPage + chạy Canvas JS OmoArkoseSolver.
+    3. Nếu Chrome không mở cổng CDP: Dùng bộ quét màn hình trực tiếp trên Chrome (Screencap + OMO API).
+    4. Giữ Chrome mở trong suốt quá trình giải!
     """
     global OMOCAPTCHA_KEY
-    if not HAS_DRISSION_PAGE:
-        add_log(f"[{pkg[-12:] if pkg else 'CHROME'}] {R}[CHROME OMO] Chưa cài thư viện DrissionPage! Cần chạy: pip install DrissionPage{RESET}")
-        return {"detected": False, "solved": False, "error": "MISSING_DRISSIONPAGE"}
-
     if not client_key:
         client_key = OMOCAPTCHA_KEY or load_omocaptcha_key()
     if not client_key:
-        add_log(f"[{pkg[-12:] if pkg else 'CHROME'}] {R}[CHROME OMO] Chưa có OMOCaptcha Key!{RESET}")
+        add_log(f"[{pkg[-12:] if pkg else 'CHROME'}] {R}[CHROME OMO] Chưa có OMOCaptcha Key! Vào Menu [7]->[5] để nhập.{RESET}")
         return {"detected": False, "solved": False, "error": "MISSING_KEY"}
 
     tag = pkg[-12:] if pkg else "CHROME_OMO"
-    add_log(f"[{tag}] {C}[CHROME OMO] Đang cấu hình & mở Google Chrome (CDP Port 9222)...{RESET}")
-    ok = setup_chrome_cdp(port=9222)
-    if not ok:
-        add_log(f"[{tag}] {Y}[CHROME OMO] Không thể bật CDP port 9222 trên Chrome.{RESET}")
-        return {"detected": False, "solved": False, "error": "CDP_FAILED"}
 
-    try:
-        co = ChromiumOptions()
-        co.set_address("127.0.0.1:9222")
-        co.set_load_mode.eager()
-        page = ChromiumPage(co)
-    except Exception as exc:
-        add_log(f"[{tag}] {R}[CHROME OMO] Lỗi kết nối DrissionPage tới Chrome: {exc}{RESET}")
-        return {"detected": False, "solved": False, "error": str(exc)}
+    # BƯỚC 1: Tiêm Cookie và Bật Google Chrome lên màn hình
+    add_log(f"[{tag}] {C}[CHROME] Đang nạp Cookie và mở Google Chrome lên màn hình...{RESET}")
+    chrome_pkg = launch_chrome_and_inject_cookie(cookie, place_id)
+    add_log(f"[{tag}] {G}[CHROME] Đã mở trình duyệt {chrome_pkg}!{RESET}")
 
-    # Nạp Cookie vào Chrome qua CDP
-    if cookie:
-        clean_cookie = _normalize_roblosecurity_cookie(cookie)
-        add_log(f"[{tag}] {C}[CHROME OMO] Đang nạp Cookie .ROBLOSECURITY vào Chrome...{RESET}")
-        try:
-            page.get("https://www.roblox.com/home")
-            time.sleep(1.0)
-            page.set.cookies({'name': '.ROBLOSECURITY', 'value': clean_cookie, 'domain': '.roblox.com', 'path': '/'})
-            page.refresh()
-            time.sleep(2.0)
-        except Exception as e:
-            add_log(f"[{tag}] {Y}[CHROME OMO] Cảnh báo nạp cookie: {e}{RESET}")
+    # BƯỚC 2: Thử kết nối DrissionPage qua CDP (Port 9222)
+    use_drission = False
+    page = None
+    if HAS_DRISSION_PAGE:
+        ok_cdp = False
+        for _ in range(3):
+            try:
+                req = urllib.request.Request("http://127.0.0.1:9222/json/version")
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    if resp.status == 200:
+                        ok_cdp = True
+                        break
+            except Exception:
+                time.sleep(0.5)
 
-    # Điều hướng tới trang cần giải
-    target_url = f"https://www.roblox.com/games/{place_id}" if place_id else "https://www.roblox.com/home"
-    add_log(f"[{tag}] {C}[CHROME OMO] Mở trang {target_url} tìm Captcha...{RESET}")
-    try:
-        page.get(target_url)
-        time.sleep(3.0)
-        
+        if not ok_cdp:
+            # Thử abstract socket bridge
+            code, out, _ = _run_root_capture("cat /proc/net/unix 2>/dev/null | grep devtools_remote", timeout=2)
+            if "devtools_remote" in out:
+                m = re.search(r'(@chrome_devtools_remote\w*)', out)
+                abs_name = m.group(1).lstrip('@') if m else "chrome_devtools_remote"
+                _start_abstract_socket_bridge(abs_name, port=9222)
+                time.sleep(1.0)
+                try:
+                    req = urllib.request.Request("http://127.0.0.1:9222/json/version")
+                    with urllib.request.urlopen(req, timeout=1.0) as resp:
+                        if resp.status == 200: ok_cdp = True
+                except Exception:
+                    pass
+
+        if ok_cdp:
+            try:
+                co = ChromiumOptions()
+                co.set_address("127.0.0.1:9222")
+                co.set_load_mode.eager()
+                page = ChromiumPage(co)
+                use_drission = True
+                add_log(f"[{tag}] {G}[CHROME OMO] Đã kết nối DrissionPage CDP 9222! Dùng Canvas JS.{RESET}")
+            except Exception as e:
+                add_log(f"[{tag}] {Y}[CHROME OMO] Không kết nối được DrissionPage: {e}{RESET}")
+
+    # BƯỚC 3: Nếu DrissionPage hoạt động, chạy OmoArkoseSolver qua CDP
+    if use_drission and page:
+        if cookie:
+            clean_c = _normalize_roblosecurity_cookie(cookie)
+            try:
+                page.set.cookies({'name': '.ROBLOSECURITY', 'value': clean_c, 'domain': '.roblox.com', 'path': '/'})
+            except Exception:
+                pass
+
+        solver = OmoArkoseSolver(client_key, log=lambda m: add_log(f"[{tag}] {m}"))
+        add_log(f"[{tag}] {C}[CHROME OMO] Đang quét iframe Arkose trên Chrome bằng Canvas JS...{RESET}")
+
         # Nếu ở trang game, thử click nút Play để trigger join-game challenge modal nếu chưa hiện
-        play_btn = page.ele('css:button.btn-common-play-game, button#game-play-button, button[class*="play-button"]', timeout=2)
-        if play_btn and play_btn.states.is_displayed:
-            add_log(f"[{tag}] {C}[CHROME OMO] Click nút Play trên web để kích hoạt popup Captcha...{RESET}")
-            play_btn.click()
-            time.sleep(3.0)
-    except Exception:
-        pass
-
-    solver = OmoArkoseSolver(client_key, log=lambda m: add_log(f"[{tag}] {m}"))
-    add_log(f"[{tag}] {G}[CHROME OMO] Bắt đầu quét iframe Arkose bằng Canvas JS + OMO API...{RESET}")
-
-    max_seconds = 120
-    t0 = time.time()
-    rounds_solved = 0
-    detected = False
-
-    while time.time() - t0 < max_seconds:
-        if stop_event and stop_event.is_set():
-            break
-
         try:
-            frames = page.get_frames()
-            has_arkose = any(
-                "arkoselabs" in (f.url or "").lower() or "funcaptcha" in (f.url or "").lower()
-                for f in frames if f.states.is_displayed
-            )
-            if has_arkose:
-                detected = True
-
-            if not has_arkose and rounds_solved > 0:
-                add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã hoàn thành giải Captcha qua {rounds_solved} vòng! Màn hình Captcha đã đóng.{RESET}")
-                try: safe_root("am force-stop com.android.chrome 2>/dev/null")
-                except: pass
-                return {"detected": True, "solved": True, "rounds": rounds_solved}
-
-            step_ok = solver.step(page, stop_event)
-            if step_ok:
-                rounds_solved += 1
-                time.sleep(2.5)
-            else:
-                time.sleep(1.5)
+            play_btn = page.ele('css:button.btn-common-play-game, button#game-play-button, button[class*="play-button"]', timeout=2)
+            if play_btn and play_btn.states.is_displayed:
+                add_log(f"[{tag}] {C}[CHROME OMO] Click nút Play trên web để kích hoạt popup Captcha...{RESET}")
+                play_btn.click()
+                time.sleep(3.0)
         except Exception:
-            time.sleep(2.0)
+            pass
 
-    try: safe_root("am force-stop com.android.chrome 2>/dev/null")
-    except: pass
-    return {"detected": detected, "solved": (rounds_solved > 0), "rounds": rounds_solved}
+        max_seconds = 120
+        t0 = time.time()
+        rounds_solved = 0
+        detected = False
+        while time.time() - t0 < max_seconds:
+            if stop_event and stop_event.is_set():
+                break
+            try:
+                frames = page.get_frames()
+                has_arkose = any(
+                    "arkoselabs" in (f.url or "").lower() or "funcaptcha" in (f.url or "").lower()
+                    for f in frames if f.states.is_displayed
+                )
+                if has_arkose:
+                    detected = True
+
+                if not has_arkose and rounds_solved > 0:
+                    add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã hoàn thành giải Captcha qua {rounds_solved} vòng!{RESET}")
+                    return {"detected": True, "solved": True, "rounds": rounds_solved}
+
+                step_ok = solver.step(page, stop_event)
+                if step_ok:
+                    rounds_solved += 1
+                    time.sleep(2.5)
+                else:
+                    time.sleep(1.5)
+            except Exception:
+                time.sleep(2.0)
+
+        if rounds_solved > 0:
+            return {"detected": True, "solved": True, "rounds": rounds_solved}
+
+    # BƯỚC 4: Fallback On-Screen Solver trên cửa sổ Chrome
+    # (Nếu Android không cho kết nối CDP port 9222, Chrome vẫn đang mở trên màn hình!)
+    add_log(f"[{tag}] {C}[CHROME OMO] Quét và giải trực tiếp trên màn hình Chrome...{RESET}")
+    res_scr = solve_arkose_in_app_with_omo(pkg=chrome_pkg, client_key=client_key, stop_event=stop_event)
+    if res_scr.get("solved"):
+        add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã giải xong Captcha trên màn hình Chrome!{RESET}")
+        return res_scr
+
+    return {"detected": False, "solved": False, "message": "Không phát hiện thấy iframe Captcha hoặc chưa bấm Play"}
 
 def capture_arkose_screen_image(tag="OMO"):
     """
@@ -3857,7 +4182,10 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
     tag = pkg[-12:] if pkg else "OMO_V1"
 
     if pkg and not is_pkg_in_foreground(pkg):
-        _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
+        if "chrome" in pkg.lower() or "browser" in pkg.lower():
+            _run_root_capture(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null", timeout=3)
+        else:
+            _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
         time.sleep(2.0)
 
     w, h = get_screen_resolution()
@@ -3874,9 +4202,12 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
         if stop_event and stop_event.is_set():
             break
 
-        # Đảm bảo app Roblox vẫn ở Foreground
+        # Đảm bảo app Roblox hoặc trình duyệt vẫn ở Foreground
         if pkg and not is_pkg_in_foreground(pkg):
-            _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
+            if "chrome" in pkg.lower() or "browser" in pkg.lower():
+                _run_root_capture(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null", timeout=3)
+            else:
+                _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
             time.sleep(2.0)
 
         # Quét màn hình: ở vòng 1 cho phép đợi tối đa 3 lần dump nếu dialog đang render
@@ -4321,15 +4652,33 @@ def account_captcha_check_menu():
             if not test_c:
                 fix_tty()
                 test_c = safe_input(f"{M}Nhập Cookie .ROBLOSECURITY để nạp vào Chrome (hoặc Enter để quét tự động): {RESET}").strip()
+            if not test_c:
+                print(f"{Y}[*] Đang tự động quét Cookie từ các package Roblox trên máy...{RESET}")
+                all_pkgs = scan_packages()
+                for p in all_pkgs:
+                    sc = extract_roblox_cookie(p)
+                    if sc:
+                        test_c = sc
+                        print(f"{G}[✓] Đã tìm thấy tài khoản từ package: {p}{RESET}")
+                        break
+            if not test_c:
+                print(f"{R}[!] Không tìm thấy tài khoản nào có Cookie trên thiết bị!{RESET}")
+                print(f"{Y}[i] Vui lòng nhập Cookie bằng tay hoặc đăng nhập 1 acc Roblox trước.{RESET}")
+                fix_tty()
+                test_c = safe_input(f"{M}Nhập Cookie ngay (Enter để hủy): {RESET}").strip()
+                if not test_c:
+                    time.sleep(1.5)
+                    continue
+
             pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
-            print(f"{Y}[*] Đang khởi động Google Chrome và kích hoạt OmoArkoseSolver (CDP Port 9222)...{RESET}")
+            print(f"\n{Y}[*] Đang khởi động Google Chrome và nạp tài khoản Roblox...{RESET}")
             c_res = solve_arkose_with_chrome_omo(test_c, place_id=pid, client_key=OMOCAPTCHA_KEY)
             if c_res.get("solved"):
                 print(f"\n{G}[✓] ĐÃ GIẢI XONG THÀNH CÔNG CAPTCHA V1 TRÊN GOOGLE CHROME! (Số vòng: {c_res.get('rounds', 1)}){RESET}")
             elif c_res.get("detected"):
                 print(f"\n{Y}[!] Đã phát hiện giao diện Arkose trên Chrome nhưng chưa giải xong. Thử chạy lại!{RESET}")
             else:
-                print(f"\n{C}[i] Không phát hiện thấy iframe Arkose FunCaptcha trên Chrome (hoặc đã đóng).{RESET}")
+                print(f"\n{C}[i] {c_res.get('message', 'Không phát hiện thấy iframe Arkose FunCaptcha trên Chrome.')}{RESET}")
             fix_tty()
             print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
             try: input()
