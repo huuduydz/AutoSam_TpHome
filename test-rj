@@ -274,7 +274,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.4{RESET} | {C}Web UI: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.5{RESET} | {C}Web UI: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -1596,6 +1596,23 @@ def is_app_running(pkg):
 def _is_pkg_active(pkg):
     """Kiểm tra pkg đang hoạt động (đồng bộ hoàn toàn với is_app_running)."""
     return is_app_running(pkg)
+
+def is_pkg_in_foreground(pkg):
+    """Kiểm tra package có đang ở Foreground (cửa sổ nổi bật nhất trên màn hình) hay không."""
+    if not pkg:
+        return False
+    try:
+        cmd = "su -c 'dumpsys window 2>/dev/null | grep -E \"mCurrentFocus|mFocusedApp\"'"
+        out = subprocess.check_output(cmd, shell=True, text=True, timeout=2, stderr=subprocess.DEVNULL)
+        if pkg in out:
+            return True
+        cmd2 = "su -c 'dumpsys activity activities 2>/dev/null | grep -E \"mResumedActivity|topResumedActivity\"'"
+        out2 = subprocess.check_output(cmd2, shell=True, text=True, timeout=2, stderr=subprocess.DEVNULL)
+        if pkg in out2:
+            return True
+    except:
+        pass
+    return False
 
 def _kill_pkg(pkg):
     """Kill process của pkg — kill -9 PID trước, fallback am force-stop."""
@@ -3500,7 +3517,7 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
 
     tag = pkg[-12:] if pkg else "OMO_V1"
 
-    if pkg and not is_app_running(pkg):
+    if pkg and not is_pkg_in_foreground(pkg):
         _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
         time.sleep(2.0)
 
@@ -3510,24 +3527,37 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
     total_rounds_solved = 0
     max_rounds = 10
 
+    keywords_verify = ["xác minh", "verify", "bắt đầu câu đố", "start puzzle", "bắt đầu", "authenticate", "descriptionverify", "home_children_button"]
+    keywords_match = ["sử dụng mũi tên", "use the arrows", "rotate", "arrow", "xoay", "hướng", "direction", "pick the", "chọn hình", "match the", "bàn tay", "con vật", "animal", "hand", "pair", "matching"]
+    keywords_submit = ["gửi", "submit", "hoàn thành", "done", "tiếp tục", "continue"]
+
     for round_num in range(1, max_rounds + 1):
         if stop_event and stop_event.is_set():
             break
 
-        _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
-        code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
-        _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
+        # Đảm bảo app Roblox vẫn ở Foreground
+        if pkg and not is_pkg_in_foreground(pkg):
+            _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
+            time.sleep(2.0)
 
-        if code != 0 or not xml_str:
-            time.sleep(1.5)
-            continue
+        # Quét màn hình: ở vòng 1 cho phép đợi tối đa 3 lần dump nếu dialog đang render
+        has_arkose = False
+        xml_str = ""
+        max_dumps = 3 if round_num == 1 else 1
+        for dump_try in range(max_dumps):
+            _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
+            code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
+            _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
 
-        xml_lower = xml_str.lower()
-        keywords_verify = ["xác minh", "verify", "bắt đầu câu đố", "start puzzle", "bắt đầu", "authenticate", "descriptionverify", "home_children_button"]
-        keywords_match = ["sử dụng mũi tên", "use the arrows", "rotate", "arrow", "xoay", "hướng", "direction", "pick the", "chọn hình", "match the", "bàn tay", "con vật", "animal", "hand", "pair", "matching"]
-        keywords_submit = ["gửi", "submit", "hoàn thành", "done", "tiếp tục", "continue"]
+            if code == 0 and xml_str:
+                xml_lower = xml_str.lower()
+                has_arkose = any(k in xml_lower for k in keywords_verify + keywords_match + ["arkoselabs", "funcaptcha"])
+                if has_arkose:
+                    break
 
-        has_arkose = any(k in xml_lower for k in keywords_verify + keywords_match + ["arkoselabs", "funcaptcha"])
+            if dump_try < max_dumps - 1:
+                time.sleep(2.0)
+
         if not has_arkose:
             if total_rounds_solved > 0:
                 add_log(f"[{tag}] {G}[✓ OMO THÀNH CÔNG] Đã giải qua {total_rounds_solved} vòng! Màn hình Captcha đã đóng.{RESET}")
@@ -3824,14 +3854,17 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
             add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail} (Lua vẫn gửi heartbeat){RESET}")
             add_log(f"[{pkg[-12:]}] {C}[CAPTCHA V2 IN-APP] Kích hoạt chế độ giải Nhấn và Giữ...{RESET}")
 
-        # Chỉ mở game nếu app chưa chạy, KHÔNG kill app khi đang chuẩn bị giải
-        if not is_app_running(pkg):
-            launch_roblox_to_game(pkg)
+        # BẬT APP VÀ BẮN VÀO GAME ĐỂ HIỂN THỊ BẢNG CAPTCHA LÊN MÀN HÌNH (CHỈ 1 LẦN KHI BẮT ĐẦU GIẢI)
+        add_log(f"[{pkg[-12:]}] {C}[CAPTCHA] Bật app Roblox và mở game để hiển thị bảng Captcha...{RESET}")
+        launch_roblox_to_game(pkg)
+        state['captcha_app_launched'] = True
+        state['last_captcha_app_launch'] = current_time
         return True
     elif status == 'OK':
         if state.get('is_blocked') or state.get('handling_captcha_solve'):
             state['is_blocked'] = False
             state['handling_captcha_solve'] = False
+            state['captcha_app_launched'] = False
             state['block_reason'] = ''
             u_name = res.get('username') or state.get('bound_name') or 'Acc'
             add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] Acc {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
@@ -4007,6 +4040,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             state['block_reason'] = ''
                             state['account_status'] = 'OK'
                             state['captcha_miss_count'] = 0
+                            state['captcha_app_launched'] = False
                             with pkg_restart_locks[pkg]:
                                 force_restart_app(pkg, states, current_time, "Đã Giải Xong -> Rejoin", G)
                             last_ok_ping[pkg] = current_time
@@ -4015,10 +4049,30 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     except Exception:
                         pass
 
-                # Đảm bảo app đang chạy và đang load vào game
+                # Đảm bảo app Roblox đã được bật và đưa lên màn hình
+                last_launch = state.get('last_captcha_app_launch', 0)
                 if not is_app_running(pkg):
+                    add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA] App chưa chạy, đang bật lại Roblox vào game...{RESET}")
                     launch_roblox_to_game(pkg)
-                    time.sleep(2)
+                    state['last_captcha_app_launch'] = current_time
+                    state['captcha_app_launched'] = True
+                    stop_event.wait(5)
+                elif not state.get('captcha_app_launched'):
+                    add_log(f"[{pkg[-12:]}] {C}[CAPTCHA] Bật app Roblox và mở game để hiển thị bảng Captcha...{RESET}")
+                    launch_roblox_to_game(pkg)
+                    state['captcha_app_launched'] = True
+                    state['last_captcha_app_launch'] = current_time
+                    stop_event.wait(5)
+                elif not is_pkg_in_foreground(pkg):
+                    # Nếu app đang chạy nhưng bị Termux che: đưa Roblox lên foreground (không reload game)
+                    _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
+                    time.sleep(2.0)
+                elif (current_time - last_launch >= 35) and not state.get('in_game') and solve_elapsed < 80:
+                    # Nếu đã quá 35s mà chưa vào được game/chưa hiện captcha: thử bắn lại vào game 1 lần
+                    add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA] Đang bắn lại vào game để kích hoạt bảng Captcha...{RESET}")
+                    launch_roblox_to_game(pkg)
+                    state['last_captcha_app_launch'] = current_time
+                    stop_event.wait(5)
 
                 # 2. XỬ LÝ THEO LOẠI CAPTCHA:
                 # Nếu là Captcha V1 (Arkose FunCaptcha): Dùng OMOCaptcha API in-app
@@ -4033,11 +4087,16 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                         state['last_acc_check'] = current_time
                         state['rejoin_time'] = current_time
                         state['warmup_until'] = current_time + 45
+                        state['captcha_app_launched'] = False
                         with pkg_restart_locks[pkg]:
                             force_restart_app(pkg, states, current_time, "OMO V1 Xong -> Rejoin", G)
                         last_ok_ping[pkg] = current_time
                         stop_event.wait(5)
                         continue
+                    elif not omo_res.get("detected"):
+                        if current_time - state.get('last_omo_wait_log', 0) >= 20:
+                            state['last_omo_wait_log'] = current_time
+                            add_log(f"[{pkg[-12:]}] {C}[OMO V1] Đang chờ bảng câu đố Arkose hiển thị trên màn hình...{RESET}")
                 else:
                     # Captcha V2: Thử Nhấn và Giữ
                     current_attempt = state.get('captcha_miss_count', 0) + 1
@@ -4080,8 +4139,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 bound_curr = state.get('bound_name')
                 hb_curr = get_heartbeat(bound_curr, pkg) if bound_curr else -1
                 if state.get('in_game') or (hb_curr != -1 and current_time - hb_curr <= 120):
-                    add_log(f"[{pkg[-12:]}] {G}[✓] Phát hiện tài khoản đã vào game thành công (vượt qua CaptchaV2)!{RESET}")
+                    add_log(f"[{pkg[-12:]}] {G}[✓] Phát hiện tài khoản đã vào game thành công (vượt qua Captcha)!{RESET}")
                     state['handling_captcha_solve'] = False
+                    state['captcha_app_launched'] = False
                     state['is_blocked'] = False
                     state['block_reason'] = ''
                     state['account_status'] = 'OK'
@@ -4092,10 +4152,12 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
                 # Nếu hết 90s mà không giải được
                 if solve_elapsed >= 90:
-                    add_log(f"[{pkg[-12:]}] {R}[!] Hết 90s chờ bảng 'Nhấn và Giữ'. Tạm dừng để tránh treo máy.{RESET}")
+                    c_name = "Captcha V1 (Arkose OMO)" if state.get('captcha_type') == 'CAPTCHA_V1' else "Captcha V2 (Nhấn và Giữ)"
+                    add_log(f"[{pkg[-12:]}] {R}[!] Hết 90s giải {c_name}. Tạm dừng để tránh treo máy.{RESET}")
                     state['handling_captcha_solve'] = False
+                    state['captcha_app_launched'] = False
                     state['is_blocked'] = True
-                    state['block_reason'] = "Dính CaptchaV2 (Chờ Giải)"
+                    state['block_reason'] = f"Dính {c_name}"
                     state['last_acc_check'] = current_time
                     _kill_pkg(pkg)
 
