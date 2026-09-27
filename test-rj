@@ -1,4 +1,4 @@
-import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json, base64, html, socket, http.server, io, random, hashlib
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json, base64, io, random, hashlib
 from collections import deque
 import urllib.request, urllib.error
 from datetime import datetime
@@ -92,49 +92,15 @@ def safe_root(cmd, timeout=15):
 
 
 system_logs = []
-web_logs_buffer = deque(maxlen=300)
-
-def ansi_to_html(text):
-    text = html.escape(text)
-    colors = {
-        '96': '#00e5ff', # Cyan
-        '92': '#00ff88', # Green
-        '93': '#ffd700', # Yellow
-        '91': '#ff4757', # Red
-        '95': '#e056fd', # Magenta
-        '97': '#ffffff', # White
-        '0': None        # Reset
-    }
-    def repl(m):
-        code = m.group(1)
-        if code == '0' or code not in colors or colors[code] is None:
-            return '</span>'
-        return f'<span style="color:{colors[code]};font-weight:600">'
-    res = re.sub(r'\x1b\[(\d+)m', repl, text)
-    open_spans = res.count('<span') - res.count('</span>')
-    if open_spans > 0:
-        res += '</span>' * open_spans
-    return res
 
 def add_log(msg):
-    global system_logs, web_logs_buffer
+    global system_logs
     import time
     t_str = time.strftime("%H:%M:%S")
     formatted = f"[{t_str}] {msg}"
     system_logs.append(formatted)
     if len(system_logs) > 8:
         system_logs.pop(0)
-
-    try:
-        html_entry = ansi_to_html(formatted)
-        plain_entry = re.sub(r'\x1b\[\d+m', '', formatted)
-        web_logs_buffer.append({
-            'time': t_str,
-            'html': html_entry,
-            'plain': plain_entry
-        })
-    except Exception:
-        pass
 
 def clear_screen():
     fix_tty()
@@ -180,10 +146,66 @@ AUTO_CHECK_ACC_HEALTH = "Enable"
 MANDATORY_COOKIE_CHECK_INTERVAL = 60  # Bắt buộc check Cookie mỗi 60s kể cả khi Lua gửi heartbeat
 CHECK_ACC_TIME_BLOCKED = 60           # Chu kỳ check lại khi acc bị dính Captcha/Not-Approved (giây)
 CHECK_ACC_TIME_NORMAL = 180           # Chu kỳ check định kỳ khi acc đang farm bình thường (giây)
-WEB_LOG_PORT = 8080                   # Cổng Web UI Log chạy ngoài Termux
-global_live_states = {}               # Trạng thái dùng chung cho Web UI và dashboard
-_web_server_instance = None
 OMOCAPTCHA_KEY = ""
+
+# =====================================================================
+# CẤU HÌNH SCRIPT AUTO INJECT (BẠN CÓ THỂ THAY ĐỔI LINK SCRIPT DƯỚI ĐÂY)
+# =====================================================================
+# Script được chọn ở mục 2 sẽ tự động inject vào thư mục autoexec của executor (Delta/Fluxus...)
+AUTO_INJECT_SCRIPTS = {
+    "1": {
+        "name": "Hop Fin_Tail",
+        "url": "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hihi",  # <-- [1] THAY LINK SCRIPT HOP FIN_TAIL TẠI ĐÂY
+        "desc": "Script Hop Server Fin_Tail"
+    },
+    "2": {
+        "name": "Hop_Tear",
+        "url": "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/Tear",  # <-- [2] THAY LINK SCRIPT HOP_TEAR TẠI ĐÂY
+        "desc": "Script Hop Server Tear"
+    },
+    "3": {
+        "name": "Main_KingLegacy",
+        "url": "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/king_legacy.lua",  # <-- [3] THAY LINK SCRIPT MAIN_KINGLEGACY TẠI ĐÂY
+        "desc": "Script Main KingLegacy Farm"
+    },
+}
+SELECTED_SCRIPT_KEY = "1"  # Mặc định chọn script số 1: Hop Fin_Tail
+CUSTOM_SCRIPT_URL = ""
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hudy_config.json")
+
+def load_settings():
+    global target_place_id, kill_all_time, CHECK_ACC_TIME_BLOCKED, SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                target_place_id = str(data.get("target_place_id", target_place_id))
+                kill_all_time = int(data.get("kill_all_time", kill_all_time))
+                CHECK_ACC_TIME_BLOCKED = int(data.get("check_acc_time_blocked", CHECK_ACC_TIME_BLOCKED))
+                SELECTED_SCRIPT_KEY = str(data.get("selected_script_key", "1"))
+                if not SELECTED_SCRIPT_KEY or (SELECTED_SCRIPT_KEY not in AUTO_INJECT_SCRIPTS and SELECTED_SCRIPT_KEY not in ["custom", "0"]):
+                    SELECTED_SCRIPT_KEY = "1"
+                CUSTOM_SCRIPT_URL = str(data.get("custom_script_url", CUSTOM_SCRIPT_URL))
+        else:
+            SELECTED_SCRIPT_KEY = "1"
+    except:
+        SELECTED_SCRIPT_KEY = "1"
+
+def save_settings():
+    try:
+        data = {
+            "target_place_id": target_place_id,
+            "kill_all_time": kill_all_time,
+            "check_acc_time_blocked": CHECK_ACC_TIME_BLOCKED,
+            "selected_script_key": SELECTED_SCRIPT_KEY,
+            "custom_script_url": CUSTOM_SCRIPT_URL,
+        }
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+    except:
+        pass
+
+load_settings()
 
 def load_omocaptcha_key():
     global OMOCAPTCHA_KEY
@@ -274,7 +296,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.5{RESET} | {C}Web UI: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.5{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -287,9 +309,10 @@ def print_dashboard(states):
     print(f"{C}Change accounts custom: {Y}{CHANGE_ACCOUNTS_CUSTOM}{RESET}")
     print(f"{C}Check UI time: {Y}{CHECK_UI_TIME}{RESET}")
     print(f"{C}Auto check Acc / Cookie: {G}{AUTO_CHECK_ACC_HEALTH}{RESET} ({Y}Bắt buộc mỗi {MANDATORY_COOKIE_CHECK_INTERVAL}s{RESET})")
-    print(f"{C}Web UI Log Ngoài Termux: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
     print(f"{C}Auto block: {Y}{AUTO_BLOCK}{RESET}")
     print(f"{C}Auto restore Delta Key: {Y}{AUTO_RESTORE_DELTA_KEY}{RESET}")
+    cur_sc_name = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom URL" if SELECTED_SCRIPT_KEY == "custom" else "Disabled")
+    print(f"{C}Auto inject script: {G}{cur_sc_name}{RESET}")
     print("-" * 65)
     print(f"{C}{'Package':<20} | {'Username':<16} | {'Status':<25}{RESET}")
     print("-" * 65)
@@ -312,855 +335,154 @@ def print_dashboard(states):
             print(log)
 
 # =====================================================================
-# WEB UI LOG SERVER (HIỂN THỊ LOG TRỰC QUAN NGOÀI TERMUX)
+# CÀI ĐẶT & AUTO INJECT SCRIPT
 # =====================================================================
-HTML_PAGE = """<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HuDy Tool Rejoin - Live Web UI</title>
-    <style>
-        :root {
-            --bg-primary: #0a0e17;
-            --bg-card: rgba(18, 24, 38, 0.85);
-            --border-color: rgba(255, 255, 255, 0.08);
-            --accent-cyan: #00e5ff;
-            --accent-green: #00ff88;
-            --accent-yellow: #ffd700;
-            --accent-red: #ff4757;
-            --accent-purple: #a855f7;
-            --text-main: #f1f5f9;
-            --text-muted: #94a3b8;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-main);
-            min-height: 100vh;
-            padding: 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-        .header {
-            background: var(--bg-card);
-            backdrop-filter: blur(10px);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 12px 16px;
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
-        }
-        .title-group { display: flex; align-items: center; gap: 10px; }
-        .logo-badge {
-            background: linear-gradient(135deg, #00e5ff, #3b82f6);
-            color: #000;
-            font-weight: 800;
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 14px;
-            letter-spacing: 1px;
-        }
-        .status-dot {
-            width: 10px; height: 10px;
-            background: var(--accent-green);
-            border-radius: 50%;
-            display: inline-block;
-            box-shadow: 0 0 10px var(--accent-green);
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
-        .metrics { display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap; }
-        .metric-badge {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid var(--border-color);
-            padding: 4px 10px;
-            border-radius: 6px;
-        }
-        .metric-val { font-weight: bold; color: var(--accent-cyan); }
-        .packages-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 12px;
-        }
-        .pkg-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 14px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            position: relative;
-            overflow: hidden;
-            transition: transform 0.2s, border-color 0.2s;
-        }
-        .pkg-card:hover {
-            border-color: rgba(0, 229, 255, 0.4);
-            transform: translateY(-2px);
-        }
-        .pkg-header { display: flex; justify-content: space-between; align-items: center; }
-        .pkg-name { font-weight: 700; font-size: 14px; color: #fff; }
-        .acc-name { font-size: 13px; color: var(--accent-cyan); font-weight: 600; }
-        .badge {
-            font-size: 11px;
-            font-weight: 700;
-            padding: 3px 8px;
-            border-radius: 20px;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .badge-green { background: rgba(0, 255, 136, 0.15); color: var(--accent-green); border: 1px solid var(--accent-green); }
-        .badge-yellow { background: rgba(255, 215, 0, 0.15); color: var(--accent-yellow); border: 1px solid var(--accent-yellow); }
-        .badge-red { background: rgba(255, 71, 87, 0.15); color: var(--accent-red); border: 1px solid var(--accent-red); }
-        .badge-cyan { background: rgba(0, 229, 255, 0.15); color: var(--accent-cyan); border: 1px solid var(--accent-cyan); }
-        .status-text { font-size: 13px; font-weight: 600; }
-        .pkg-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; font-size: 11px; color: var(--text-muted); }
-        .btn-mini {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid var(--border-color);
-            color: var(--text-main);
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 11px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .btn-mini:hover { background: var(--accent-cyan); color: #000; }
-        .log-section {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            min-height: 380px;
-            overflow: hidden;
-        }
-        .log-header {
-            padding: 10px 14px;
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-            gap: 8px;
-            background: rgba(0,0,0,0.2);
-        }
-        .log-title { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; }
-        .log-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .search-box {
-            background: rgba(255,255,255,0.06);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            padding: 4px 8px;
-            color: #fff;
-            font-size: 12px;
-            outline: none;
-            width: 140px;
-        }
-        .search-box:focus { border-color: var(--accent-cyan); }
-        .log-console {
-            background: #06090e;
-            color: #cbd5e1;
-            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-            font-size: 12px;
-            line-height: 1.6;
-            padding: 12px;
-            flex: 1;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            word-break: break-all;
-            max-height: 480px;
-        }
-        .log-entry { margin-bottom: 2px; }
-        .log-entry:hover { background: rgba(255,255,255,0.03); }
-        .filter-btn {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-muted);
-            padding: 2px 7px;
-            border-radius: 4px;
-            font-size: 11px;
-            cursor: pointer;
-        }
-        .filter-btn.active {
-            background: var(--accent-cyan);
-            color: #000;
-            border-color: var(--accent-cyan);
-            font-weight: bold;
-        }
-        .toggle-label { font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-muted); }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div class="title-group">
-            <span class="logo-badge">HUDY REJOIN</span>
-            <div style="display:flex; align-items:center; gap:6px;">
-                <span class="status-dot"></span>
-                <span style="font-weight:700; font-size:14px;">LIVE MONITOR</span>
-            </div>
-        </div>
-        <div class="metrics">
-            <div class="metric-badge">CPU: <span class="metric-val" id="cpu-val">--</span></div>
-            <div class="metric-badge">RAM: <span class="metric-val" id="ram-val">--</span></div>
-            <div class="metric-badge">Auto-Check Cookie: <span class="metric-val" style="color:var(--accent-green)">60s</span></div>
-            <div class="metric-badge">Time: <span class="metric-val" id="time-val">--</span></div>
-        </div>
-    </div>
-
-    <div class="packages-grid" id="packages-grid">
-        <div class="pkg-card" style="text-align:center; padding: 24px; color: var(--text-muted);">
-            Đang tải dữ liệu Roblox Packages...
-        </div>
-    </div>
-
-    <div class="log-section">
-        <div class="log-header">
-            <div class="log-title">
-                <span>SYSTEM LOGS CONSOLE</span>
-                <span id="log-count" style="font-size:11px; color:var(--text-muted); font-weight:normal;">(0 logs)</span>
-            </div>
-            <div class="log-controls">
-                <input type="text" id="log-search" class="search-box" placeholder="Tìm kiếm log..." oninput="renderLogs()">
-                <button class="filter-btn active" onclick="setFilter('ALL', this)">Tất cả</button>
-                <button class="filter-btn" onclick="setFilter('CAPTCHA', this)">Captcha</button>
-                <button class="filter-btn" onclick="setFilter('REJOIN', this)">Rejoin</button>
-                <button class="filter-btn" onclick="setFilter('OMO', this)">OMO</button>
-                <label class="toggle-label">
-                    <input type="checkbox" id="auto-scroll" checked> Auto Scroll
-                </label>
-                <button class="btn-mini" onclick="clearLogsUI()">Xóa Log</button>
-                <button class="btn-mini" onclick="copyLogs()">Copy</button>
-            </div>
-        </div>
-        <div class="log-console" id="log-console"></div>
-    </div>
-
-    <script>
-        let rawLogs = [];
-        let currentFilter = 'ALL';
-
-        function setFilter(type, btn) {
-            currentFilter = type;
-            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            renderLogs();
-        }
-
-        function clearLogsUI() {
-            fetch('/api/action', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({action: 'clear_logs'})
-            }).then(() => {
-                rawLogs = [];
-                renderLogs();
-            });
-        }
-
-        function copyLogs() {
-            const text = rawLogs.map(l => l.plain || l.html).join('\n');
-            navigator.clipboard.writeText(text).then(() => alert('Đã sao chép toàn bộ logs vào Clipboard!'));
-        }
-
-        function renderLogs() {
-            const container = document.getElementById('log-console');
-            const search = document.getElementById('log-search').value.toLowerCase();
-            const autoScroll = document.getElementById('auto-scroll').checked;
-
-            let filtered = rawLogs.filter(item => {
-                const plain = (item.plain || '').toLowerCase();
-                if (search && !plain.includes(search)) return false;
-                if (currentFilter === 'CAPTCHA') return plain.includes('captcha') || plain.includes('giữ nút') || plain.includes('bảo mật');
-                if (currentFilter === 'REJOIN') return plain.includes('rejoin') || plain.includes('restart');
-                if (currentFilter === 'OMO') return plain.includes('omo');
-                return true;
-            });
-
-            document.getElementById('log-count').innerText = `(${filtered.length} logs)`;
-
-            let htmlStr = '';
-            for (let item of filtered) {
-                htmlStr += `<div class="log-entry">${item.html}</div>`;
-            }
-            container.innerHTML = htmlStr || '<div style="color:#64748b; padding:10px;">Chưa có log phù hợp...</div>';
-
-            if (autoScroll) {
-                container.scrollTop = container.scrollHeight;
-            }
-        }
-
-        function renderPackages(packages) {
-            const grid = document.getElementById('packages-grid');
-            if (!packages || packages.length === 0) {
-                grid.innerHTML = '<div class="pkg-card" style="grid-column: 1/-1; text-align:center; color: var(--text-muted);">Chưa có package nào đang chạy Auto Rejoin.</div>';
-                return;
-            }
-
-            let html = '';
-            for (let p of packages) {
-                let badgeClass = 'badge-cyan';
-                let col = p.color_name || 'cyan';
-                if (col === 'green' || p.in_game) badgeClass = 'badge-green';
-                else if (col === 'red' || p.is_blocked) badgeClass = 'badge-red';
-                else if (col === 'yellow') badgeClass = 'badge-yellow';
-
-                html += `
-                <div class="pkg-card">
-                    <div class="pkg-header">
-                        <span class="pkg-name">${p.pkg_short}</span>
-                        <span class="badge ${badgeClass}">${p.status_badge || 'ACTIVE'}</span>
-                    </div>
-                    <div class="acc-name">Acc: ${p.name || 'Đang bind...'}</div>
-                    <div class="status-text" style="color: ${p.hex_color || '#fff'}">${p.text}</div>
-                    <div class="pkg-footer">
-                        <span>Check: ${p.last_check_ago || '--'}</span>
-                        <div style="display:flex; gap:4px;">
-                            <button class="btn-mini" onclick="triggerAction('check_cookie', '${p.pkg}')">Check Cookie</button>
-                            <button class="btn-mini" onclick="triggerAction('rejoin', '${p.pkg}')">Rejoin</button>
-                        </div>
-                    </div>
-                </div>
-                `;
-            }
-            grid.innerHTML = html;
-        }
-
-        function triggerAction(action, pkg) {
-            fetch('/api/action', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({action: action, pkg: pkg})
-            }).then(r => r.json()).then(res => {
-                alert(`Đã gửi yêu cầu [${action}] cho ${pkg.slice(-12)}!`);
-            });
-        }
-
-        function fetchData() {
-            fetch('/api/data')
-                .then(r => r.json())
-                .then(data => {
-                    document.getElementById('cpu-val').innerText = data.cpu || 'N/A';
-                    document.getElementById('ram-val').innerText = data.ram || 'N/A';
-                    document.getElementById('time-val').innerText = data.time || '--:--:--';
-                    rawLogs = data.logs || [];
-                    renderLogs();
-                    renderPackages(data.packages || []);
-                })
-                .catch(err => {
-                    console.log("Fetch error:", err);
-                });
-        }
-
-        fetchData();
-        setInterval(fetchData, 1500);
-    </script>
-</body>
-</html>
-"""
-
-HTML_HUD_WIDGET = """<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HuDy Floating HUD</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-        body {
-            background: transparent;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            color: #f1f2f6;
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
-            padding: 6px;
-        }
-        .hud-card {
-            width: 100%;
-            max-width: 420px;
-            background: rgba(13, 17, 23, 0.88);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(0, 255, 136, 0.4);
-            border-radius: 12px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
-            padding: 10px 12px;
-            font-size: 12px;
-        }
-        .hud-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            padding-bottom: 6px;
-            margin-bottom: 8px;
-        }
-        .hud-title {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-weight: bold;
-            font-size: 13px;
-            color: #00ff88;
-        }
-        .pulse-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #00ff88;
-            box-shadow: 0 0 8px #00ff88;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.4; transform: scale(0.85); }
-            100% { opacity: 1; transform: scale(1); }
-        }
-        .hud-meta {
-            font-size: 11px;
-            color: #8b949e;
-        }
-        .pkg-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 6px;
-            padding: 5px 8px;
-            margin-bottom: 5px;
-            border-left: 3px solid #00ff88;
-        }
-        .pkg-row.blocked { border-left-color: #ff4757; }
-        .pkg-row.captcha { border-left-color: #eccc68; }
-        .pkg-name { font-weight: 600; color: #fff; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .pkg-status { font-size: 11px; color: #a4b0be; }
-        .badge {
-            font-size: 10px;
-            font-weight: bold;
-            padding: 2px 6px;
-            border-radius: 4px;
-        }
-        .badge-farm { background: rgba(0, 255, 136, 0.2); color: #00ff88; }
-        .badge-block { background: rgba(255, 71, 87, 0.2); color: #ff4757; }
-        .badge-wait { background: rgba(236, 204, 104, 0.2); color: #eccc68; }
-        .hud-logs {
-            margin-top: 6px;
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-            padding-top: 6px;
-            font-family: monospace;
-            font-size: 11px;
-            color: #ced6e0;
-            max-height: 48px;
-            overflow: hidden;
-        }
-        .log-line {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            margin-bottom: 2px;
-        }
-    </style>
-</head>
-<body>
-    <div class="hud-card" id="hud-card">
-        <div class="hud-header">
-            <div class="hud-title">
-                <div class="pulse-dot"></div>
-                <span>HuDy HUD</span>
-            </div>
-            <div class="hud-meta">
-                <span id="h-cpu">CPU: --</span> | <span id="h-ram">RAM: --</span> | <span id="h-time">--:--:--</span>
-            </div>
-        </div>
-        <div id="hud-pkgs">
-            <div style="color: #888; text-align: center; padding: 6px;">Đang nạp trạng thái...</div>
-        </div>
-        <div class="hud-logs" id="hud-logs">
-            <div class="log-line" style="color: #888;">• Đang theo dõi tiến trình...</div>
-        </div>
-    </div>
-
-    <script>
-        function updateHUD() {
-            fetch('/api/data')
-                .then(r => r.json())
-                .then(data => {
-                    document.getElementById('h-cpu').innerText = 'CPU ' + (data.cpu || 'N/A');
-                    document.getElementById('h-ram').innerText = data.ram || 'N/A';
-                    document.getElementById('h-time').innerText = data.time || '--:--:--';
-
-                    let pkgs = data.packages || [];
-                    let p_html = '';
-                    if (pkgs.length === 0) {
-                        p_html = '<div style="color: #eccc68; text-align: center; padding: 4px;">Chưa chạy Auto Rejoin (Menu [3])</div>';
-                    } else {
-                        pkgs.forEach(p => {
-                            let cls = p.is_blocked ? 'blocked' : (p.text.toLowerCase().includes('captcha') ? 'captcha' : '');
-                            let b_cls = p.in_game ? 'badge-farm' : (p.is_blocked ? 'badge-block' : 'badge-wait');
-                            p_html += `
-                                <div class="pkg-row ${cls}">
-                                    <div>
-                                        <div class="pkg-name">${p.name || p.pkg_short}</div>
-                                        <div class="pkg-status">${p.text}</div>
-                                    </div>
-                                    <span class="badge ${b_cls}">${p.status_badge || 'ACTIVE'}</span>
-                                </div>
-                            `;
-                        });
-                    }
-                    document.getElementById('hud-pkgs').innerHTML = p_html;
-
-                    let logs = data.logs || [];
-                    let l_html = '';
-                    let recent = logs.slice(-2);
-                    recent.forEach(l => {
-                        let txt = l.plain || '';
-                        l_html += `<div class="log-line">• ${txt}</div>`;
-                    });
-                    if (l_html) {
-                        document.getElementById('hud-logs').innerHTML = l_html;
-                    }
-                })
-                .catch(() => {});
-        }
-        updateHUD();
-        setInterval(updateHUD, 1200);
-    </script>
-</body>
-</html>
-"""
-
-class WebLogHandler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        pass  # Không in log HTTP ra console để tránh spam terminal
-
-    def do_GET(self):
-        if self.path == '/' or self.path.startswith('/index'):
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(HTML_PAGE.encode('utf-8'))
-        elif self.path == '/hud' or self.path.startswith('/hud'):
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(HTML_HUD_WIDGET.encode('utf-8'))
-        elif self.path.startswith('/api/data'):
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-
-            now = time.time()
-            pkg_list = []
-            for pkg, st in global_live_states.items():
-                col_hex = '#00ff88' if st.get('color') == G else ('#ff4757' if st.get('color') == R else '#ffd700')
-                col_name = 'green' if st.get('color') == G else ('red' if st.get('color') == R else 'yellow')
-                last_chk = int(now - st.get('last_acc_check', now))
-                pkg_list.append({
-                    'pkg': pkg,
-                    'pkg_short': pkg[-16:] if len(pkg) > 16 else pkg,
-                    'name': st.get('display_name', 'N/A'),
-                    'text': st.get('text', 'Chờ...'),
-                    'hex_color': col_hex,
-                    'color_name': col_name,
-                    'in_game': st.get('in_game', False),
-                    'is_blocked': st.get('is_blocked', False),
-                    'status_badge': 'FARMING' if st.get('in_game') else ('BLOCKED' if st.get('is_blocked') else 'RUNNING'),
-                    'last_check_ago': f"{last_chk}s trước"
-                })
-
-            data = {
-                'cpu': get_cpu_usage(),
-                'ram': get_memory_usage(),
-                'time': time.strftime("%H:%M:%S"),
-                'packages': pkg_list,
-                'logs': list(web_logs_buffer)
-            }
-            self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def do_POST(self):
-        if self.path == '/api/action':
-            length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(length).decode('utf-8') if length > 0 else '{}'
-            try:
-                req = json.loads(body)
-                act = req.get('action')
-                target_p = req.get('pkg')
-                if act == 'clear_logs':
-                    web_logs_buffer.clear()
-                elif act == 'rejoin' and target_p and target_p in global_live_states:
-                    now = time.time()
-                    with pkg_restart_locks.get(target_p, threading.Lock()):
-                        force_restart_app(target_p, global_live_states, now, "Web UI Force Rejoin", G)
-                elif act == 'check_cookie' and target_p and target_p in global_live_states:
-                    check_and_handle_account_health(target_p, global_live_states, time.time(), force=True)
-            except:
-                pass
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(b'{"status":"ok"}')
-
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
-        return "127.0.0.1"
-
-def start_web_log_server(initial_port=8080):
-    global WEB_LOG_PORT, _web_server_instance
-    if _web_server_instance:
-        return WEB_LOG_PORT
-
-    for port in [initial_port, initial_port + 1, initial_port + 2, 8888, 5000]:
-        try:
-            server = http.server.ThreadingHTTPServer(('0.0.0.0', port), WebLogHandler)
-            WEB_LOG_PORT = port
-            _web_server_instance = server
-            t = threading.Thread(target=server.serve_forever, daemon=True, name="web-log-ui")
-            t.start()
-            return port
-        except Exception:
-            continue
-    return WEB_LOG_PORT
-
-def run_compact_hud_cli(port=WEB_LOG_PORT):
-    """
-    Chế độ hiển thị HUD siêu nhỏ gọn (compact floating widget) dành riêng cho
-    Termux:Float hoặc chia đôi màn hình / cửa sổ nổi đè lên game Roblox.
-    """
+def select_auto_inject_script_menu():
+    global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL
     clear_screen()
-    print(f"{C}[*] Đang kết nối tới HuDy Live Engine (Port {port})...{RESET}")
-    url = f"http://127.0.0.1:{port}/api/data"
-    last_err_time = 0
-    try:
-        while True:
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "HuDy-HUD/1.0"})
-                with urllib.request.urlopen(req, timeout=3) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
+    print_banner()
+    print(f"{C}--- CHỌN SCRIPT AUTO INJECT CHO EXECUTOR ---{RESET}")
+    print(f"{Y}Script được chọn sẽ tự động inject vào thư mục autoexec của executor (Delta/Fluxus...){RESET}\n")
+    
+    for key, info in AUTO_INJECT_SCRIPTS.items():
+        is_cur = f" {G}[✓ Đang chọn]{RESET}" if SELECTED_SCRIPT_KEY == key else ""
+        print(f"[{C}{key}{RESET}] {info['name']}{is_cur}")
+        print(f"    {Y}URL: {info['url']}{RESET}")
+    
+    custom_cur = f" {G}[✓ Đang chọn]{RESET}" if SELECTED_SCRIPT_KEY == "custom" else ""
+    print(f"[{C}4{RESET}] Tự nhập Link Script tùy chỉnh (Custom URL){custom_cur}")
+    disabled_cur = f" {G}[✓ Đang chọn]{RESET}" if SELECTED_SCRIPT_KEY == "0" else ""
+    print(f"[{C}0{RESET}] Tắt Auto Inject script thêm{disabled_cur}")
+    
+    fix_tty()
+    sel = safe_input(f"\n{M}Chọn script [0-4] (Enter giữ nguyên): {RESET}").strip()
+    if sel in AUTO_INJECT_SCRIPTS:
+        SELECTED_SCRIPT_KEY = sel
+        print(f"\n{G}[✓] Đã chọn Script: {AUTO_INJECT_SCRIPTS[sel]['name']}!{RESET}")
+        save_settings()
+        inject_user_script()
+        time.sleep(1.5)
+    elif sel == '4':
+        fix_tty()
+        url = safe_input(f"{M}Nhập URL Script mới (raw link): {RESET}").strip()
+        if url:
+            CUSTOM_SCRIPT_URL = url
+            SELECTED_SCRIPT_KEY = "custom"
+            print(f"\n{G}[✓] Đã lưu Custom Script URL!{RESET}")
+            save_settings()
+            inject_user_script()
+            time.sleep(1.5)
+    elif sel == '0':
+        SELECTED_SCRIPT_KEY = "0"
+        print(f"\n{Y}[*] Đã tắt tính năng Auto Inject script thêm.{RESET}")
+        save_settings()
+        inject_user_script()
+        time.sleep(1.5)
 
-                t_str = data.get('time', '--:--:--')
-                cpu_s = data.get('cpu', 'N/A')
-                ram_s = data.get('ram', 'N/A')
-
-                lines = []
-                lines.append(f"{C}╔══════════════════ [ HuDy HUD OVERLAY ] ══════════════════╗{RESET}")
-                lines.append(f"{C}║{RESET} {G}● LIVE{RESET}  Giờ: {W}{t_str}{RESET}  CPU: {Y}{cpu_s}{RESET}  RAM: {M}{ram_s}{RESET}")
-                lines.append(f"{C}╠──────────────────────────────────────────────────────────╢{RESET}")
-
-                pkgs = data.get('packages', [])
-                if not pkgs:
-                    lines.append(f"{C}║{RESET}  {Y}[!] Chưa chạy Auto Rejoin (Vào Menu [3] để bật){RESET}")
-                else:
-                    for i, p in enumerate(pkgs[:4], 1):
-                        name = p.get('name', 'N/A')[:14]
-                        badge = p.get('status_badge', 'ACTIVE')
-                        b_col = G if badge == 'FARMING' else (R if badge == 'BLOCKED' else Y)
-                        text = p.get('text', '')[:28]
-                        lines.append(f"{C}║{RESET} [{i}] {W}{name:<14}{RESET} {b_col}[{badge:<7}]{RESET} {text}")
-
-                lines.append(f"{C}╠──────────────────────────────────────────────────────────╢{RESET}")
-                lines.append(f"{C}║{RESET} {C}LOG MỚI NHẤT:{RESET}")
-                logs = data.get('logs', [])
-                recent_logs = logs[-2:] if logs else []
-                if not recent_logs:
-                    lines.append(f"{C}║{RESET}   {W}(Chưa có log mới){RESET}")
-                else:
-                    for l in recent_logs:
-                        p_txt = (l.get('plain') or '')[:52]
-                        lines.append(f"{C}║{RESET}   • {W}{p_txt}{RESET}")
-                lines.append(f"{C}╚══════════════════════════════════════════════════════════╝{RESET}")
-
-                sys.stdout.write("\033[H" + "\n".join(lines) + "\n\033[J")
-                sys.stdout.flush()
-                time.sleep(1.2)
-            except Exception as e:
-                now_t = time.time()
-                if now_t - last_err_time >= 3:
-                    sys.stdout.write(f"\r{Y}[HUD] Đang đợi Tool Rejoin chính hoạt động... ({e})  {RESET}")
-                    sys.stdout.flush()
-                    last_err_time = now_t
-                time.sleep(1.5)
-    except KeyboardInterrupt:
-        print(f"\n{Y}[HUD] Đã đóng Floating HUD.{RESET}")
-
-def floating_overlay_menu():
-    global WEB_LOG_PORT
-    start_web_log_server(WEB_LOG_PORT)
-    ip = get_local_ip()
-    local_url = f"http://localhost:{WEB_LOG_PORT}"
-    hud_url = f"http://localhost:{WEB_LOG_PORT}/hud"
-
+def settings_menu():
+    global target_place_id, kill_all_time, CHECK_ACC_TIME_BLOCKED
     while True:
         clear_screen()
         print_banner()
-        print(f"{C}=== CẤU HÌNH & BẬT CỬA SỔ NỔI (FLOATING OVERLAY HUD) ĐÈ LÊN GAME ==={RESET}")
-        print(f"Cơ chế hiển thị trực tiếp lên trên màn hình Game Roblox, không cần mở trình duyệt rời!\n")
-        print(f"[{C}1{RESET}] Bật Floating Terminal HUD (Termux:Float - Cửa sổ nổi kéo thả đè lên game)")
-        print(f"[{C}2{RESET}] Mở Cửa Sổ Nổi Pop-up / Freeform Window (Android Multi-Window HUD)")
-        print(f"[{C}3{RESET}] Chạy chế độ Mini HUD ngay trên Terminal hiện tại ({W}hudy_3.py --hud{RESET})")
-        print(f"[{C}4{RESET}] Mở Web Dashboard đầy đủ trên trình duyệt ({G}{local_url}{RESET})")
-        print(f"[{C}5{RESET}] Quay lại Menu chính")
-
+        if SELECTED_SCRIPT_KEY in AUTO_INJECT_SCRIPTS:
+            def_tag = " (Mặc định)" if SELECTED_SCRIPT_KEY == "1" else ""
+            cur_script_name = f"{G}{AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]['name']}{def_tag}{RESET}"
+        elif SELECTED_SCRIPT_KEY == "custom":
+            cur_script_name = f"{C}Custom URL ({CUSTOM_SCRIPT_URL[:25]}...){RESET}"
+        else:
+            cur_script_name = f"{R}Tắt (Không inject thêm script){RESET}"
+            
+        cur_pid = target_place_id if target_place_id else "Vào sảnh chính (0)"
+        cur_restart = f"{kill_all_time} phút" if kill_all_time > 0 else "Tắt (0)"
+        
+        print(f"{C}--- CÀI ĐẶT HỆ THỐNG & AUTO INJECT SCRIPT ---{RESET}")
+        print(f"1. Place ID (Game ID):               {Y}{cur_pid}{RESET}")
+        print(f"2. Script Auto Inject đang chọn:     {cur_script_name}")
+        print(f"3. Thời gian Auto Restart:           {Y}{cur_restart}{RESET}")
+        print(f"4. Chu kỳ re-check Acc kẹt Captcha:  {Y}{CHECK_ACC_TIME_BLOCKED}s{RESET}")
+        print("-" * 65)
+        print(f"[{C}1{RESET}] Cài đặt Place ID (Game ID)")
+        print(f"[{C}2{RESET}] Chọn Script Auto Inject (1: Hop Fin_Tail, 2: Hop_Tear, 3: Main_KingLegacy)")
+        print(f"[{C}3{RESET}] Cài đặt thời gian Auto Restart (phút)")
+        print(f"[{C}4{RESET}] Cài đặt chu kỳ re-check Acc dính Captcha/Not-Approved")
+        print(f"[{C}5{RESET}] Cấu hình nhanh tất cả (Wizard Setup)")
+        print(f"[{C}6{RESET}] Quay lại Menu chính")
+        
         fix_tty()
-        c = safe_input(f"\n{M}Chọn [1-5]: {RESET}").strip()
-
+        c = safe_input(f"\n{M}HuDy Settings > {RESET}").strip()
         if c == '1':
-            print(f"\n{C}=== KHỞI CHẠY TERMUX:FLOAT OVERLAY ==={RESET}")
-            # Cấp quyền SYSTEM_ALERT_WINDOW (Vẽ trên ứng dụng khác)
-            safe_root("appops set com.termux.float SYSTEM_ALERT_WINDOW allow 2>/dev/null || true")
-            safe_root("appops set com.termux SYSTEM_ALERT_WINDOW allow 2>/dev/null || true")
-
-            # Kiểm tra xem Termux:Float đã cài chưa
-            code, out, _ = _run_root_capture("pm path com.termux.float 2>/dev/null", timeout=3)
-            if code != 0 or not out.strip():
-                print(f"{Y}[!] Chưa phát hiện ứng dụng Termux:Float (com.termux.float) trên máy.{RESET}")
-                dl_c = safe_input(f"{C}Bạn có muốn tự động tải APK và cài đặt Termux:Float ngay không? (Y/n): {RESET}").strip().lower()
-                if dl_c != 'n':
-                    dl_path = "/sdcard/Download/termux_float.apk"
-                    cdn_url = "https://f-droid.org/repo/com.termux.float_15.apk"
-                    gh_url = "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/termux-float.apk"
-                    print(f"{Y}[*] Đang tải Termux:Float APK về máy...{RESET}")
-                    downloaded = False
-                    for u in [gh_url, cdn_url]:
-                        try:
-                            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
-                            with urllib.request.urlopen(req, timeout=25) as resp:
-                                if resp.status == 200:
-                                    with open(dl_path, "wb") as f_out:
-                                        f_out.write(resp.read())
-                                    downloaded = True
-                                    break
-                        except Exception:
-                            continue
-                    if not downloaded:
-                        os.system(f"curl -sL '{cdn_url}' -o '{dl_path}' 2>/dev/null")
-                        if os.path.exists(dl_path) and os.path.getsize(dl_path) > 100000:
-                            downloaded = True
-
-                    if downloaded:
-                        print(f"{G}[✓] Đã tải xong! Đang tự động cài đặt qua root (pm install)...{RESET}")
-                        code_inst, _, _ = _run_root_capture(f"pm install -r -g '{dl_path}'", timeout=20)
-                        if code_inst == 0:
-                            print(f"{G}[✓] Cài đặt Termux:Float thành công!{RESET}")
-                            safe_root("appops set com.termux.float SYSTEM_ALERT_WINDOW allow 2>/dev/null || true")
-                        else:
-                            print(f"{Y}[!] Tự động cài không thành công, hãy mở file tại {dl_path} để cài thủ công.{RESET}")
-                    else:
-                        print(f"{R}[!] Không thể tải APK tự động. Bạn hãy cài 'Termux:Float' từ F-Droid nhé!{RESET}")
-                        time.sleep(2.5)
-                        continue
-                else:
-                    continue
-
-            # Chuẩn bị file launcher lệnh HUD cho Termux:Float
-            script_abs = os.path.abspath(__file__)
-            launcher_sh = "/data/data/com.termux/files/home/.termux_float_hud.sh"
-            try:
-                with open(launcher_sh, "w", encoding="utf-8") as f:
-                    f.write(f'#!/data/data/com.termux/files/usr/bin/bash\npython "{script_abs}" --hud\n')
-                safe_root(f"chmod 755 '{launcher_sh}'")
-            except:
-                pass
-
-            print(f"{Y}[*] Đang bật Cửa Sổ Nổi Termux:Float...{RESET}")
-            safe_root("am start -n com.termux.float/.TermuxFloatActivity 2>/dev/null || monkey -p com.termux.float 1 2>/dev/null || true")
-            print(f"\n{G}╔═══════════════════════════════════════════════════════════════════╗{RESET}")
-            print(f"{G}║             ĐÃ KÍCH HOẠT CỬA SỔ NỔI OVERLAY!                      ║{RESET}")
-            print(f"{G}╚═══════════════════════════════════════════════════════════════════╝{RESET}")
-            print(f"  • Cửa sổ nổi {W}Termux:Float{RESET} đã xuất hiện đè lên trên màn hình!")
-            print(f"  • Tại cửa sổ nổi, chỉ cần gõ: {C}python '{script_abs}' --hud{RESET}")
-            print(f"  • Bạn có thể kéo thả, thu nhỏ hoặc đặt cửa sổ ở bất kỳ góc nào trên game Roblox.")
             fix_tty()
-            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
-            try: input()
-            except: pass
-            break
-
-        elif c == '2':
-            print(f"\n{C}=== MỞ CỬA SỔ NỔI POP-UP / FREEFORM WINDOW ==={RESET}")
-            print(f"{Y}[*] Đang gửi lệnh mở HUD dạng Pop-up Multi-Window (--windowingMode 5)...{RESET}")
-            cmd_freeform = f"am start -a android.intent.action.VIEW -d '{hud_url}' --windowingMode 5 --bounds 30,50,720,480 2>/dev/null || am start -a android.intent.action.VIEW -d '{hud_url}' 2>/dev/null || true"
-            safe_root(cmd_freeform)
-            print(f"{G}[✓] Đã gửi lệnh mở HUD Pop-up đè lên màn hình!{RESET}")
-            time.sleep(2.5)
-            break
-
-        elif c == '3':
-            run_compact_hud_cli(WEB_LOG_PORT)
-            break
-
-        elif c == '4':
-            print(f"\n{C}[*] Link Web đầy đủ: {G}{local_url}{RESET}")
-            safe_root(f"am start -a android.intent.action.VIEW -d '{local_url}' 2>/dev/null || true")
-            time.sleep(2)
-            break
-
-        elif c == '5':
-            break
-
-# =====================================================================
-# CÀI ĐẶT
-# =====================================================================
-def settings_menu():
-    global target_place_id, kill_all_time
-    print(f"\n{C}--- CÀI ĐẶT GAME ID & TIME KILL ALL ---{RESET}")
-    fix_tty()
-    p_id_raw = safe_input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}")
-    if p_id_raw == "":
-        target_place_id = "4520749081"
-        print(f"{Y}[*] Place ID mặc định: {target_place_id}{RESET}")
-    elif p_id_raw == "0":
-        target_place_id = ""
-        print(f"{Y}[*] Đã xóa Place ID, app mở vào sảnh chính.{RESET}")
-    else:
-        nums = re.findall(r'\d+', p_id_raw)
-        if nums:
-            target_place_id = nums[0]
-            print(f"{G}[+] Đã lưu Place ID: {target_place_id}{RESET}")
-        else:
-            print(f"{R}[!] ID không hợp lệ.{RESET}")
-    fix_tty()
-    k_time_raw = safe_input(f"{M}Nhập thời gian Auto Restart (phút, 0 để tắt): {RESET}")
-    if k_time_raw != "":
-        nums = re.findall(r'\d+', k_time_raw)
-        if nums:
-            kill_all_time = int(nums[0])
-            if kill_all_time > 0:
-                print(f"{G}[+] Auto Restart mỗi {kill_all_time} phút.{RESET}")
+            p_id_raw = safe_input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}").strip()
+            if p_id_raw == "":
+                target_place_id = "4520749081"
+                print(f"{Y}[*] Place ID mặc định: {target_place_id}{RESET}")
+            elif p_id_raw == "0":
+                target_place_id = ""
+                print(f"{Y}[*] Đã xóa Place ID, app mở vào sảnh chính.{RESET}")
             else:
-                print(f"{Y}[*] Đã tắt Auto Restart.{RESET}")
-        else:
-            print(f"{R}[!] Số phút không hợp lệ.{RESET}")
-
-    global CHECK_ACC_TIME_BLOCKED, AUTO_CHECK_ACC_HEALTH
-    fix_tty()
-    k_acc_raw = safe_input(f"{M}Thời gian re-check khi Acc dính Captcha/Not-Approved (giây, Enter giữ {CHECK_ACC_TIME_BLOCKED}s): {RESET}").strip()
-    if k_acc_raw != "":
-        nums = re.findall(r'\d+', k_acc_raw)
-        if nums and int(nums[0]) >= 10:
-            CHECK_ACC_TIME_BLOCKED = int(nums[0])
-            print(f"{G}[+] Đã lưu chu kỳ re-check Acc kẹt: {CHECK_ACC_TIME_BLOCKED}s{RESET}")
-    time.sleep(2)
+                nums = re.findall(r'\d+', p_id_raw)
+                if nums:
+                    target_place_id = nums[0]
+                    print(f"{G}[+] Đã lưu Place ID: {target_place_id}{RESET}")
+                else:
+                    print(f"{R}[!] ID không hợp lệ.{RESET}")
+            save_settings()
+            time.sleep(1.5)
+        elif c == '2':
+            select_auto_inject_script_menu()
+        elif c == '3':
+            fix_tty()
+            k_time_raw = safe_input(f"{M}Nhập thời gian Auto Restart (phút, 0 để tắt): {RESET}").strip()
+            if k_time_raw != "":
+                nums = re.findall(r'\d+', k_time_raw)
+                if nums:
+                    kill_all_time = int(nums[0])
+                    if kill_all_time > 0:
+                        print(f"{G}[+] Auto Restart mỗi {kill_all_time} phút.{RESET}")
+                    else:
+                        print(f"{Y}[*] Đã tắt Auto Restart.{RESET}")
+                    save_settings()
+                else:
+                    print(f"{R}[!] Số phút không hợp lệ.{RESET}")
+            time.sleep(1.5)
+        elif c == '4':
+            fix_tty()
+            k_acc_raw = safe_input(f"{M}Thời gian re-check khi Acc dính Captcha/Not-Approved (giây, Enter giữ {CHECK_ACC_TIME_BLOCKED}s): {RESET}").strip()
+            if k_acc_raw != "":
+                nums = re.findall(r'\d+', k_acc_raw)
+                if nums and int(nums[0]) >= 10:
+                    CHECK_ACC_TIME_BLOCKED = int(nums[0])
+                    print(f"{G}[+] Đã lưu chu kỳ re-check Acc kẹt: {CHECK_ACC_TIME_BLOCKED}s{RESET}")
+                    save_settings()
+            time.sleep(1.5)
+        elif c == '5':
+            fix_tty()
+            p_id_raw = safe_input(f"{M}1. Nhập Place ID (Enter giữ {target_place_id}): {RESET}").strip()
+            if p_id_raw == "0":
+                target_place_id = ""
+            elif p_id_raw != "":
+                nums = re.findall(r'\d+', p_id_raw)
+                if nums: target_place_id = nums[0]
+                
+            select_auto_inject_script_menu()
+            
+            fix_tty()
+            k_time_raw = safe_input(f"{M}3. Nhập thời gian Auto Restart (phút, Enter giữ {kill_all_time}m): {RESET}").strip()
+            if k_time_raw != "":
+                nums = re.findall(r'\d+', k_time_raw)
+                if nums: kill_all_time = int(nums[0])
+                
+            fix_tty()
+            k_acc_raw = safe_input(f"{M}4. Chu kỳ re-check Acc kẹt Captcha (giây, Enter giữ {CHECK_ACC_TIME_BLOCKED}s): {RESET}").strip()
+            if k_acc_raw != "":
+                nums = re.findall(r'\d+', k_acc_raw)
+                if nums and int(nums[0]) >= 10: CHECK_ACC_TIME_BLOCKED = int(nums[0])
+                
+            save_settings()
+            print(f"\n{G}[✓] Đã lưu toàn bộ cài đặt!{RESET}")
+            time.sleep(1.5)
+        elif c == '6':
+            break
 
 def scan_packages():
     packages = []
@@ -1177,36 +499,82 @@ def scan_packages():
             packages.append(line.replace("package:", "").strip())
     return list(set(packages))
 
+def is_vip_package(pkg):
+    """Kiểm tra package có đầu/tên VIP (ví dụ vip..., com.vip..., com.roblox.vip...)."""
+    if not pkg:
+        return False
+    p = pkg.lower()
+    if p.startswith("vip"):
+        return True
+    parts = p.split(".")
+    if any(part.startswith("vip") for part in parts):
+        return True
+    if "vip" in p and "roblox" in p:
+        return True
+    return False
+
+def auto_select_vip_packages():
+    """Tự động chọn tất cả package có đầu VIP làm mặc định."""
+    global selected_packages
+    try:
+        packages = scan_packages()
+        vip_pkgs = [p for p in packages if is_vip_package(p)]
+        if vip_pkgs:
+            vip_pkgs = sorted(list(set(vip_pkgs)))
+            selected_packages = [{"pkg": p, "name": ""} for p in vip_pkgs]
+            return len(selected_packages)
+    except:
+        pass
+    return 0
+
 def select_package_menu():
     global selected_packages
     packages = scan_packages()
     if not packages:
-        print(f"{R}[!] Không tìm thấy app nào!{RESET}")
+        print(f"{R}[!] Không tìm thấy app nào trên thiết bị!{RESET}")
         time.sleep(2)
         return
     print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
+    current_selected_pkgs = {item['pkg'] for item in selected_packages}
     for i, pkg in enumerate(packages, 1):
-        print(f"[{i}] {pkg}")
+        mark = f"{G} [✓ Đang chọn]{RESET}" if pkg in current_selected_pkgs else ""
+        vip_tag = f"{Y} [VIP]{RESET}" if is_vip_package(pkg) else ""
+        print(f"[{i}] {pkg}{vip_tag}{mark}")
+    
+    print(f"\n{Y}Mặc định hệ thống tự chọn các package có đầu 'vip' ({len(selected_packages)} package).{RESET}")
+    print(f"{C}• Bấm Enter để giữ nguyên danh sách hiện tại{RESET}")
+    print(f"{C}• Gõ 'vip' để quét lại và tự động chọn toàn bộ package đầu VIP{RESET}")
+    print(f"{C}• Nhập số thứ tự cách nhau khoảng trắng để tùy chỉnh lại (VD: 1 3 5){RESET}")
     try:
         fix_tty()
-        print(f"\n{C}💡 Nhập số thứ tự cách nhau khoảng trắng (VD: 1 3 5){RESET}")
-        choice_str = safe_input(f"{M}Chọn số: {RESET}")
+        choice_str = safe_input(f"{M}Lựa chọn của bạn: {RESET}").strip()
+        if not choice_str:
+            print(f"\n{G}[✓] Giữ nguyên danh sách ({len(selected_packages)} package).{RESET}")
+            time.sleep(1.2)
+            return
+        if choice_str.lower() == 'vip':
+            cnt = auto_select_vip_packages()
+            print(f"\n{G}[✓] Đã tự động chọn {cnt} package VIP!{RESET}")
+            time.sleep(1.2)
+            return
         choices = [int(x) for x in re.findall(r'\d+', choice_str)]
-        selected_packages.clear()
-        for choice in set(choices):
-            if 1 <= choice <= len(packages):
-                pkg_name = packages[choice - 1]
-                fix_tty()
-                acc_name = safe_input(f"\n{C}[?] Tên In-game cho {Y}{pkg_name}{C} (bỏ trống để auto): {RESET}")
-                selected_packages.append({"pkg": pkg_name, "name": acc_name})
-        if selected_packages:
-            print(f"\n{G}[+] Đã chọn {len(selected_packages)} package.{RESET}")
-            time.sleep(1)
+        if choices:
+            new_sel = []
+            for choice in sorted(set(choices)):
+                if 1 <= choice <= len(packages):
+                    pkg_name = packages[choice - 1]
+                    fix_tty()
+                    acc_name = safe_input(f"\n{C}[?] Tên In-game cho {Y}{pkg_name}{C} (bỏ trống để auto): {RESET}").strip()
+                    new_sel.append({"pkg": pkg_name, "name": acc_name})
+            if new_sel:
+                selected_packages = new_sel
+                print(f"\n{G}[+] Đã lưu {len(selected_packages)} package tùy chỉnh.{RESET}")
+                time.sleep(1.2)
     except:
         pass
 
 # =====================================================================
-# INJECT SCRIPT UNIVERSAL (giữ nguyên)
+# INJECT SCRIPT UNIVERSAL (REJOIN & HEARTBEAT)
 # =====================================================================
 def inject_universal_lua():
     lua_code = """
@@ -1243,10 +611,55 @@ task.spawn(function()
 end)"""
     safe_root("su -c 'find /sdcard/ -maxdepth 4 -type f -name \"*checkhudyhub.lua\" -delete 2>/dev/null'")
     temp_lua = "/sdcard/Download/universal_checkhudyhub.lua"
-    with open(temp_lua, "w", encoding="utf-8") as f:
-        f.write(lua_code)
+    try:
+        with open(temp_lua, "w", encoding="utf-8") as f:
+            f.write(lua_code)
+    except Exception:
+        safe_root(f"su -c 'cat << \\'EOF\\' > {temp_lua}\n{lua_code}\nEOF'")
     root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/universal_checkhudyhub.lua\\" && chmod 777 \\"\\$dir/universal_checkhudyhub.lua\\"; done; rm {temp_lua}" """
     safe_root(root_cmd)
+
+# =====================================================================
+# INJECT USER SCRIPT (FILE RIÊNG: user_autoinject.lua)
+# =====================================================================
+def inject_user_script():
+    global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, AUTO_INJECT_SCRIPTS
+    
+    # Xóa file script user cũ nếu có
+    safe_root("su -c 'find /sdcard/ -maxdepth 5 -type f -name \"*user_autoinject.lua\" -delete 2>/dev/null'")
+    
+    script_name = ""
+    script_url = ""
+    if SELECTED_SCRIPT_KEY in AUTO_INJECT_SCRIPTS:
+        script_name = AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]["name"]
+        script_url = AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]["url"].strip()
+    elif SELECTED_SCRIPT_KEY == "custom" and CUSTOM_SCRIPT_URL:
+        script_name = "Custom Script"
+        script_url = CUSTOM_SCRIPT_URL.strip()
+
+    if not script_url or SELECTED_SCRIPT_KEY == "0":
+        print(f"{Y}[*] Không inject script người dùng (Tắt hoặc chưa có link).{RESET}")
+        return
+
+    print(f"{G}[+] Đang inject script riêng: {C}{script_name}{RESET}...")
+    lua_code = f"""-- [HuDy Auto Inject Script: {script_name}]
+task.spawn(function()
+    repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer
+    task.wait(2)
+    pcall(function()
+        loadstring(game:HttpGet("{script_url}", true))()
+    end)
+end)
+"""
+    temp_lua = "/sdcard/Download/user_autoinject.lua"
+    try:
+        with open(temp_lua, "w", encoding="utf-8") as f:
+            f.write(lua_code)
+    except Exception:
+        safe_root(f"su -c 'cat << \\'EOF\\' > {temp_lua}\n{lua_code}\nEOF'")
+    root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 5 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/user_autoinject.lua\\" && chmod 777 \\"\\$dir/user_autoinject.lua\\"; done; rm {temp_lua}" """
+    safe_root(root_cmd)
+    print(f"{G}[✓] Đã inject thành công '{script_name}' (user_autoinject.lua) vào thư mục autoexec!{RESET}")
 
 # =====================================================================
 # HEARTBEAT & ACCOUNT DISCOVERY (ĐÃ SỬA TÌM ĐÚNG FILE)
@@ -3143,164 +2556,174 @@ def check_roblox_account_status(cookie):
         "message": "Không thể kết nối đến máy chủ Roblox hoặc mạng bị chặn."
     }
 
-def detect_press_and_hold_screen(pkg=None, auto_solve=False, attempt=1):
+def safe_uiautomator_dump(timeout=5):
     """
-    Quét màn hình Android (bằng uiautomator dump) để nhận biết cửa sổ thử thách Bảo Mật:
-    - Tiêu đề: 'Bảo Mật' / 'Security'
-    - Nội dung: 'Nhấn giữ nút để xác nhận bạn là người thật' / 'Press and hold to confirm you are human'
-    - Nút: 'Nhấn và Giữ' / 'Press and Hold'
-    - ID tham chiếu: 'ID tham chiếu cdc336c0-...' / 'Reference ID ...'
+    Dump giao diện Android an toàn, có timeout nghiêm ngặt và tự dọn tiến trình uiautomator rác nếu bị treo.
+    Trả về (True, xml_string) hoặc (False, "").
+    """
+    dump_file = f"/data/local/tmp/dump_cap_{os.getpid()}.xml"
+    _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
+    code, _, err = _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=timeout)
+    if code != 0 or "timeout" in str(err).lower():
+        # Dọn dẹp triệt để tiến trình uiautomator rác nếu bị nghẽn hệ thống tránh treo máy
+        _run_root_capture("killall -9 uiautomator 2>/dev/null || pkill -9 uiautomator 2>/dev/null", timeout=2)
+        return False, ""
+
+    code_cat, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=3)
+    _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
+    if code_cat == 0 and xml_str:
+        return True, xml_str
+    return False, ""
+
+def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
+    """
+    Quét màn hình Android (bằng uiautomator dump an toàn, chống treo máy):
+    - Nhận diện Captcha V1 (Arkose FunCaptcha, vòng xoay, ghép hình, challenge dialog/webview)
+    - Nhận diện Captcha V2 ('Nhấn và Giữ' / 'Bảo Mật' / 'Security Challenge')
     
-    Nếu auto_solve=True:
-    - Tự động lấy tọa độ tâm của nút 'Nhấn và Giữ'
-    - Thực hiện long-press: input swipe cx cy cx cy 4500 (nhấn giữ 4.5s)
-    - Trả về kết quả giải quyết.
+    Trả về dict:
+      detected: bool
+      type: 'CAPTCHA_V1' | 'CAPTCHAV2' | None
+      badge: str
+      ref_id: str
+      btn_coords: (cx, cy) nếu có nút V2
+      solved: bool (nếu auto_solve_v2=True)
     """
     try:
-        dump_file = "/data/local/tmp/dump_security.xml"
-        _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
-        code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
-        _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
-        if code != 0 or not xml_str:
-            return {"detected": False}
+        ok, xml_str = safe_uiautomator_dump(timeout=5)
+        if not ok or not xml_str:
+            return {"detected": False, "type": None}
 
         xml_lower = xml_str.lower()
-        keywords_vn = ["nhấn giữ nút", "xác nhận bạn là người thật", "nhấn và giữ", "nhấn giữ"]
-        keywords_en = ["press and hold to confirm", "confirm you are human", "press and hold", "press & hold", "confirm that you are human"]
-        has_vn = any(k in xml_lower for k in keywords_vn)
-        has_en = any(k in xml_lower for k in keywords_en)
-        has_sec = ("bảo mật" in xml_lower or "security" in xml_lower) and ("người thật" in xml_lower or "human" in xml_lower or "id tham chiếu" in xml_lower or "reference id" in xml_lower)
 
-        # Phát hiện Arkose FunCaptcha dạng xoay hình/chọn hình
-        keywords_arkose = ["rotate", "arrow", "match the", "pick the", "xoay hình", "chọn hình", "mũi tên", "xác thực hình ảnh", "thử lại", "funcaptcha", "arkoselabs"]
-        is_arkose = any(k in xml_lower for k in keywords_arkose)
+        # 1. KIỂM TRA CAPTCHA V1 (Arkose FunCaptcha / Challenge Puzzle)
+        keywords_v1 = [
+            "rotate", "match the", "pick the", "xoay hình", "chọn hình", "mũi tên",
+            "xác thực hình ảnh", "funcaptcha", "arkoselabs", "api.arkoselabs.com",
+            "solve this puzzle", "vui lòng giải", "please solve this challenge",
+            "challenge-container", "roblox.com/challenge", "thử thách bảo mật",
+            "xác minh bạn là người", "chứng minh bạn không phải là rô-bốt",
+            "prove you're human", "challenge-frame"
+        ]
+        is_v1 = any(k in xml_lower for k in keywords_v1)
 
-        if not (has_vn or has_en or has_sec or is_arkose):
-            return {"detected": False}
+        # 2. KIỂM TRA CAPTCHA V2 (Nhấn và Giữ / Security Challenge)
+        keywords_vn_v2 = ["nhấn giữ nút", "xác nhận bạn là người thật", "nhấn và giữ", "nhấn giữ"]
+        keywords_en_v2 = ["press and hold to confirm", "confirm you are human", "press and hold", "press & hold", "confirm that you are human", "touch and hold"]
+        has_vn_v2 = any(k in xml_lower for k in keywords_vn_v2)
+        has_en_v2 = any(k in xml_lower for k in keywords_en_v2)
+        has_sec_v2 = ("bảo mật" in xml_lower or "security" in xml_lower) and ("người thật" in xml_lower or "human" in xml_lower or "id tham chiếu" in xml_lower or "reference id" in xml_lower)
+
+        is_v2 = (has_vn_v2 or has_en_v2 or has_sec_v2)
 
         ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', xml_str, re.I)
         ref_id = ref_m.group(1) if ref_m else "N/A"
 
-        if is_arkose and not (has_vn or has_en):
+        if is_v2:
+            btn_coords = None
+            try:
+                root = ET.fromstring(xml_str)
+                candidates = []
+                for node in root.iter('node'):
+                    text = (node.get('text') or '').strip()
+                    desc = (node.get('content-desc') or '').strip()
+                    cls = (node.get('class') or '').strip()
+                    bounds = node.get('bounds') or ''
+                    m_b = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                    if not m_b:
+                        continue
+                    x1, y1, x2, y2 = map(int, m_b.groups())
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    w = x2 - x1
+                    h = y2 - y1
+                    combined = (text or desc).lower()
+
+                    if any(k in combined for k in ["để xác nhận", "xác nhận bạn", "người thật", "human", "nút để", "tham chiếu", "reference", "bảo mật", "security"]):
+                        continue
+
+                    if combined in ["nhấn và giữ", "press and hold", "press & hold"]:
+                        candidates.append((100, cx, cy))
+                    elif "nhấn và giữ" in combined or "press and hold" in combined or "press & hold" in combined:
+                        score = 50
+                        if "button" in cls.lower() or node.get('clickable') == 'true':
+                            score += 30
+                        candidates.append((score, cx, cy))
+                    elif "button" in cls.lower() and node.get('clickable') == 'true' and h >= 30 and w >= 80:
+                        candidates.append((20, cx, cy))
+
+                if candidates:
+                    candidates.sort(key=lambda c: c[0], reverse=True)
+                    btn_coords = (candidates[0][1], candidates[0][2])
+            except Exception:
+                pass
+
+            if not btn_coords:
+                btn_patterns = [
+                    r'text="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+                    r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"',
+                    r'content-desc="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+                    r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*content-desc="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"'
+                ]
+                for pat in btn_patterns:
+                    m = re.search(pat, xml_str, re.I)
+                    if m:
+                        x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                        btn_coords = ((x1 + x2) // 2, (y1 + y2) // 2)
+                        break
+
+            if not btn_coords or attempt > 1:
+                w, h = get_screen_resolution()
+                is_landscape = (w >= h)
+                if attempt == 1:
+                    if not btn_coords:
+                        btn_coords = (w // 2, int(h * 0.52)) if is_landscape else (w // 2, int(h * 0.45))
+                elif attempt == 2:
+                    btn_coords = (w // 2, int(h * 0.62)) if is_landscape else (w // 2, int(h * 0.55))
+                else:
+                    btn_coords = (w // 2, int(h * 0.38)) if is_landscape else (w // 2, int(h * 0.35))
+
+            solved = False
+            if auto_solve_v2 and btn_coords:
+                cx, cy = btn_coords
+                add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {Y}Phát hiện 'Nhấn và Giữ' (ID: {ref_id[:8]}.., Lần {attempt})! Đang giữ nút ({cx}, {cy}) 16s...{RESET}")
+                safe_root(f"su -c 'input tap {cx} {cy}'", timeout=3)
+                time.sleep(0.3)
+                safe_root(f"su -c 'input swipe {cx} {cy} {cx} {cy} 16000'", timeout=20)
+                time.sleep(2.5)
+
+                ok_chk, chk_xml = safe_uiautomator_dump(timeout=5)
+                if ok_chk and chk_xml:
+                    chk_lower = chk_xml.lower()
+                    still_has = any(k in chk_lower for k in keywords_vn_v2 + keywords_en_v2)
+                    if not still_has:
+                        solved = True
+                        add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {G}[✓] Đã giữ 16s thành công vượt qua màn hình 'Nhấn và Giữ'!{RESET}")
+
             return {
                 "detected": True,
-                "type": "ARKOSE_PUZZLE",
-                "badge": "Dính Arkose FunCaptcha (OMO in-app)",
+                "type": "CAPTCHAV2",
+                "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
+                "ref_id": ref_id,
+                "btn_coords": btn_coords,
+                "solved": solved
+            }
+
+        elif is_v1:
+            return {
+                "detected": True,
+                "type": "CAPTCHA_V1",
+                "badge": "Dính Captcha V1 (Arkose FunCaptcha) Trong App",
                 "ref_id": ref_id,
                 "solved": False
             }
 
-        ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', xml_str, re.I)
-        ref_id = ref_m.group(1) if ref_m else "N/A"
-
-        btn_coords = None
-
-        # 1. Parse bằng XML Tree: Lọc chuẩn xác và loại trừ dòng text hướng dẫn ở trên
-        try:
-            root = ET.fromstring(xml_str)
-            candidates = []
-            for node in root.iter('node'):
-                text = (node.get('text') or '').strip()
-                desc = (node.get('content-desc') or '').strip()
-                cls = (node.get('class') or '').strip()
-                bounds = node.get('bounds') or ''
-                m_b = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-                if not m_b:
-                    continue
-                x1, y1, x2, y2 = map(int, m_b.groups())
-                cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
-                w = x2 - x1
-                h = y2 - y1
-
-                combined = (text or desc).lower()
-
-                # LOẠI TRỪ DÒNG HƯỚNG DẪN Ở TRÊN (ví dụ: "Nhấn giữ nút để xác nhận bạn là người thật."):
-                if any(k in combined for k in ["để xác nhận", "xác nhận bạn", "người thật", "human", "nút để", "tham chiếu", "reference", "bảo mật", "security"]):
-                    continue
-
-                # ƯU TIÊN 1: Text chính xác là "Nhấn và Giữ" hoặc "Press and Hold"
-                if combined in ["nhấn và giữ", "press and hold", "press & hold"]:
-                    candidates.append((100, cx, cy, text or desc))
-                # ƯU TIÊN 2: Chứa "nhấn và giữ" và là button hoặc clickable
-                elif "nhấn và giữ" in combined or "press and hold" in combined or "press & hold" in combined:
-                    score = 50
-                    if "button" in cls.lower() or node.get('clickable') == 'true':
-                        score += 30
-                    candidates.append((score, cx, cy, text or desc))
-                # ƯU TIÊN 3: Thẻ Button có clickable = true ở khu vực giữa màn hình (dưới dòng text hướng dẫn)
-                elif "button" in cls.lower() and node.get('clickable') == 'true' and h >= 30 and w >= 80:
-                    candidates.append((20, cx, cy, text or desc or cls))
-
-            if candidates:
-                candidates.sort(key=lambda c: c[0], reverse=True)
-                btn_coords = (candidates[0][1], candidates[0][2])
-        except Exception:
-            pass
-
-        # 2. Dự phòng bằng Regex: CHỈ BẮT CHÍNH XÁC NÚT "Nhấn và Giữ", tuyệt đối không bắt "Nhấn giữ nút..."
-        if not btn_coords:
-            btn_patterns = [
-                r'text="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-                r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"',
-                r'content-desc="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-                r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*content-desc="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"'
-            ]
-            for pat in btn_patterns:
-                m = re.search(pat, xml_str, re.I)
-                if m:
-                    if pat.startswith(r'bounds='):
-                        x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-                    else:
-                        x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-                    btn_coords = ((x1 + x2) // 2, (y1 + y2) // 2)
-                    break
-
-        # 3. Tọa độ dự phòng thông minh theo kích thước màn hình & số lần thử (attempt)
-        if not btn_coords or attempt > 1:
-            w, h = get_screen_resolution()
-            is_landscape = (w >= h)
-            if attempt == 1:
-                if not btn_coords:
-                    btn_coords = (w // 2, int(h * 0.52)) if is_landscape else (w // 2, int(h * 0.45))
-            elif attempt == 2:
-                # Bù trừ xuống dưới
-                btn_coords = (w // 2, int(h * 0.62)) if is_landscape else (w // 2, int(h * 0.55))
-            else:
-                # Bù trừ lên trên
-                btn_coords = (w // 2, int(h * 0.38)) if is_landscape else (w // 2, int(h * 0.35))
-
-        solved = False
-        if auto_solve and btn_coords:
-            cx, cy = btn_coords
-            add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {Y}Phát hiện 'Nhấn và Giữ' (ID: {ref_id[:8]}.., Lần {attempt})! Đang giữ nút ({cx}, {cy}) 16s...{RESET}")
-            # Đánh thức/focus cửa sổ bằng 1 tap nhẹ trước
-            safe_root(f"su -c 'input tap {cx} {cy}'", timeout=3)
-            time.sleep(0.3)
-            # Nhấn giữ 16s
-            safe_root(f"su -c 'input swipe {cx} {cy} {cx} {cy} 16000'", timeout=24)
-            time.sleep(2.5)
-
-            _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
-            _, chk_xml, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
-            _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
-            if chk_xml:
-                chk_lower = chk_xml.lower()
-                still_has = any(k in chk_lower for k in keywords_vn + keywords_en)
-                if not still_has:
-                    solved = True
-                    add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {G}[✓] Đã giữ 16s và giải quyết thành công màn hình 'Nhấn và Giữ'!{RESET}")
-
-        return {
-            "detected": True,
-            "type": "PRESS_AND_HOLD",
-            "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
-            "ref_id": ref_id,
-            "btn_coords": btn_coords,
-            "solved": solved
-        }
+        return {"detected": False, "type": None}
     except Exception:
-        return {"detected": False}
+        return {"detected": False, "type": None}
+
+# Giữ tương thích ngược với code cũ gọi detect_press_and_hold_screen
+detect_press_and_hold_screen = detect_in_app_captcha
 
 def print_account_check_result(label, cookie, res):
     mask_c = (cookie[:18] + "..." + cookie[-10:]) if (cookie and len(cookie) > 30) else (cookie or "<Trống>")
@@ -3326,93 +2749,11 @@ def print_account_check_result(label, cookie, res):
     if res.get('url'):
         print(f"{Y}URL KẸT:{RESET}   {C}{res['url']}{RESET}")
 
-# =====================================================================
-# OMOCAPTCHA API ENGINE & IN-APP ARKOSE FUNCAPTCHA V1 SOLVER
-# =====================================================================
-API_URL = "https://api.omocaptcha.com/v2"
-
-class OmoCaptchaError(RuntimeError):
-    pass
-
-def classify_match_image(client_key, image_base64, question, stop_event=None, api_url=API_URL):
-    """Gửi ảnh và câu hỏi tới OMOCaptcha API (FuncaptchaImageTask) để lấy số lần xoay."""
-    if not client_key:
-        raise OmoCaptchaError("Thiếu omocaptcha_key! Vui lòng nhập Key tại Menu [7]->[5].")
-
-    base = api_url.rstrip("/")
-    clean_b64 = image_base64.split(",", 1)[-1].strip()
-    payload = {
-        "clientKey": client_key,
-        "appId": "",
-        "task": {
-            "type": "FuncaptchaImageTask",
-            "imageBase64": clean_b64,
-            "other": question,
-        },
-    }
-
-    req_data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(
-        f"{base}/createTask",
-        data=req_data,
-        headers={"Content-Type": "application/json"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            created = json.loads(resp.read().decode('utf-8'))
-    except Exception as exc:
-        raise OmoCaptchaError(f"OMO createTask lỗi mạng: {exc}") from exc
-
-    if created.get("errorId") not in (None, 0):
-        raise OmoCaptchaError(created.get("errorCode") or created.get("errorDescription") or "OMO createTask thất bại")
-    task_id = created.get("taskId")
-    if not task_id:
-        raise OmoCaptchaError("OMO không trả về taskId")
-
-    deadline = time.monotonic() + 120
-    poll_payload = json.dumps({"clientKey": client_key, "taskId": task_id}).encode('utf-8')
-    while time.monotonic() < deadline:
-        if stop_event and stop_event.is_set():
-            raise OmoCaptchaError("Đã dừng tiến trình")
-        time.sleep(0.7)
-        req_poll = urllib.request.Request(
-            f"{base}/getTaskResult",
-            data=poll_payload,
-            headers={"Content-Type": "application/json"}
-        )
-        try:
-            with urllib.request.urlopen(req_poll, timeout=20) as resp_poll:
-                result = json.loads(resp_poll.read().decode('utf-8'))
-        except Exception:
-            continue
-
-        status = result.get("status")
-        if status == "processing":
-            continue
-        if status == "fail" or result.get("errorId") not in (None, 0):
-            err_msg = result.get("errorCode") or result.get("errorDescription") or "OMO xử lý ảnh thất bại"
-            raise OmoCaptchaError(err_msg)
-
-        solution = result.get("solution") or {}
-        try:
-            index = int(solution.get("index"))
-        except (TypeError, ValueError) as exc:
-            raise OmoCaptchaError("OMO không trả về index hợp lệ") from exc
-
-        if not 1 <= index <= 31:
-            raise OmoCaptchaError(f"OMO index ngoài phạm vi (1-31): {index}")
-        return index
-
-    raise OmoCaptchaError("Hết thời gian chờ OMO API (120s)")
-
 def handle_not_approved_in_app(pkg=None):
     """Tự động kiểm tra và bấm nút Đồng ý / Tôi hiểu / Reactivate trực tiếp trong app Roblox."""
     time.sleep(2.0)
-    dump_file = "/data/local/tmp/dump_moderated.xml"
-    _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
-    code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
-    _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
-    if code != 0 or not xml_str:
+    ok, xml_str = safe_uiautomator_dump(timeout=5)
+    if not ok or not xml_str:
         return False
 
     xml_lower = xml_str.lower()
@@ -3435,1281 +2776,13 @@ def handle_not_approved_in_app(pkg=None):
         pass
     return False
 
-# =====================================================================
-# CHROME CDP + DRISSIONPAGE ARKOSE FUNCAPTCHA SOLVER (KHÔNG CẦN EXTENSION)
-# =====================================================================
-try:
-    from DrissionPage import ChromiumPage, ChromiumOptions
-    HAS_DRISSION_PAGE = True
-except ImportError:
-    HAS_DRISSION_PAGE = False
-
-def get_match_image(frame):
-    """Đọc ảnh blob match-game Arkose từ Canvas HTML5 trực tiếp trong Chrome (chuẩn OMO extension)."""
-    try:
-        source = frame.run_js(
-            """
-            const els = document.querySelectorAll('div[class*="match-game box screen"] *');
-            let url = '';
-            for (const el of els) {
-              if (el.tagName === 'IMG' && el.src && el.src.startsWith('blob:')) {
-                url = el.src; break;
-              }
-              const bg = getComputedStyle(el).backgroundImage || '';
-              const match = bg.match(/url\\(["']?(blob:[^"')]+)["']?\\)/);
-              if (match) { url = match[1]; break; }
-            }
-            return url;
-            """
-        )
-        if not isinstance(source, str) or not source.startswith("blob:"):
-            return None
-        frame.run_js(
-            """
-            window.__omoImageData = 'pending';
-            const image = new Image();
-            image.onload = () => {
-              try {
-                const canvas = document.createElement('canvas');
-                canvas.width = image.naturalWidth;
-                canvas.height = image.naturalHeight;
-                canvas.getContext('2d').drawImage(image, 0, 0);
-                window.__omoImageData = canvas.toDataURL('image/jpeg', .92);
-              } catch (e) { window.__omoImageData = 'error'; }
-            };
-            image.onerror = () => { window.__omoImageData = 'error'; };
-            image.src = arguments[0];
-            return true;
-            """,
-            source,
-        )
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            image = frame.run_js("return window.__omoImageData || ''")
-            if isinstance(image, str) and image.startswith("data:"):
-                return image
-            if image == "error":
-                return None
-            time.sleep(0.1)
-    except Exception:
-        pass
-    return None
-
-class OmoArkoseSolver:
-    """Tự động phát hiện iframe Arkose, lấy ảnh qua Canvas JS, gọi OMOCaptcha API và click CDP."""
-    def __init__(self, client_key, log=None, api_url=API_URL, delay_click_ms=1000):
-        self.client_key = client_key
-        self.log = log or (lambda msg: None)
-        self.api_url = api_url
-        self.delay = max(1.0, int(delay_click_ms) / 1000.0)
-        self.last_signature = None
-        self.last_attempt_at = 0
-
-    def on_failed_round(self):
-        self.last_signature = None
-        self.last_attempt_at = 0
-        self.log("[OMO] Arkose từ chối chuỗi trước; bắt đầu chuỗi mới.")
-
-    @staticmethod
-    def _trusted_human_click(frame, element):
-        """Mô phỏng thao tác di chuột và click thật bằng CDP (Trusted Human Input)."""
-        actions = frame.actions
-        actions.move_to(element, duration=random.uniform(0.35, 0.75))
-        time.sleep(random.uniform(0.08, 0.22))
-        actions.click()
-
-    def step(self, tab, stop_event=None):
-        try:
-            frames = tab.get_frames()
-        except Exception:
-            return False
-        for frame in frames:
-            try:
-                if not frame.states.is_displayed:
-                    continue
-                if not any(x in (frame.url or "").lower() for x in ("arkoselabs", "funcaptcha")):
-                    continue
-                home = frame.ele(
-                    'css:button[data-theme="home.verifyButton"], '
-                    'button#home_children_button, '
-                    'button[aria-describedby="descriptionVerify"]',
-                    timeout=0.1,
-                )
-                if home and home.states.is_displayed:
-                    self._trusted_human_click(frame, home)
-                    self.log("[OMO] Đã click Start Puzzle / Xác minh bằng CDP trusted input.")
-                    return True
-                state = frame.run_js(
-                    """
-                    const game = document.querySelector('div[class*="match-game box screen"]');
-                    const text = game && game.querySelector('.text, h2[class*="text"], [role="text"]');
-                    return {active: !!game, question: text ? (text.innerText || text.textContent || '') : ''};
-                    """
-                )
-                if not isinstance(state, dict) or not state.get("active"):
-                    continue
-                question = (state.get("question") or "").split("(", 1)[0].strip().rstrip(".")
-                if not question:
-                    continue
-                image = get_match_image(frame)
-                if not image:
-                    continue
-                signature = hashlib.sha256((question + image).encode("utf-8")).hexdigest()
-                if signature == self.last_signature and time.monotonic() - self.last_attempt_at < 30:
-                    continue
-                self.last_signature = signature
-                self.last_attempt_at = time.monotonic()
-                api_index = classify_match_image(
-                    self.client_key, image, question, stop_event, self.api_url
-                )
-                rotations = api_index - 1  # OMO index trả về 1-based.
-                self.log(f"[OMO] API index={api_index} -> Cần quay phải {rotations} lần.")
-                for _ in range(rotations):
-                    arrow = frame.ele('css:.right-arrow', timeout=1)
-                    if not arrow:
-                        raise OmoCaptchaError("Không tìm thấy mũi tên phải")
-                    self._trusted_human_click(frame, arrow)
-                    if stop_event and stop_event.wait(max(0.05, self.delay - 0.07)):
-                        return False
-                if stop_event and stop_event.wait(self.delay):
-                    return False
-                submit = frame.ele(
-                    'css:div[class*="match-game box screen"] button:not([class*="reload-button"])',
-                    timeout=1,
-                )
-                if not submit:
-                    raise OmoCaptchaError("Không tìm thấy nút Submit")
-                self._trusted_human_click(frame, submit)
-                self.log("[OMO] Đã click Submit bằng CDP trusted input.")
-                return True
-            except OmoCaptchaError as exc:
-                self.log(f"[OMO] {exc}")
-                return False
-            except Exception as exc:
-                self.log(f"[OMO] Không xử lý được iframe: {type(exc).__name__}")
-                return False
-        return False
-
-_cdp_bridge_thread = None
-_cdp_bridge_running = False
-
-def _start_abstract_socket_bridge(abstract_name, port=9222):
-    global _cdp_bridge_thread, _cdp_bridge_running
-    if _cdp_bridge_running:
-        return
-    def bridge_worker():
-        global _cdp_bridge_running
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            srv.bind(("127.0.0.1", port))
-            srv.listen(5)
-            srv.settimeout(1.0)
-            _cdp_bridge_running = True
-            while _cdp_bridge_running:
-                try:
-                    cli, _ = srv.accept()
-                except socket.timeout:
-                    continue
-                except:
-                    break
-                try:
-                    unx = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    unx.connect(f"\0{abstract_name}")
-                except:
-                    cli.close()
-                    continue
-                def fwd(a, b):
-                    try:
-                        while True:
-                            buf = a.recv(4096)
-                            if not buf: break
-                            b.sendall(buf)
-                    except: pass
-                    finally:
-                        a.close(); b.close()
-                threading.Thread(target=fwd, args=(cli, unx), daemon=True).start()
-                threading.Thread(target=fwd, args=(unx, cli), daemon=True).start()
-        except Exception:
-            pass
-        finally:
-            srv.close()
-            _cdp_bridge_running = False
-
-    _cdp_bridge_thread = threading.Thread(target=bridge_worker, daemon=True)
-    _cdp_bridge_thread.start()
-
-def get_installed_chrome_pkg():
-    """Tự động phát hiện package Chrome / Chromium đang cài trên thiết bị."""
-    candidates = [
-        "com.android.chrome",
-        "com.google.android.apps.chrome",
-        "com.chrome.beta",
-        "com.chrome.dev",
-        "com.chrome.canary",
-        "com.sec.android.app.sbrowser"
-    ]
-    for c in candidates:
-        code, out, _ = _run_root_capture(f"pm path {c} 2>/dev/null", timeout=3)
-        if code == 0 and "package:" in out:
-            return c
-    return "com.android.chrome"
-
-def bypass_chrome_fre(chrome_pkg="com.android.chrome"):
-    """
-    Vượt qua màn hình chào mừng 'Welcome to Chrome / First Run Experience (FRE)' của Chrome:
-    1. Ghi cờ --disable-fre vào /data/local/tmp/chrome-command-line
-    2. Ghi đè SharedPreferences xác nhận đã hoàn thành First Run
-    3. Đặt set-debug-app để Chrome đọc chrome-command-line
-    """
-    uid, gid = get_pkg_uid_gid(chrome_pkg)
-    
-    cmdline_file = "/data/local/tmp/chrome-command-line"
-    flags = "chrome --remote-debugging-port=9222 --disable-fre --no-default-browser-check --no-first-run --disable-notifications"
-    _run_root_capture(f'echo "{flags}" > "{cmdline_file}" && chmod 777 "{cmdline_file}"')
-    _run_root_capture(f"am set-debug-app --persistent {chrome_pkg} 2>/dev/null || true")
-
-    sp_dir = f"/data/data/{chrome_pkg}/shared_prefs"
-    _run_root_capture(f"mkdir -p '{sp_dir}' && chown {uid}:{gid} '{sp_dir}' && chmod 771 '{sp_dir}' 2>/dev/null")
-    
-    pref_files = [
-        f"{sp_dir}/{chrome_pkg}_preferences.xml",
-        f"{sp_dir}/com.android.chrome_preferences.xml"
-    ]
-    xml_content = (
-        '<?xml version=\'1.0\' encoding=\'utf-8\' standalone=\'yes\' ?>\n'
-        '<map>\n'
-        '    <boolean name="first_run_flow_complete" value="true" />\n'
-        '    <boolean name="lightweight_first_run_flow_complete" value="true" />\n'
-        '    <boolean name="tos_acknowledged" value="true" />\n'
-        '    <boolean name="signin_promo_dismissed" value="true" />\n'
-        '    <boolean name="fre_promo_opt_out" value="true" />\n'
-        '</map>\n'
-    )
-    for pf in pref_files:
-        _run_root_capture(f'cat << \'EOF\' > "{pf}"\n{xml_content}\nEOF\nchown {uid}:{gid} "{pf}" && chmod 660 "{pf}" 2>/dev/null')
-
-def inject_cookie_chrome(pkg, cookie):
-    """
-    Tiêm trực tiếp Cookie .ROBLOSECURITY vào tất cả cơ sở dữ liệu SQLite Cookies của Google Chrome / Chromium:
-    - Tìm và nạp vào app_chrome/Default/Network/Cookies, app_chrome/Default/Cookies, v.v.
-    - Nếu Chrome chưa từng tạo file Cookies, tự động tạo cấu trúc thư mục và file SQLite Cookies chuẩn.
-    - Sử dụng Chromium Epoch 1601 UTC microseconds.
-    - Dọn dẹp WAL/SHM/journal và chown uid:gid chuẩn của Chrome.
-    """
-    cookie = _normalize_roblosecurity_cookie(cookie)
-    if not cookie:
-        return False
-
-    uid, gid = get_pkg_uid_gid(pkg)
-    chrome_dirs = [
-        f"/data/data/{pkg}/app_chrome/Default/Network",
-        f"/data/data/{pkg}/app_chrome/Default",
-        f"/data/data/{pkg}/app_webview/Default/Network",
-        f"/data/data/{pkg}/app_webview/Default",
-    ]
-    for d in chrome_dirs:
-        _run_root_capture(f"mkdir -p '{d}' && chown {uid}:{gid} '{d}' && chmod 771 '{d}' 2>/dev/null")
-
-    dbs = []
-    candidate_files = [
-        f"/data/data/{pkg}/app_chrome/Default/Network/Cookies",
-        f"/data/data/{pkg}/app_chrome/Default/Cookies",
-        f"/data/data/{pkg}/app_chrome/Cookies",
-        f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
-        f"/data/data/{pkg}/app_webview/Default/Cookies",
-        f"/data/data/{pkg}/app_webview/Cookies",
-        f"/data/data/{pkg}/databases/Cookies",
-        f"/data/data/{pkg}/databases/webviewCookiesChromium.db"
-    ]
-    for p in candidate_files:
-        _, chk, _ = _run_root_capture(f"test -f '{p}' && echo exists", timeout=2)
-        if "exists" in chk and p not in dbs:
-            dbs.append(p)
-
-    try:
-        code, out, _ = _run_root_capture(
-            f"find '/data/data/{pkg}/' -type f \\( -name 'Cookies' -o -name '*cookie*' \\) 2>/dev/null",
-            timeout=4
-        )
-        if code == 0 and out:
-            for line in out.splitlines():
-                p = line.strip()
-                if p and p not in dbs and not p.endswith(('-journal', '-wal', '-shm')):
-                    dbs.append(p)
-    except:
-        pass
-
-    if not dbs:
-        primary_cookie_db = f"/data/data/{pkg}/app_chrome/Default/Network/Cookies"
-        _run_root_capture(f"touch '{primary_cookie_db}' && chown {uid}:{gid} '{primary_cookie_db}' && chmod 660 '{primary_cookie_db}'")
-        dbs.append(primary_cookie_db)
-
-    tmp_dir = os.path.join(tempfile.gettempdir(), 'hudy_chrome_cookie_tmp')
-    try: os.makedirs(tmp_dir, exist_ok=True)
-    except: tmp_dir = tempfile.gettempdir()
-
-    epoch_offset = 11644473600
-    now_1601 = (time.time_ns() // 1000) + (epoch_offset * 1000000)
-    exp_1601 = now_1601 + (10 * 365 * 86400 * 1000000)
-    hosts = ['.roblox.com', 'www.roblox.com', 'roblox.com', '.www.roblox.com']
-
-    success_count = 0
-    for idx, db_path in enumerate(dbs, 1):
-        local_db = os.path.join(tmp_dir, f"chrome_inj_{idx}.db")
-        copy_code, _, _ = _run_root_capture(f"cp '{db_path}' '{local_db}' && chmod 666 '{local_db}'")
-        try:
-            conn = sqlite3.connect(local_db)
-            c = conn.cursor()
-            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cookies'")
-            if not c.fetchone():
-                c.execute("""
-                    CREATE TABLE cookies (
-                        creation_utc INTEGER NOT NULL,
-                        host_key TEXT NOT NULL,
-                        top_frame_site_key TEXT NOT NULL,
-                        name TEXT NOT NULL,
-                        value TEXT NOT NULL,
-                        encrypted_value BLOB NOT NULL,
-                        path TEXT NOT NULL,
-                        expires_utc INTEGER NOT NULL,
-                        is_secure INTEGER NOT NULL,
-                        is_httponly INTEGER NOT NULL,
-                        last_access_utc INTEGER NOT NULL,
-                        has_expires INTEGER NOT NULL,
-                        is_persistent INTEGER NOT NULL,
-                        priority INTEGER NOT NULL,
-                        samesite INTEGER NOT NULL,
-                        source_scheme INTEGER NOT NULL,
-                        source_port INTEGER NOT NULL,
-                        is_same_party INTEGER NOT NULL,
-                        last_update_utc INTEGER NOT NULL,
-                        source_type INTEGER NOT NULL,
-                        has_cross_site_ancestor INTEGER NOT NULL,
-                        PRIMARY KEY (creation_utc)
-                    )
-                """)
-                conn.commit()
-
-            c.execute("PRAGMA table_info(cookies)")
-            column_info = c.fetchall()
-            columns = [col[1] for col in column_info]
-
-            for row_index, hk in enumerate(hosts):
-                row_time = now_1601 + row_index
-                data = {
-                    'creation_utc': row_time,
-                    'top_frame_site_key': 'https://roblox.com',
-                    'host_key': hk,
-                    'name': '.ROBLOSECURITY',
-                    'value': cookie,
-                    'encrypted_value': b'',
-                    'path': '/',
-                    'expires_utc': exp_1601,
-                    'is_secure': 1,
-                    'is_httponly': 1,
-                    'last_access_utc': row_time,
-                    'last_update_utc': row_time,
-                    'has_expires': 1,
-                    'is_persistent': 1,
-                    'priority': 1,
-                    'samesite': -1,
-                    'source_scheme': 2,
-                    'source_port': 443,
-                    'source_type': 0,
-                    'has_cross_site_ancestor': 0,
-                    'is_same_party': 0
-                }
-                for _, col_name, col_type, not_null, default_value, _ in column_info:
-                    if col_name in data or not not_null or default_value is not None:
-                        continue
-                    type_upper = (col_type or '').upper()
-                    if 'BLOB' in type_upper:
-                        data[col_name] = b''
-                    elif any(t in type_upper for t in ('INT', 'REAL', 'NUM')):
-                        data[col_name] = 0
-                    else:
-                        data[col_name] = ''
-
-                valid_cols = [k for k in data if k in columns]
-                vals = [data[k] for k in valid_cols]
-                placeholders = ','.join(['?' for _ in valid_cols])
-
-                c.execute(
-                    "DELETE FROM cookies WHERE name=? AND (host_key=? OR host_key=? OR host_key=?)",
-                    ('.ROBLOSECURITY', hk, hk.lstrip('.'), '.' + hk.lstrip('.'))
-                )
-                c.execute(f"INSERT INTO cookies ({','.join(valid_cols)}) VALUES ({placeholders})", vals)
-
-            conn.commit()
-            conn.close()
-
-            fix_cmd = (
-                f'cp "{local_db}" "{db_path}" && '
-                f'rm -f "{db_path}-wal" "{db_path}-shm" "{db_path}-journal" 2>/dev/null && '
-                f'chown {uid}:{gid} "{db_path}" && '
-                f'chmod 660 "{db_path}" && '
-                f'(restorecon "{db_path}" 2>/dev/null || true)'
-            )
-            write_code, _, _ = _run_root_capture(fix_cmd)
-            try: os.remove(local_db)
-            except: pass
-            if write_code == 0:
-                success_count += 1
-                if "Default/Network/Cookies" in db_path:
-                    alt_path = db_path.replace("Default/Network/Cookies", "Default/Cookies")
-                    _run_root_capture(f'cp "{db_path}" "{alt_path}" && chown {uid}:{gid} "{alt_path}" && chmod 660 "{alt_path}" 2>/dev/null')
-        except Exception as e:
-            try: conn.close()
-            except: pass
-            try: os.remove(local_db)
-            except: pass
-
-    return success_count > 0
-
-def start_chrome_to_url(chrome_pkg, target_url):
-    """
-    Khởi chạy Google Chrome và điều hướng tới target_url với nhiều tầng dự phòng:
-    - Bắt buộc có cờ -f 0x10008000 (FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TOP).
-    - Dự phòng 1: Component Activity chính com.google.android.apps.chrome.Main
-    - Dự phòng 2: Intent Action VIEW với Package
-    - Dự phòng 3: Monkey khởi động Launcher rồi gửi VIEW intent
-    """
-    # 1. Thử Component chính
-    code, _, _ = _run_root_capture(
-        f'am start -n {chrome_pkg}/com.google.android.apps.chrome.Main -f 0x10008000 -a android.intent.action.VIEW -d "{target_url}" 2>/dev/null',
-        timeout=5
-    )
-    if code == 0:
-        return True
-
-    # 2. Thử VIEW intent với package
-    code, _, _ = _run_root_capture(
-        f'am start -p {chrome_pkg} -f 0x10008000 -a android.intent.action.VIEW -d "{target_url}" 2>/dev/null',
-        timeout=5
-    )
-    if code == 0:
-        return True
-
-    # 3. Thử qua monkey trước
-    _run_root_capture(f"monkey -p {chrome_pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null", timeout=4)
-    time.sleep(1.2)
-    code, _, _ = _run_root_capture(
-        f'am start -p {chrome_pkg} -f 0x10008000 -a android.intent.action.VIEW -d "{target_url}" 2>/dev/null',
-        timeout=5
-    )
-    return code == 0
-
-def dismiss_chrome_dialogs():
-    """Tự động đóng các popup màn hình chào mừng (FRE) của Chrome nếu còn sót."""
-    dump_file = "/data/local/tmp/dump_chrome_fre.xml"
-    _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=3)
-    code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=2)
-    _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=1)
-    if code == 0 and xml_str:
-        m = re.search(r'text="([^"]*accept[^"]*|[^"]*tiếp tục[^"]*|[^"]*chấp nhận[^"]*|[^"]*đồng ý[^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str, re.IGNORECASE)
-        if m:
-            x = (int(m.group(2)) + int(m.group(4))) // 2
-            y = (int(m.group(3)) + int(m.group(5))) // 2
-            _run_root_capture(f"input tap {x} {y} 2>/dev/null", timeout=2)
-            time.sleep(1.5)
-        m2 = re.search(r'text="([^"]*no thanks[^"]*|[^"]*không, cảm ơn[^"]*|[^"]*bỏ qua[^"]*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str, re.IGNORECASE)
-        if m2:
-            x2 = (int(m2.group(2)) + int(m2.group(4))) // 2
-            y2 = (int(m2.group(3)) + int(m2.group(5))) // 2
-            _run_root_capture(f"input tap {x2} {y2} 2>/dev/null", timeout=2)
-            time.sleep(1.0)
-
-JS_CONTINUE_RETRY = """
-async function doRetry(payloadText) {
-    let payload = payloadText;
-    try { payload = JSON.parse(payloadText); } catch (e) {}
-    let last = {status: 0, body: "not attempted", attempt: "none"};
-
-    let csrf = "";
-    try {
-        const csrfRes = await fetch("https://auth.roblox.com/v2/logout", {
-            method: "POST",
-            credentials: "include",
-            cache: "no-store"
-        });
-        csrf = csrfRes.headers.get("x-csrf-token") || "";
-    } catch(e) {
-        return {status: 0, body: "csrf_fetch_error: " + String(e), attempt: "1 (csrf_fail)"};
-    }
-
-    if (!csrf) {
-        return {status: 0, body: "csrf_empty", attempt: "1 (csrf_fail)"};
-    }
-
-    const endpoints = [
-        "https://apis.roblox.com/challenge/v1/continue",
-        "https://www.roblox.com/challenge/v1/continue",
-        "https://roblox.com/challenge/v1/continue"
-    ];
-
-    let promises = [];
-    for (let i = 0; i < 2; i++) {
-        for (const endpoint of endpoints) {
-            promises.push((async () => {
-                try {
-                    const res = await fetch(endpoint, {
-                        method: "POST", credentials: "include", cache: "no-store",
-                        headers: {
-                            "Accept": "application/json", "Content-Type": "application/json",
-                            "x-csrf-token": csrf, "Origin": "https://www.roblox.com", "Referer": "https://www.roblox.com/"
-                        },
-                        body: typeof payload === "string" ? payload : JSON.stringify(payload)
-                    });
-                    let body = "";
-                    try { body = await res.text(); } catch(e) {}
-                    return {status: res.status, body: body.slice(0, 400), attempt: "blast_fetch"};
-                } catch(e) {
-                    return {status: 0, body: "fetch_error", attempt: "blast_fetch"};
-                }
-            })());
-
-            promises.push((async () => {
-                try {
-                    return await new Promise((resolve) => {
-                        const xhr = new XMLHttpRequest();
-                        xhr.open("POST", endpoint, true);
-                        xhr.withCredentials = true;
-                        xhr.setRequestHeader("Accept", "application/json");
-                        xhr.setRequestHeader("Content-Type", "application/json");
-                        xhr.setRequestHeader("x-csrf-token", csrf);
-                        xhr.onload = () => resolve({ status: xhr.status, body: (xhr.responseText || "").slice(0,400), attempt: "blast_xhr" });
-                        xhr.onerror = () => resolve({ status: 0, body: "xhr_error", attempt: "blast_xhr" });
-                        xhr.send(typeof payload === "string" ? payload : JSON.stringify(payload));
-                    });
-                } catch(e) {
-                    return {status: 0, body: "xhr_error", attempt: "blast_xhr"};
-                }
-            })());
-        }
-    }
-
-    const results = await Promise.all(promises);
-    for (const r of results) {
-        if (r.status === 200) return r;
-        if (r.body && r.body.toLowerCase().includes("already completed")) {
-            r.status = 200;
-            return r;
-        }
-        if (r.status !== 0 && r.status !== 404) last = r;
-    }
-    if (last.status === 0 && results.length > 0) last = results[results.length - 1];
-    return last;
-}
-"""
-
-def get_roblox_challenge_url(cookie, place_id="4520749081", log=None):
-    """
-    Kích hoạt yêu cầu join-game và authentication-ticket từ server Roblox để trích xuất Challenge ID và Metadata.
-    Nếu tài khoản bị dính Captcha, tạo chính xác link Hybrid Challenge để mở trong Chrome:
-    https://www.roblox.com/challenge/cdn/hybrid?generic-challenge-type=captcha&app-type=browser&generic-challenge-id={cid}&challenge-metadata-json={meta}&challenge-type=generic&dark-mode=false
-    """
-    clean_cookie = _normalize_roblosecurity_cookie(cookie)
-    if not clean_cookie:
-        return "ERROR", None
-
-    pid = str(place_id).strip() if (place_id and str(place_id).strip().isdigit()) else "4520749081"
-    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    headers = {
-        "User-Agent": ua,
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json;charset=UTF-8",
-        "Origin": "https://www.roblox.com",
-        "Referer": f"https://www.roblox.com/games/{pid}",
-        "Cookie": f".ROBLOSECURITY={clean_cookie}"
-    }
-
-    # 1. Lấy X-CSRF-TOKEN từ logout endpoint
-    csrf_token = None
-    try:
-        req_csrf = urllib.request.Request(
-            "https://auth.roblox.com/v2/logout",
-            data=b"{}",
-            headers=headers,
-            method="POST"
-        )
-        with urllib.request.urlopen(req_csrf, timeout=8) as r:
-            csrf_token = r.headers.get("x-csrf-token") or r.headers.get("X-CSRF-TOKEN")
-    except urllib.error.HTTPError as e:
-        csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
-    except Exception as e:
-        if log: log(f"[DBG] Lỗi lấy csrf logout: {e}")
-
-    if not csrf_token:
-        if log: log("[DBG] Không lấy được x-csrf-token từ logout.")
-        return "ERROR", None
-
-    headers["x-csrf-token"] = csrf_token
-    headers["X-CSRF-TOKEN"] = csrf_token
-
-    # 2. Gọi join-game để bắt Challenge URL
-    join_payload = json.dumps({"placeId": int(pid), "isTeleport": False}).encode('utf-8')
-    try:
-        req_join = urllib.request.Request(
-            "https://gamejoin.roblox.com/v1/join-game",
-            data=join_payload,
-            headers=headers,
-            method="POST"
-        )
-        with urllib.request.urlopen(req_join, timeout=10) as r_join:
-            pass
-    except urllib.error.HTTPError as e:
-        ctype = (e.headers.get("rblx-challenge-type") or "").lower()
-        cid = e.headers.get("rblx-challenge-id") or ""
-        meta = e.headers.get("rblx-challenge-metadata") or ""
-
-        if e.code == 403 and cid and ("captcha" in ctype or "generic" in ctype or not ctype):
-            if log: log(f"[DBG] join-game HTTP 403 -> Challenge ID: {cid[:12]}..., Meta: {'Có' if meta else 'Không'}")
-            params = {
-                "generic-challenge-type": "captcha",
-                "app-type": "browser",
-                "generic-challenge-id": cid,
-                "challenge-metadata-json": meta,
-                "challenge-type": "generic",
-                "dark-mode": "false"
-            }
-            challenge_url = "https://www.roblox.com/challenge/cdn/hybrid?" + urllib.parse.urlencode(params)
-            return "CAPTCHA", challenge_url
-
-    # 3. Gọi authentication-ticket để bắt Challenge URL
-    ticket_headers = dict(headers)
-    ticket_headers["RBX-For-Gameauth"] = "true"
-    req_ticket = urllib.request.Request(
-        "https://auth.roblox.com/v1/authentication-ticket",
-        data=b"{}",
-        headers=ticket_headers,
-        method="POST"
-    )
-    try:
-        with urllib.request.urlopen(req_ticket, timeout=10) as r_ticket:
-            ticket = r_ticket.headers.get("rbx-authentication-ticket") or r_ticket.headers.get("RBX-Authentication-Ticket")
-            if ticket:
-                return "TICKET", ticket
-    except urllib.error.HTTPError as e:
-        ctype = (e.headers.get("rblx-challenge-type") or "").lower()
-        cid = e.headers.get("rblx-challenge-id") or ""
-        meta = e.headers.get("rblx-challenge-metadata") or ""
-
-        if e.code == 403 and cid and ("captcha" in ctype or "generic" in ctype or not ctype):
-            if log: log(f"[DBG] auth-ticket HTTP 403 -> Challenge ID: {cid[:12]}..., Meta: {'Có' if meta else 'Không'}")
-            params = {
-                "generic-challenge-type": "captcha",
-                "app-type": "browser",
-                "generic-challenge-id": cid,
-                "challenge-metadata-json": meta,
-                "challenge-type": "generic",
-                "dark-mode": "false"
-            }
-            challenge_url = "https://www.roblox.com/challenge/cdn/hybrid?" + urllib.parse.urlencode(params)
-            return "CAPTCHA", challenge_url
-
-    return "CLEAN", None
-
-def launch_chrome_and_inject_cookie(cookie, place_id=None, challenge_url=None):
-    """
-    Chuẩn bị và mở Google Chrome với tài khoản Roblox:
-    1. Phát hiện package Chrome trên máy.
-    2. Đóng Chrome cũ để an toàn ghi đè DB.
-    3. Cấu hình cờ CDP port 9222 và vô hiệu hóa hoàn toàn màn hình First-Run (FRE).
-    4. Nạp Cookie .ROBLOSECURITY trực tiếp vào SQLite Cookies của Chrome.
-    5. Mở Chrome trực tiếp vào link Hybrid Challenge (nếu có) hoặc link game Roblox.
-    6. Mở Chrome với cờ Intent -f 0x10008000 đưa Chrome lên màn hình chính.
-    """
-    chrome_pkg = get_installed_chrome_pkg()
-    clean_cookie = _normalize_roblosecurity_cookie(cookie) if cookie else None
-
-    # 1. Đóng Chrome để nạp DB an toàn
-    _run_root_capture(f"am force-stop {chrome_pkg} 2>/dev/null")
-    time.sleep(1.0)
-
-    # 2. Vô hiệu hóa First-Run Experience (FRE) và đặt cờ debug port 9222
-    bypass_chrome_fre(chrome_pkg)
-
-    # 3. Tiêm Cookie vào SQLite của Chrome
-    if clean_cookie:
-        inject_cookie_chrome(chrome_pkg, clean_cookie)
-
-    # 4. Xác định URL khởi chạy: Ưu tiên link Hybrid Challenge để Captcha hiển thị ngay
-    if challenge_url:
-        target_url = challenge_url
-    else:
-        final_page = f"https://www.roblox.com/games/{place_id}" if place_id else "https://www.roblox.com/home"
-        target_url = final_page
-
-    # 5. Mở Google Chrome lên màn hình
-    start_chrome_to_url(chrome_pkg, target_url)
-    time.sleep(3.5)
-
-    # 6. Kiểm tra nếu Chrome chưa ở Foreground, kích hoạt lại
-    if not is_pkg_in_foreground(chrome_pkg):
-        _run_root_capture(f"monkey -p {chrome_pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null", timeout=3)
-        time.sleep(1.0)
-        _run_root_capture(f'am start -p {chrome_pkg} -f 0x10008000 -a android.intent.action.VIEW -d "{target_url}" 2>/dev/null', timeout=4)
-        time.sleep(2.0)
-
-    # 7. Tự động xử lý nếu xuất hiện nút 'Chấp nhận & tiếp tục' hoặc 'Không, cảm ơn' của FRE
-    dismiss_chrome_dialogs()
-
-    return chrome_pkg
-
-def solve_arkose_with_chrome_omo(cookie, place_id=None, client_key=None, stop_event=None, pkg=None, challenge_url=None):
-    """
-    Giải Captcha V1 trên Google Chrome bằng OMOCaptcha thông qua Hybrid Challenge:
-    1. Kích hoạt lấy Hybrid Challenge URL từ Roblox API (bắt buộc để hiển thị Captcha).
-    2. Tiêm Cookie và mở Google Chrome trực tiếp vào trang Hybrid Challenge.
-    3. Kết nối DrissionPage CDP: lắng nghe challenge/v1/continue và chạy Canvas JS OmoArkoseSolver.
-    4. Tự động JS Retry blast nếu challenge/v1/continue trả về 403.
-    5. Xác minh thực tế bằng cách xin lại Ticket từ Roblox API sau khi giải.
-    """
-    global OMOCAPTCHA_KEY
-    if not client_key:
-        client_key = OMOCAPTCHA_KEY or load_omocaptcha_key()
-    if not client_key:
-        add_log(f"[{pkg[-12:] if pkg else 'CHROME'}] {R}[CHROME OMO] Chưa có OMOCaptcha Key! Vào Menu [7]->[5] để nhập.{RESET}")
-        return {"detected": False, "solved": False, "error": "MISSING_KEY"}
-
-    tag = pkg[-12:] if pkg else "CHROME_OMO"
-    pid = str(place_id).strip() if (place_id and str(place_id).strip().isdigit()) else "4520749081"
-
-    # BƯỚC 1: Bắt link Hybrid Challenge từ Roblox API (hoặc dùng link truyền vào)
-    if not challenge_url:
-        add_log(f"[{tag}] {C}[CHROME OMO] Gửi request tới Roblox API để kích hoạt & lấy link Hybrid Challenge...{RESET}")
-        c_status, c_data = get_roblox_challenge_url(cookie, pid, log=lambda m: add_log(f"[{tag}] {m}"))
-
-        if c_status == "TICKET":
-            add_log(f"[{tag}] {G}[✓ CHROME OMO] Tài khoản đã có Auth Ticket, không bị Captcha chặn!{RESET}")
-            return {"detected": False, "solved": True, "message": "Tài khoản sạch, đã có Ticket"}
-
-        if c_status == "CAPTCHA" and c_data:
-            challenge_url = c_data
-            add_log(f"[{tag}] {G}[✓ HYBRID CHALLENGE] Đã bắt được link: {challenge_url[:75]}...{RESET}")
-        else:
-            add_log(f"[{tag}] {Y}[!] API không trả link challenge riêng (status={c_status}). Mở trang game...{RESET}")
-            challenge_url = f"https://www.roblox.com/games/{pid}"
-
-    # BƯỚC 2: Tiêm Cookie và Bật Google Chrome lên màn hình với chính xác link Challenge
-    add_log(f"[{tag}] {C}[CHROME] Đang nạp Cookie và mở Google Chrome tới trang Challenge...{RESET}")
-    chrome_pkg = launch_chrome_and_inject_cookie(cookie, place_id=pid, challenge_url=challenge_url)
-    add_log(f"[{tag}] {G}[CHROME] Đã mở trình duyệt {chrome_pkg}!{RESET}")
-
-    # BƯỚC 3: Thử kết nối DrissionPage qua CDP (Port 9222)
-    use_drission = False
-    page = None
-    if HAS_DRISSION_PAGE:
-        ok_cdp = False
-        for _ in range(3):
-            try:
-                req = urllib.request.Request("http://127.0.0.1:9222/json/version")
-                with urllib.request.urlopen(req, timeout=1.0) as resp:
-                    if resp.status == 200:
-                        ok_cdp = True
-                        break
-            except Exception:
-                time.sleep(0.5)
-
-        if not ok_cdp:
-            code, out, _ = _run_root_capture("cat /proc/net/unix 2>/dev/null | grep devtools_remote", timeout=2)
-            if "devtools_remote" in out:
-                m = re.search(r'(@chrome_devtools_remote\w*)', out)
-                abs_name = m.group(1).lstrip('@') if m else "chrome_devtools_remote"
-                _start_abstract_socket_bridge(abs_name, port=9222)
-                time.sleep(1.0)
-                try:
-                    req = urllib.request.Request("http://127.0.0.1:9222/json/version")
-                    with urllib.request.urlopen(req, timeout=1.0) as resp:
-                        if resp.status == 200: ok_cdp = True
-                except Exception:
-                    pass
-
-        if ok_cdp:
-            try:
-                co = ChromiumOptions()
-                co.set_address("127.0.0.1:9222")
-                co.set_load_mode.eager()
-                page = ChromiumPage(co)
-                use_drission = True
-                add_log(f"[{tag}] {G}[CHROME OMO] Đã kết nối DrissionPage CDP 9222! Dùng Canvas JS.{RESET}")
-            except Exception as e:
-                add_log(f"[{tag}] {Y}[CHROME OMO] Không kết nối được DrissionPage: {e}{RESET}")
-
-    # BƯỚC 4: Giải Captcha qua DrissionPage CDP
-    if use_drission and page:
-        if cookie:
-            clean_c = _normalize_roblosecurity_cookie(cookie)
-            try:
-                page.set.cookies({'name': '.ROBLOSECURITY', 'value': clean_c, 'domain': '.roblox.com', 'path': '/'})
-            except Exception:
-                pass
-
-        # Lên lắng nghe challenge/v1/continue trước khi tải challenge
-        try:
-            page.listen.start("challenge/v1/continue")
-        except Exception:
-            pass
-
-        # Đảm bảo tab đang tải đúng challenge_url
-        try:
-            curr_tab_url = page.url or ""
-            if "challenge" not in curr_tab_url and challenge_url:
-                add_log(f"[{tag}] {C}[CHROME OMO] Đang chuyển tab Chrome tới trang Hybrid Challenge...{RESET}")
-                page.get(challenge_url)
-                time.sleep(2.0)
-        except Exception:
-            pass
-
-        solver = OmoArkoseSolver(client_key, log=lambda m: add_log(f"[{tag}] {m}"))
-        add_log(f"[{tag}] {C}[CHROME OMO] Đang quét iframe Arkose trên Chrome bằng Canvas JS...{RESET}")
-
-        max_seconds = 180
-        t0 = time.time()
-        rounds_solved = 0
-        detected = False
-        browser_solved = False
-
-        while time.time() - t0 < max_seconds:
-            if stop_event and stop_event.is_set():
-                break
-
-            # 1. Kiểm tra redirect sau khi giải thành công
-            try:
-                cur_url = page.url or ""
-                if cur_url and "roblox.com" in cur_url and "challenge" not in cur_url and "about:blank" not in cur_url:
-                    add_log(f"[{tag}] {G}[✓ CHROME OMO] Trang web đã redirect rời khỏi challenge -> Captcha nộp thành công!{RESET}")
-                    browser_solved = True
-                    break
-            except Exception:
-                pass
-
-            # 2. Kiểm tra packet continue từ page.listen
-            try:
-                packet = page.listen.wait(timeout=0.8)
-                if packet:
-                    pkt_url = str(getattr(packet, "url", "") or "")
-                    if "challenge/v1/continue" in pkt_url:
-                        resp = packet.response
-                        status = resp.status if resp else 0
-                        add_log(f"[{tag}] {C}[CHROME OMO] challenge/v1/continue -> HTTP {status}{RESET}")
-                        if status == 200:
-                            add_log(f"[{tag}] {G}[✓ CHROME OMO] 200 OK! Token nộp thành công.{RESET}")
-                            browser_solved = True
-                            time.sleep(1.5)
-                            break
-                        elif status in (403, 401, 0):
-                            add_log(f"[{tag}] {Y}[CHROME OMO] continue HTTP {status}. Đang thực hiện JS Retry blast...{RESET}")
-                            req_body = getattr(getattr(packet, "request", None), "body", None) or getattr(getattr(packet, "request", None), "postData", None)
-                            if req_body:
-                                body_str = json.dumps(req_body) if isinstance(req_body, (dict, list)) else str(req_body)
-                                retry_js = f"{JS_CONTINUE_RETRY}\nreturn doRetry({json.dumps(body_str)});"
-                                try:
-                                    res_retry = page.run_js(retry_js)
-                                    if isinstance(res_retry, dict) and str(res_retry.get("status")) == "200":
-                                        add_log(f"[{tag}] {G}[✓ CHROME OMO] JS Retry -> 200 OK! Token đã được chấp nhận.{RESET}")
-                                        browser_solved = True
-                                        time.sleep(1.5)
-                                        break
-                                except Exception as ex:
-                                    add_log(f"[{tag}] {Y}[CHROME OMO] Lỗi chạy JS Retry: {ex}{RESET}")
-            except Exception:
-                pass
-
-            # 3. Quét iframe và giải qua solver.step
-            try:
-                frames = page.get_frames()
-                has_arkose = any(
-                    "arkoselabs" in (f.url or "").lower() or "funcaptcha" in (f.url or "").lower()
-                    for f in frames if f.states.is_displayed
-                )
-                if has_arkose:
-                    detected = True
-
-                if not has_arkose and rounds_solved > 0:
-                    add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã hoàn thành giải qua {rounds_solved} vòng! Màn hình Captcha đã đóng.{RESET}")
-                    browser_solved = True
-                    break
-
-                step_ok = solver.step(page, stop_event)
-                if step_ok:
-                    rounds_solved += 1
-                    time.sleep(2.5)
-                else:
-                    time.sleep(1.2)
-            except Exception:
-                time.sleep(1.5)
-
-        try:
-            page.listen.stop()
-        except Exception:
-            pass
-
-        if browser_solved or rounds_solved > 0:
-            add_log(f"[{tag}] {C}[CHROME OMO] Đang xác minh kết quả qua Roblox API...{RESET}")
-            time.sleep(2.0)
-            for v_att in range(3):
-                v_st, _ = get_roblox_challenge_url(cookie, pid)
-                if v_st in ("TICKET", "CLEAN"):
-                    add_log(f"[{tag}] {G}[✓ XÁC MINH THÀNH CÔNG] Cookie sạch, đã có Ticket vào game!{RESET}")
-                    return {"detected": True, "solved": True, "rounds": max(1, rounds_solved)}
-                time.sleep(2.0)
-            return {"detected": True, "solved": True, "rounds": max(1, rounds_solved)}
-
-    # BƯỚC 5: Fallback On-Screen Solver trên cửa sổ Chrome
-    # (Nếu không dùng DrissionPage, Chrome vẫn đang mở link Hybrid Challenge trên màn hình!)
-    add_log(f"[{tag}] {C}[CHROME OMO] Quét và giải trực tiếp trên màn hình Chrome...{RESET}")
-    res_scr = solve_arkose_in_app_with_omo(pkg=chrome_pkg, client_key=client_key, stop_event=stop_event)
-    if res_scr.get("solved"):
-        add_log(f"[{tag}] {G}[✓ CHROME OMO] Đã giải xong Captcha trên màn hình Chrome! Xác minh lại...{RESET}")
-        time.sleep(2.0)
-        v_st, _ = get_roblox_challenge_url(cookie, pid)
-        if v_st in ("TICKET", "CLEAN"):
-            add_log(f"[{tag}] {G}[✓ XÁC MINH THÀNH CÔNG] Cookie sạch, đã có Ticket vào game!{RESET}")
-        return res_scr
-
-    return {"detected": False, "solved": False, "message": "Không phát hiện thấy iframe Captcha hoặc chưa giải xong"}
-
-def capture_arkose_screen_image(tag="OMO"):
-    """
-    Chụp ảnh màn hình bằng quyền root (su -c) với 3 cơ chế dự phòng:
-    1. screencap -p /data/local/tmp/arkose_frame.png (chmod 666) -> Python đọc trực tiếp
-    2. base64 /data/local/tmp/arkose_frame.png -> root đọc và trả chuỗi base64
-    3. screencap -p | base64 -> pipe trực tiếp qua stdout
-    """
-    tmp_path = "/data/local/tmp/arkose_frame.png"
-    _run_root_capture(f"rm -f '{tmp_path}' 2>/dev/null", timeout=2)
-
-    # Cơ chế 1: Chụp vào file /data/local/tmp bằng root
-    code, _, err = _run_root_capture(f"screencap -p '{tmp_path}' && chmod 666 '{tmp_path}'", timeout=6)
-
-    data = None
-    if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 1000:
-        try:
-            with open(tmp_path, "rb") as f:
-                data = f.read()
-        except:
-            pass
-
-    # Cơ chế 2: Đọc qua root base64 nếu Termux bị hạn chế quyền đọc
-    if not data:
-        code_b64, out_b64, _ = _run_root_capture(f"base64 '{tmp_path}' 2>/dev/null", timeout=6)
-        if code_b64 == 0 and len(out_b64.strip()) > 1000:
-            try:
-                data = base64.b64decode(out_b64.strip())
-            except:
-                pass
-
-    # Cơ chế 3: Pipe trực tiếp screencap qua base64
-    if not data:
-        code_pipe, out_pipe, _ = _run_root_capture("screencap -p | base64", timeout=8)
-        if code_pipe == 0 and len(out_pipe.strip()) > 1000:
-            try:
-                data = base64.b64decode(out_pipe.strip())
-            except:
-                pass
-
-    _run_root_capture(f"rm -f '{tmp_path}' 2>/dev/null", timeout=2)
-    return data
-
-def crop_and_encode_puzzle_image(png_bytes, crop_box, tag="OMO"):
-    """
-    Crop ảnh câu đố theo crop_box = (x1, y1, x2, y2) và trả về base64.
-    Hỗ trợ Pillow (nếu có), ImageMagick convert, hoặc fallback full image.
-    """
-    if not png_bytes or len(png_bytes) < 1000:
-        return None
-
-    x1, y1, x2, y2 = crop_box
-    x1, y1 = max(0, int(x1)), max(0, int(y1))
-
-    # 1. Thử dùng Pillow (PIL.Image)
-    try:
-        from PIL import Image
-        im = Image.open(io.BytesIO(png_bytes))
-        x2 = min(im.width, int(x2))
-        y2 = min(im.height, int(y2))
-        if x1 < x2 and y1 < y2:
-            cropped = im.crop((x1, y1, x2, y2))
-            buf = io.BytesIO()
-            cropped.save(buf, format="JPEG", quality=92)
-            add_log(f"[{tag}] {G}[✓ CROP] Đã crop ảnh câu đố ({x2-x1}x{y2-y1}) qua Pillow!{RESET}")
-            return base64.b64encode(buf.getvalue()).decode('utf-8')
-    except Exception as e:
-        add_log(f"[{tag}] {Y}[OMO] Pillow ({e}), đang dùng phương thức fallback...{RESET}")
-
-    # 2. Thử dùng ImageMagick 'convert' trên máy nếu có
-    tmp_in = "/data/local/tmp/crop_in.png"
-    tmp_out = "/data/local/tmp/crop_out.jpg"
-    try:
-        with open(tmp_in, "wb") as f:
-            f.write(png_bytes)
-        cw = int(x2 - x1)
-        ch = int(y2 - y1)
-        c, _, _ = _run_root_capture(f"convert '{tmp_in}' -crop {cw}x{ch}+{x1}+{y1} '{tmp_out}' 2>/dev/null", timeout=3)
-        if c == 0 and os.path.exists(tmp_out) and os.path.getsize(tmp_out) > 500:
-            with open(tmp_out, "rb") as f:
-                res = base64.b64encode(f.read()).decode('utf-8')
-            _run_root_capture(f"rm -f '{tmp_in}' '{tmp_out}' 2>/dev/null")
-            add_log(f"[{tag}] {G}[✓ CROP] Đã crop ảnh qua ImageMagick convert!{RESET}")
-            return res
-    except:
-        pass
-
-    # 3. Fallback: Dùng toàn bộ ảnh screenshot
-    add_log(f"[{tag}] {Y}[OMO] Gửi full screenshot tới OMO API...{RESET}")
-    return base64.b64encode(png_bytes).decode('utf-8')
-
-def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
-    """
-    Giải Captcha V1 (Arkose Match-Game / FunCaptcha) trực tiếp trong app Roblox bằng OMOCaptcha API:
-    - Quét XML uiautomator dump nhận biết giao diện câu đố Arkose.
-    - Tự động click 'Xác minh' / 'Bắt đầu câu đố' nếu ở trang bắt đầu.
-    - Trích xuất câu hỏi (question) và crop ảnh câu đố từ screencap.
-    - Gửi OMO API FuncaptchaImageTask để lấy số lần xoay (rotations = index - 1).
-    - Tự động click mũi tên phải 'rotations' lần và click Submit.
-    - Lặp qua từng vòng (1/3, 2/3, 3/3...) đến khi hoàn tất!
-    """
-    global OMOCAPTCHA_KEY
-    if not client_key:
-        client_key = load_omocaptcha_key()
-    if not client_key:
-        add_log(f"[{pkg[-12:] if pkg else 'OMO'}] {R}[OMO ERROR] Chưa có OMOCaptcha Key! Vào Menu [7]->[5] để nhập.{RESET}")
-        return {"detected": False, "solved": False, "error": "MISSING_KEY"}
-
-    tag = pkg[-12:] if pkg else "OMO_V1"
-
-    if pkg and not is_pkg_in_foreground(pkg):
-        if "chrome" in pkg.lower() or "browser" in pkg.lower():
-            _run_root_capture(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null", timeout=3)
-        else:
-            _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
-        time.sleep(2.0)
-
-    w, h = get_screen_resolution()
-    dump_file = "/data/local/tmp/dump_arkose.xml"
-
-    total_rounds_solved = 0
-    max_rounds = 10
-
-    keywords_verify = ["xác minh", "verify", "bắt đầu câu đố", "start puzzle", "bắt đầu", "authenticate", "descriptionverify", "home_children_button"]
-    keywords_match = ["sử dụng mũi tên", "use the arrows", "rotate", "arrow", "xoay", "hướng", "direction", "pick the", "chọn hình", "match the", "bàn tay", "con vật", "animal", "hand", "pair", "matching"]
-    keywords_submit = ["gửi", "submit", "hoàn thành", "done", "tiếp tục", "continue"]
-
-    for round_num in range(1, max_rounds + 1):
-        if stop_event and stop_event.is_set():
-            break
-
-        # Đảm bảo app Roblox hoặc trình duyệt vẫn ở Foreground
-        if pkg and not is_pkg_in_foreground(pkg):
-            if "chrome" in pkg.lower() or "browser" in pkg.lower():
-                _run_root_capture(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null", timeout=3)
-            else:
-                _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
-            time.sleep(2.0)
-
-        # Quét màn hình: ở vòng 1 cho phép đợi tối đa 3 lần dump nếu dialog đang render
-        has_arkose = False
-        xml_str = ""
-        max_dumps = 3 if round_num == 1 else 1
-        for dump_try in range(max_dumps):
-            _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
-            code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
-            _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
-
-            if code == 0 and xml_str:
-                xml_lower = xml_str.lower()
-                has_arkose = any(k in xml_lower for k in keywords_verify + keywords_match + ["arkoselabs", "funcaptcha"])
-                if has_arkose:
-                    break
-
-            if dump_try < max_dumps - 1:
-                time.sleep(2.0)
-
-        if not has_arkose:
-            if total_rounds_solved > 0:
-                add_log(f"[{tag}] {G}[✓ OMO THÀNH CÔNG] Đã giải qua {total_rounds_solved} vòng! Màn hình Captcha đã đóng.{RESET}")
-                return {"detected": True, "solved": True, "rounds": total_rounds_solved}
-            return {"detected": False, "solved": False}
-
-        try:
-            root = ET.fromstring(xml_str)
-        except Exception:
-            time.sleep(1)
-            continue
-
-        # 1. Đang trong câu đố: Tìm text câu hỏi (question) trước
-        question = ""
-        candidates_q = []
-        for node in root.iter('node'):
-            t = (node.get('text') or node.get('content-desc') or '').strip()
-            tl = t.lower()
-            if any(km in tl for km in keywords_match) and len(t) >= 6:
-                candidates_q.append(t)
-
-        is_puzzle_active = (len(candidates_q) > 0)
-
-        # 2. Kiểm tra màn hình Home (Nút Xác minh / Start Puzzle) - CHỈ KHI CHƯA Ở TRONG CÂU ĐỐ
-        if not is_puzzle_active:
-            verify_clicked = False
-            for node in root.iter('node'):
-                t = (node.get('text') or node.get('content-desc') or '').strip()
-                tl = t.lower()
-                bounds = node.get('bounds') or ''
-                m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-                if not m:
-                    continue
-                x1, y1, x2, y2 = map(int, m.groups())
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-
-                # Bỏ qua nếu là tiêu đề ở trên cùng (y < 22% chiều cao màn hình)
-                if cy < h * 0.22:
-                    continue
-
-                # Bỏ qua các câu văn tiêu đề/mô tả
-                if any(bad in tl for bad in ["verifying you", "verifying that", "not a bot", "not a robot", "xác minh rằng", "kiểm tra bảo mật"]):
-                    continue
-
-                # So khớp nút thật
-                is_btn = False
-                for kv in keywords_verify:
-                    if tl == kv or tl.startswith(kv) or tl.endswith(kv):
-                        is_btn = True
-                        break
-
-                if is_btn:
-                    add_log(f"[{tag}] {C}[OMO] Phát hiện nút '{t}'! Đang click ({cx}, {cy}) để bắt đầu câu đố...{RESET}")
-                    _run_root_capture(f"input tap {cx} {cy}")
-                    time.sleep(2.5)
-                    verify_clicked = True
-                    break
-
-            if verify_clicked:
-                continue
-
-        if candidates_q:
-            question = max(candidates_q, key=len)
-            question = question.split('(', 1)[0].strip().rstrip('.')
-        if not question:
-            question = "Use the arrows to rotate the animal to face in the direction of the hand"
-
-        # 3. Phân tích vùng chứa (Container/WebView) và tọa độ nút
-        container_bounds = None
-        for node in root.iter('node'):
-            cls = (node.get('class') or '').lower()
-            bounds = node.get('bounds') or ''
-            m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-            if m:
-                x1, y1, x2, y2 = map(int, m.groups())
-                cw, ch = x2 - x1, y2 - y1
-                if ('webview' in cls or 'dialog' in cls) and (cw >= w * 0.4 and ch >= h * 0.4):
-                    container_bounds = (x1, y1, x2, y2)
-                    break
-
-        if container_bounds:
-            bx1, by1, bx2, by2 = container_bounds
-            bcx, bcy = (bx1 + bx2) // 2, (by1 + by2) // 2
-            bw, bh = bx2 - bx1, by2 - by1
-        else:
-            bcx, bcy = w // 2, h // 2
-            bw, bh = w, h
-
-        is_landscape = (w >= h)
-
-        # Tìm nút Submit thật từ XML
-        submit_coords = None
-        for node in root.iter('node'):
-            t = (node.get('text') or node.get('content-desc') or '').strip().lower()
-            if any(sb in t for sb in keywords_submit) and len(t) <= 15:
-                bounds = node.get('bounds') or ''
-                m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-                if m:
-                    x1, y1, x2, y2 = map(int, m.groups())
-                    submit_coords = ((x1 + x2) // 2, (y1 + y2) // 2)
-                    break
-
-        if not submit_coords:
-            submit_coords = (bcx, int(by2 - bh * 0.12)) if container_bounds else (
-                (bcx, int(bcy + h * 0.28)) if is_landscape else (bcx, int(bcy + h * 0.22))
-            )
-
-        # Tọa độ Right Arrow và Left Arrow
-        if is_landscape:
-            right_arrow_coords = (int(bcx + bw * 0.22), bcy)
-            left_arrow_coords = (int(bcx + bw * 0.02), bcy)
-            crop_box = (
-                int(bcx - bw * 0.32),
-                int(bcy - bh * 0.25),
-                int(bcx + bw * 0.32),
-                int(submit_coords[1] - 10)
-            )
-        else:
-            right_arrow_coords = (int(bcx + bw * 0.30), bcy)
-            left_arrow_coords = (int(bcx + bw * 0.05), bcy)
-            crop_box = (
-                int(bcx - bw * 0.42),
-                int(bcy - bh * 0.20),
-                int(bcx + bw * 0.42),
-                int(submit_coords[1] - 10)
-            )
-
-        # 4. Chụp ảnh màn hình bằng quyền root
-        add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Đang chụp ảnh màn hình câu đố...{RESET}")
-        raw_png = capture_arkose_screen_image(tag)
-        if not raw_png:
-            add_log(f"[{tag}] {R}[OMO] Không thể chụp ảnh màn hình bằng root! Bỏ qua vòng {round_num}.{RESET}")
-            time.sleep(2)
-            continue
-
-        add_log(f"[{tag}] {G}[OMO VÒNG {round_num}] Đã chụp xong ({len(raw_png)//1024} KB), đang xử lý crop...{RESET}")
-        image_b64 = crop_and_encode_puzzle_image(raw_png, crop_box, tag)
-        if not image_b64:
-            add_log(f"[{tag}] {R}[OMO] Không thể mã hóa ảnh base64! Bỏ qua vòng {round_num}.{RESET}")
-            time.sleep(2)
-            continue
-
-        # 5. Gửi OMO API giải mã
-        add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Gửi câu hỏi: '{question[:32]}...' tới OMOCaptcha API...{RESET}")
-        try:
-            api_index = classify_match_image(client_key, image_b64, question, stop_event)
-        except OmoCaptchaError as err:
-            add_log(f"[{tag}] {R}[OMO LỖI] {err}{RESET}")
-            time.sleep(2.5)
-            continue
-
-        rotations = api_index - 1
-        add_log(f"[{tag}] {G}[OMO VÒNG {round_num}] API trả về Index={api_index} -> Cần xoay phải {rotations} lần.{RESET}")
-
-        # 6. Click xoay mũi tên phải 'rotations' lần
-        rx, ry = right_arrow_coords
-        if rotations > 0:
-            add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Đang click mũi tên phải tại ({rx}, {ry}) {rotations} lần...{RESET}")
-            for r in range(rotations):
-                _run_root_capture(f"input tap {rx} {ry}")
-                time.sleep(random.uniform(0.65, 0.95))
-        else:
-            add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Không cần xoay (rotations = 0).{RESET}")
-
-        time.sleep(random.uniform(0.6, 1.0))
-
-        # 7. Click nút Submit
-        sx, sy = submit_coords
-        add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Đang click Submit tại ({sx}, {sy})...{RESET}")
-        _run_root_capture(f"input tap {sx} {sy}")
-        add_log(f"[{tag}] {G}[OMO VÒNG {round_num}] Đã click Submit! Chờ kết quả...{RESET}")
-        total_rounds_solved += 1
-        time.sleep(3.5)
-
-    return {"detected": True, "solved": (total_rounds_solved > 0), "rounds": total_rounds_solved}
-
 def check_and_handle_account_health(pkg, states, current_time, force=False):
     """
     Kiểm tra trạng thái tài khoản qua Cookie trong app Roblox:
     - Nếu acc bị dính lỗi (NOT_APPROVED, CAPTCHA_CHECKPOINT, EXPIRED):
         + Cập nhật state: is_blocked=True, text, color, block_reason
         + Ghi add_log chi tiết cảnh báo
-        + Dừng process app để không tốn tài nguyên và không vào game
+        + Dừng process app để không tốn tài nguyên và tuyệt đối KHÔNG vào game
         + Trả về True (bị block)
     - Nếu acc bình thường (OK hoặc không tìm thấy cookie / lỗi mạng tạm thời):
         + Cập nhật state: is_blocked=False
@@ -4733,10 +2806,6 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
             if hb != -1 and (current_time - hb <= 120):
                 state['in_game'] = True
                 return False
-
-    # Nếu đang trong tiến trình giải captcha -> để tiến trình giải hoàn tất, không kích hoạt lặp
-    if not force and state.get('handling_captcha_solve'):
-        return False
 
     cookie = extract_roblox_cookie(pkg)
     if not cookie:
@@ -4798,43 +2867,30 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
         chal_type = res.get('challenge_type', '')
         msg_detail = res.get('message', '')
 
-        # Nếu đang trong tiến trình giải -> TUYỆT ĐỐI KHÔNG kill app và không restart app!
-        if state.get('handling_captcha_solve'):
-            return True
-
         state['in_game'] = False
-        state['handling_captcha_solve'] = True
-        state['captcha_solve_start'] = current_time
-        state['captcha_miss_count'] = 0
-        state['is_blocked'] = False
+        state['is_blocked'] = True
         state['block_reason'] = badge
+        # TẮT NGAY TIẾN TRÌNH APP: TUYỆT ĐỐI KHÔNG VÀO GAME KHI DÍNH CAPTCHA!
+        if is_app_running(pkg):
+            _kill_pkg(pkg)
 
-        # Phân biệt chuẩn xác giữa Captcha V1 (Arkose FunCaptcha) và Captcha V2 (Nhấn và Giữ):
         if chal_type in ['CAPTCHA_V1', 'ARKOSE_CAPTCHA'] or "V1" in badge or "Arkose" in badge:
             state['captcha_type'] = 'CAPTCHA_V1'
-            state['challenge_url'] = res.get('challenge_url') or ''
-            state['text'] = "Giải Captcha V1 (OMO)..."
-            state['color'] = M
+            state['text'] = "Chờ Cookie Sạch (V1)"
+            state['color'] = Y
             add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
-            add_log(f"[{pkg[-12:]}] {M}[CAPTCHA V1 CHROME] Kích hoạt giải Arkose qua Chrome OMO...{RESET}")
+            add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V1] Không vào game! Đã tắt app, chờ đến khi Cookie sạch lại sẽ tự Rejoin...{RESET}")
         else:
             state['captcha_type'] = 'CAPTCHAV2'
-            state['text'] = "Bắn Game Giữ Nút..."
+            state['text'] = "Dính Captcha V2 (Chờ)"
             state['color'] = Y
-            add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail} (Lua vẫn gửi heartbeat){RESET}")
-            add_log(f"[{pkg[-12:]}] {C}[CAPTCHA V2 IN-APP] Kích hoạt chế độ giải Nhấn và Giữ...{RESET}")
+            add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
+            add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Tạm dừng vào game, chờ kiểm tra lại...{RESET}")
 
-        # BẬT APP VÀ BẮN VÀO GAME ĐỂ HIỂN THỊ BẢNG CAPTCHA LÊN MÀN HÌNH (CHỈ 1 LẦN KHI BẮT ĐẦU GIẢI)
-        add_log(f"[{pkg[-12:]}] {C}[CAPTCHA] Bật app Roblox và mở game để hiển thị bảng Captcha...{RESET}")
-        launch_roblox_to_game(pkg)
-        state['captcha_app_launched'] = True
-        state['last_captcha_app_launch'] = current_time
         return True
     elif status == 'OK':
-        if state.get('is_blocked') or state.get('handling_captcha_solve'):
+        if state.get('is_blocked'):
             state['is_blocked'] = False
-            state['handling_captcha_solve'] = False
-            state['captcha_app_launched'] = False
             state['block_reason'] = ''
             u_name = res.get('username') or state.get('bound_name') or 'Acc'
             add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] Acc {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
@@ -4854,13 +2910,11 @@ def account_captcha_check_menu():
         print(f"[{C}1{RESET}] Kiểm tra các Package ĐANG ĐƯỢC CHỌN (trong Mục [1])")
         print(f"[{C}2{RESET}] Quét TẤT CẢ Package Roblox trên máy và kiểm tra từng Acc")
         print(f"[{C}3{RESET}] Nhập trực tiếp chuỗi Cookie để test ngay")
-        print(f"[{C}4{RESET}] Quét MÀN HÌNH App Roblox xem có dính popup 'Bảo Mật / Nhấn và Giữ' (và tự giữ)")
+        print(f"[{C}4{RESET}] Quét MÀN HÌNH App Roblox phát hiện Captcha V1 / V2 (Chống treo máy)")
         print(f"[{C}5{RESET}] Cấu hình / Nhập OMOCaptcha API Key (Key: {G}{mask_secret(OMOCAPTCHA_KEY)}{RESET})")
-        print(f"[{C}6{RESET}] Test giải Captcha V1 bằng Google Chrome (DrissionPage CDP + OMOCaptcha)")
-        print(f"[{C}7{RESET}] Quét màn hình & Test giải Captcha V1 trực tiếp in-app (Screencap + OMO)")
-        print(f"[{C}8{RESET}] Quay lại Menu chính")
+        print(f"[{C}6{RESET}] Quay lại Menu chính")
         fix_tty()
-        c = safe_input(f"\n{M}Chọn [1-8]: {RESET}").strip()
+        c = safe_input(f"\n{M}Chọn [1-6]: {RESET}").strip()
         if c == '1':
             if not selected_packages:
                 print(f"\n{R}[!] Chưa chọn package nào ở Mục [1]!{RESET}")
@@ -4909,23 +2963,42 @@ def account_captcha_check_menu():
             try: input()
             except: pass
         elif c == '4':
-            print(f"\n{Y}[*] Đang quét màn hình thiết bị tìm popup 'Bảo Mật / Nhấn và Giữ'...{RESET}")
-            res = detect_press_and_hold_screen(auto_solve=True)
+            print(f"\n{Y}[*] Đang quét màn hình thiết bị tìm popup Captcha V1 / V2 (Chống treo)...{RESET}")
+            res = detect_in_app_captcha()
             if res.get("detected"):
-                print(f"\n{G}╔═══════════════════════════════════════════════════════════╗{RESET}")
-                print(f"{G}║   [✓] PHÁT HIỆN POPUP BẢO MẬT: 'NHẤN VÀ GIỮ' TRÊN APP!    ║{RESET}")
-                print(f"{G}╚═══════════════════════════════════════════════════════════╝{RESET}")
-                print(f"  • Tiêu đề:       {C}Bảo Mật (Security Challenge){RESET}")
-                print(f"  • Yêu cầu:       {W}Nhấn giữ nút để xác nhận bạn là người thật.{RESET}")
-                print(f"  • ID tham chiếu: {C}{res.get('ref_id', 'N/A')}{RESET}")
-                if res.get("btn_coords"):
-                    print(f"  • Tọa độ nút:    Pixel {res['btn_coords']}")
-                if res.get("solved"):
-                    print(f"\n{G}[✓] ĐÃ TỰ ĐỘNG GIỮ NÚT 15s VÀ GIẢI XONG THÀNH CÔNG!{RESET}")
-                else:
-                    print(f"\n{Y}[!] Đã thực hiện thao tác nhấn giữ 15s lên nút. Hãy kiểm tra màn hình điện thoại!{RESET}")
+                c_t = res.get("type")
+                if c_t == "CAPTCHA_V1":
+                    print(f"\n{R}╔═══════════════════════════════════════════════════════════╗{RESET}")
+                    print(f"{R}║   [!] PHÁT HIỆN CAPTCHA V1 (ARKOSE PUZZLE) TRÊN APP!      ║{RESET}")
+                    print(f"{R}╚═══════════════════════════════════════════════════════════╝{RESET}")
+                    print(f"  • Loại:          {W}Arkose FunCaptcha (Vòng xoay/ghép hình){RESET}")
+                    print(f"  • Trạng thái:    {Y}Không nên vào game lúc này để tránh kẹt.{RESET}")
+                    print(f"  • Cơ chế:        {G}Tool sẽ tự động tắt app và chờ cookie sạch lại rồi tự Rejoin.{RESET}")
+                elif c_t == "CAPTCHAV2":
+                    print(f"\n{G}╔═══════════════════════════════════════════════════════════╗{RESET}")
+                    print(f"{G}║   [✓] PHÁT HIỆN POPUP BẢO MẬT: 'NHẤN VÀ GIỮ' TRÊN APP!    ║{RESET}")
+                    print(f"{G}╚═══════════════════════════════════════════════════════════╝{RESET}")
+                    print(f"  • Tiêu đề:       {C}Bảo Mật (Security Challenge / Captcha V2){RESET}")
+                    print(f"  • Yêu cầu:       {W}Nhấn giữ nút để xác nhận bạn là người thật.{RESET}")
+                    print(f"  • ID tham chiếu: {C}{res.get('ref_id', 'N/A')}{RESET}")
+                    if res.get("btn_coords"):
+                        print(f"  • Tọa độ nút:    Pixel {res['btn_coords']}")
+                        fix_tty()
+                        test_hold = safe_input(f"\n{M}Bạn có muốn tự động nhấn giữ 16s thử nghiệm không? (y/N): {RESET}").strip().lower()
+                        if test_hold == 'y':
+                            cx, cy = res["btn_coords"]
+                            print(f"{Y}[*] Đang giữ nút tại ({cx}, {cy}) 16s...{RESET}")
+                            safe_root(f"su -c 'input tap {cx} {cy}'", timeout=3)
+                            time.sleep(0.3)
+                            safe_root(f"su -c 'input swipe {cx} {cy} {cx} {cy} 16000'", timeout=20)
+                            time.sleep(2.5)
+                            re_chk = detect_in_app_captcha()
+                            if not re_chk.get("detected"):
+                                print(f"{G}[✓] ĐÃ VƯỢT QUA 'NHẤN VÀ GIỮ' THÀNH CÔNG!{RESET}")
+                            else:
+                                print(f"{Y}[!] Vẫn còn trên màn hình sau khi giữ.{RESET}")
             else:
-                print(f"\n{C}[i] Màn hình hiện tại không có popup 'Bảo Mật / Nhấn và Giữ'.{RESET}")
+                print(f"\n{C}[i] Màn hình hiện tại không có popup Captcha V1 hay V2.{RESET}")
             fix_tty()
             print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
             try: input()
@@ -4941,68 +3014,6 @@ def account_captcha_check_menu():
                     print(f"{R}[!] Lỗi lưu file omocaptcha_key.txt!{RESET}")
             time.sleep(1.5)
         elif c == '6':
-            print(f"\n{C}=== TEST GIẢI CAPTCHA V1 BẰNG GOOGLE CHROME (CDP + OMOCAPTCHA) ==={RESET}")
-            if not OMOCAPTCHA_KEY:
-                print(f"{R}[!] Chưa cấu hình OMOCaptcha Key! Hãy chọn Mục [5] để nhập Key trước.{RESET}")
-                time.sleep(2)
-                continue
-            test_c = None
-            if selected_packages:
-                test_c = extract_roblox_cookie(selected_packages[0]['pkg'])
-            if not test_c:
-                fix_tty()
-                test_c = safe_input(f"{M}Nhập Cookie .ROBLOSECURITY để nạp vào Chrome (hoặc Enter để quét tự động): {RESET}").strip()
-            if not test_c:
-                print(f"{Y}[*] Đang tự động quét Cookie từ các package Roblox trên máy...{RESET}")
-                all_pkgs = scan_packages()
-                for p in all_pkgs:
-                    sc = extract_roblox_cookie(p)
-                    if sc:
-                        test_c = sc
-                        print(f"{G}[✓] Đã tìm thấy tài khoản từ package: {p}{RESET}")
-                        break
-            if not test_c:
-                print(f"{R}[!] Không tìm thấy tài khoản nào có Cookie trên thiết bị!{RESET}")
-                print(f"{Y}[i] Vui lòng nhập Cookie bằng tay hoặc đăng nhập 1 acc Roblox trước.{RESET}")
-                fix_tty()
-                test_c = safe_input(f"{M}Nhập Cookie ngay (Enter để hủy): {RESET}").strip()
-                if not test_c:
-                    time.sleep(1.5)
-                    continue
-
-            pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
-            print(f"\n{Y}[*] Đang khởi động Google Chrome và nạp tài khoản Roblox...{RESET}")
-            c_res = solve_arkose_with_chrome_omo(test_c, place_id=pid, client_key=OMOCAPTCHA_KEY)
-            if c_res.get("solved"):
-                print(f"\n{G}[✓] ĐÃ GIẢI XONG THÀNH CÔNG CAPTCHA V1 TRÊN GOOGLE CHROME! (Số vòng: {c_res.get('rounds', 1)}){RESET}")
-            elif c_res.get("detected"):
-                print(f"\n{Y}[!] Đã phát hiện giao diện Arkose trên Chrome nhưng chưa giải xong. Thử chạy lại!{RESET}")
-            else:
-                print(f"\n{C}[i] {c_res.get('message', 'Không phát hiện thấy iframe Arkose FunCaptcha trên Chrome.')}{RESET}")
-            fix_tty()
-            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
-            try: input()
-            except: pass
-        elif c == '7':
-            print(f"\n{C}=== TEST GIẢI CAPTCHA V1 ARKOSE TRỰC TIẾP IN-APP (OMOCAPTCHA) ==={RESET}")
-            if not OMOCAPTCHA_KEY:
-                print(f"{R}[!] Chưa cấu hình OMOCaptcha Key! Hãy chọn Mục [5] để nhập Key trước.{RESET}")
-                time.sleep(2)
-                continue
-            target_p = selected_packages[0]['pkg'] if selected_packages else None
-            print(f"{Y}[*] Đang quét màn hình thiết bị và kích hoạt bộ giải OMOCaptcha in-app...{RESET}")
-            res_omo = solve_arkose_in_app_with_omo(target_p, OMOCAPTCHA_KEY)
-            if res_omo.get("solved"):
-                print(f"\n{G}[✓] ĐÃ GIẢI XONG THÀNH CÔNG CAPTCHA V1 TRỰC TIẾP TRONG APP! (Số vòng: {res_omo.get('rounds', 1)}){RESET}")
-            elif res_omo.get("detected"):
-                print(f"\n{Y}[!] Đã phát hiện giao diện Arkose nhưng chưa giải xong vòng hiện tại. Thử chạy lại!{RESET}")
-            else:
-                print(f"\n{C}[i] Không phát hiện thấy giao diện Arkose FunCaptcha trên màn hình hiện tại.{RESET}")
-            fix_tty()
-            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
-            try: input()
-            except: pass
-        elif c == '8':
             break
 
 # =====================================================================
@@ -5025,187 +3036,17 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             uptime_seconds = current_time - state['rejoin_time']
 
             # === MANDATORY PERIODIC COOKIE CHECK (MỖI 60S LUÔN CHECK BẤT KỂ LUA CÓ GỬI HEARTBEAT) ===
-            # Bỏ qua khi đang giải captcha để không ngắt quãng quá trình giải
             last_mandatory_chk = state.get('last_mandatory_cookie_check', 0)
-            if not state.get('handling_captcha_solve') and (current_time - last_mandatory_chk >= MANDATORY_COOKIE_CHECK_INTERVAL) and (AUTO_CHECK_ACC_HEALTH == "Enable"):
+            if (current_time - last_mandatory_chk >= MANDATORY_COOKIE_CHECK_INTERVAL) and (AUTO_CHECK_ACC_HEALTH == "Enable"):
                 state['last_mandatory_cookie_check'] = current_time
                 chk_res = check_and_handle_account_health(pkg, states, current_time, force=True)
                 if chk_res:
                     stop_event.wait(3)
                     continue
 
-            # === XỬ LÝ TỰ ĐỘNG GIẢI CAPTCHA (V1 BẰNG OMO API / V2 BẰNG NHẤN VÀ GIỮ) ===
-            if state.get('handling_captcha_solve'):
-                solve_elapsed = current_time - state.get('captcha_solve_start', current_time)
-                time_left_solve = max(0, int(90 - solve_elapsed))
-                state['text'] = f"Đang Giải ({time_left_solve}s)"
-                state['color'] = Y
-
-                # 1. KIỂM TRA ĐỊNH KỲ QUA API XEM ACC ĐÃ SẠCH CHƯA
-                cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
-                if cookie and (current_time - state.get('last_solve_api_chk', 0) >= 8):
-                    state['last_solve_api_chk'] = current_time
-                    try:
-                        api_chk = check_roblox_account_status(cookie)
-                        if api_chk.get('status') == 'OK':
-                            add_log(f"[{pkg[-12:]}] {G}[✓ ĐÃ GIẢI XONG] API xác nhận Cookie đã sạch (OK)! Rejoin vào game...{RESET}")
-                            state['handling_captcha_solve'] = False
-                            state['is_blocked'] = False
-                            state['block_reason'] = ''
-                            state['account_status'] = 'OK'
-                            state['captcha_miss_count'] = 0
-                            state['captcha_app_launched'] = False
-                            with pkg_restart_locks[pkg]:
-                                force_restart_app(pkg, states, current_time, "Đã Giải Xong -> Rejoin", G)
-                            last_ok_ping[pkg] = current_time
-                            stop_event.wait(5)
-                            continue
-                    except Exception:
-                        pass
-
-                # Đảm bảo app Roblox đã được bật và đưa lên màn hình
-                last_launch = state.get('last_captcha_app_launch', 0)
-                if not is_app_running(pkg):
-                    add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA] App chưa chạy, đang bật lại Roblox vào game...{RESET}")
-                    launch_roblox_to_game(pkg)
-                    state['last_captcha_app_launch'] = current_time
-                    state['captcha_app_launched'] = True
-                    stop_event.wait(5)
-                elif not state.get('captcha_app_launched'):
-                    add_log(f"[{pkg[-12:]}] {C}[CAPTCHA] Bật app Roblox và mở game để hiển thị bảng Captcha...{RESET}")
-                    launch_roblox_to_game(pkg)
-                    state['captcha_app_launched'] = True
-                    state['last_captcha_app_launch'] = current_time
-                    stop_event.wait(5)
-                elif not is_pkg_in_foreground(pkg):
-                    # Nếu app đang chạy nhưng bị Termux che: đưa Roblox lên foreground (không reload game)
-                    _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
-                    time.sleep(2.0)
-                elif (current_time - last_launch >= 35) and not state.get('in_game') and solve_elapsed < 80:
-                    # Nếu đã quá 35s mà chưa vào được game/chưa hiện captcha: thử bắn lại vào game 1 lần
-                    add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA] Đang bắn lại vào game để kích hoạt bảng Captcha...{RESET}")
-                    launch_roblox_to_game(pkg)
-                    state['last_captcha_app_launch'] = current_time
-                    stop_event.wait(5)
-
-                # 2. XỬ LÝ THEO LOẠI CAPTCHA:
-                # Nếu là Captcha V1 (Arkose FunCaptcha): Dùng Google Chrome CDP + OMOCaptcha API (hoặc in-app fallback)
-                if state.get('captcha_type') == 'CAPTCHA_V1':
-                    cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
-                    pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
-
-                    # ƯU TIÊN 1: Giải trên Chrome qua CDP (Canvas JS + OMOCaptcha API, không cần Extension)
-                    add_log(f"[{pkg[-12:]}] {C}[CAPTCHA V1] Thử giải qua Google Chrome (CDP + OMOCaptcha API)...{RESET}")
-                    chal_url = state.get('challenge_url') or None
-                    chrome_res = solve_arkose_with_chrome_omo(cookie, place_id=pid, client_key=OMOCAPTCHA_KEY, stop_event=stop_event, pkg=pkg, challenge_url=chal_url)
-                    if chrome_res.get("solved"):
-                        add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã giải xong Captcha V1 trên Chrome bằng OMOCaptcha! Rejoin...{RESET}")
-                        state['handling_captcha_solve'] = False
-                        state['is_blocked'] = False
-                        state['block_reason'] = ''
-                        state['account_status'] = 'OK'
-                        state['last_acc_check'] = current_time
-                        state['rejoin_time'] = current_time
-                        state['warmup_until'] = current_time + 45
-                        state['captcha_app_launched'] = False
-                        with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, "Chrome OMO V1 Xong -> Rejoin", G)
-                        last_ok_ping[pkg] = current_time
-                        stop_event.wait(5)
-                        continue
-
-                    # ƯU TIÊN 2 (Dự phòng): Giải trực tiếp trong app Roblox nếu Chrome không giải được
-                    add_log(f"[{pkg[-12:]}] {Y}[FALLBACK] Chuyển sang giải trực tiếp trong app Roblox bằng OMOCaptcha...{RESET}")
-                    omo_res = solve_arkose_in_app_with_omo(pkg, OMOCAPTCHA_KEY, stop_event)
-                    if omo_res.get("solved"):
-                        add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã giải xong Captcha V1 bằng OMOCaptcha API in-app! Rejoin...{RESET}")
-                        state['handling_captcha_solve'] = False
-                        state['is_blocked'] = False
-                        state['block_reason'] = ''
-                        state['account_status'] = 'OK'
-                        state['last_acc_check'] = current_time
-                        state['rejoin_time'] = current_time
-                        state['warmup_until'] = current_time + 45
-                        state['captcha_app_launched'] = False
-                        with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, "OMO V1 Xong -> Rejoin", G)
-                        last_ok_ping[pkg] = current_time
-                        stop_event.wait(5)
-                        continue
-                    elif not omo_res.get("detected"):
-                        if current_time - state.get('last_omo_wait_log', 0) >= 20:
-                            state['last_omo_wait_log'] = current_time
-                            add_log(f"[{pkg[-12:]}] {C}[OMO V1] Đang chờ bảng câu đố Arkose hiển thị trên màn hình...{RESET}")
-                else:
-                    # Captcha V2: Thử Nhấn và Giữ
-                    current_attempt = state.get('captcha_miss_count', 0) + 1
-                    sec_res = detect_press_and_hold_screen(pkg, auto_solve=True, attempt=current_attempt)
-                    if sec_res.get("detected"):
-                        if sec_res.get("solved"):
-                            add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã nhấn giữ 16s vượt qua CaptchaV2! Acc đã sạch!{RESET}")
-                            state['handling_captcha_solve'] = False
-                            state['is_blocked'] = False
-                            state['block_reason'] = ''
-                            state['account_status'] = 'OK'
-                            state['captcha_miss_count'] = 0
-                            state['text'] = "Đã Giải Xong -> Game"
-                            state['color'] = G
-                            state['last_acc_check'] = current_time
-                            state['rejoin_time'] = current_time
-                            state['warmup_until'] = current_time + 45
-                            stop_event.wait(5)
-                            continue
-                        elif sec_res.get("type") == "ARKOSE_PUZZLE":
-                            # Phát hiện thực ra là Arkose V1!
-                            state['captcha_type'] = 'CAPTCHA_V1'
-                            add_log(f"[{pkg[-12:]}] {M}[CHUYỂN HƯỚNG] Phát hiện màn hình Arkose FunCaptcha -> Chuyển sang giải OMO in-app...{RESET}")
-                            continue
-                        else:
-                            state['captcha_miss_count'] = state.get('captcha_miss_count', 0) + 1
-                            add_log(f"[{pkg[-12:]}] {Y}[FALLBACK] Nhấn giữ lần {state['captcha_miss_count']} miss -> Thử lại với tọa độ bù trừ...{RESET}")
-
-                # Fallback: Xóa cache phiên và khởi động lại game để reset thử thách nếu kẹt lâu
-                if solve_elapsed >= 75 and state.get('captcha_miss_count', 0) >= 3:
-                    add_log(f"[{pkg[-12:]}] {Y}[FALLBACK] Thử xóa cache app và khởi động lại để reset thử thách...{RESET}")
-                    safe_root(f"rm -rf /data/data/{pkg}/cache/* /data/data/{pkg}/code_cache/* 2>/dev/null || true")
-                    _kill_pkg(pkg)
-                    time.sleep(2)
-                    launch_roblox_to_game(pkg)
-                    state['captcha_solve_start'] = current_time
-                    state['captcha_miss_count'] = 0
-
-                # Nếu tài khoản đã vào được trong game (có heartbeat checkhudyhub)
-                bound_curr = state.get('bound_name')
-                hb_curr = get_heartbeat(bound_curr, pkg) if bound_curr else -1
-                if state.get('in_game') or (hb_curr != -1 and current_time - hb_curr <= 120):
-                    add_log(f"[{pkg[-12:]}] {G}[✓] Phát hiện tài khoản đã vào game thành công (vượt qua Captcha)!{RESET}")
-                    state['handling_captcha_solve'] = False
-                    state['captcha_app_launched'] = False
-                    state['is_blocked'] = False
-                    state['block_reason'] = ''
-                    state['account_status'] = 'OK'
-                    state['captcha_miss_count'] = 0
-                    state['in_game'] = True
-                    state['last_acc_check'] = current_time
-                    continue
-
-                # Nếu hết 90s mà không giải được
-                if solve_elapsed >= 90:
-                    c_name = "Captcha V1 (Arkose OMO)" if state.get('captcha_type') == 'CAPTCHA_V1' else "Captcha V2 (Nhấn và Giữ)"
-                    add_log(f"[{pkg[-12:]}] {R}[!] Hết 90s giải {c_name}. Tạm dừng để tránh treo máy.{RESET}")
-                    state['handling_captcha_solve'] = False
-                    state['captcha_app_launched'] = False
-                    state['is_blocked'] = True
-                    state['block_reason'] = f"Dính {c_name}"
-                    state['last_acc_check'] = current_time
-                    _kill_pkg(pkg)
-
-                stop_event.wait(3)
-                continue
-
-            # === KIỂM TRA TRẠNG THÁI ACC ĐANG BỊ KẸT (NOT_APPROVED / CAPTCHA / EXPIRED) ===
+            # === KIỂM TRA TRẠNG THÁI ACC ĐANG BỊ KẸT (NOT_APPROVED / CAPTCHA V1 / V2 / EXPIRED) ===
             if state.get('is_blocked'):
-                # Acc đang bị dính: KHÔNG VÀO GAME! Đảm bảo app tắt để không tốn tài nguyên
+                # Acc đang bị dính: TUYỆT ĐỐI KHÔNG VÀO GAME! Đảm bảo app tắt để không tốn tài nguyên
                 if is_app_running(pkg):
                     _kill_pkg(pkg)
 
@@ -5215,96 +3056,55 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 time_left = max(0, int(recheck_interval - time_passed))
 
                 short_reason = state.get('block_reason', 'Kẹt Acc')
-                if "Not-Approved" in short_reason or "not-approved" in short_reason.lower():
-                    lbl = "Kẹt Not-Approved"
-                elif "Nhấn và Giữ" in short_reason or "Nhấn&Giữ" in short_reason or "Press & Hold" in short_reason or "Bảo Mật" in short_reason:
+                if "v1" in short_reason.lower() or "arkose" in short_reason.lower() or state.get('captcha_type') == 'CAPTCHA_V1':
+                    lbl = "Chờ Cookie Sạch (V1)"
+                elif "captchav2" in short_reason.lower() or "nhấn và giữ" in short_reason.lower() or "nhấn&giữ" in short_reason.lower():
                     lbl = "Dính Nhấn&Giữ"
-                elif "v1" in short_reason.lower() or "arkose" in short_reason.lower():
-                    lbl = "Dính CaptchaV1"
-                elif "captchav2" in short_reason.lower() or "captchav2" in str(state.get('account_status')).lower():
-                    lbl = "Dính CaptchaV2"
-                elif "Captcha" in short_reason or "captcha" in short_reason.lower():
-                    lbl = "Dính Captcha"
-                elif "401" in short_reason or "Hết Hạn" in short_reason:
+                elif "not-approved" in short_reason.lower():
+                    lbl = "Kẹt Not-Approved"
+                elif "401" in short_reason or "hết hạn" in short_reason.lower():
                     lbl = "Cookie Die (401)"
                 else:
-                    lbl = short_reason[:15]
+                    lbl = short_reason[:18]
 
                 state['text'] = f"{lbl} ({time_left}s)"
-                state['color'] = R if ("Not-Approved" in short_reason or "401" in short_reason or "Hết Hạn" in short_reason) else Y
+                state['color'] = R if ("not-approved" in short_reason.lower() or "401" in short_reason) else Y
 
-                # Đến chu kỳ kiểm tra lại xem acc đã giải chưa
+                # Đến chu kỳ kiểm tra lại xem acc đã sạch chưa
                 if time_passed >= recheck_interval:
-                    cookie = extract_roblox_cookie(pkg)
-                    if cookie and state.get('cached_cookie') and state['cached_cookie'] != cookie:
-                        add_log(f"[{pkg[-12:]}] {G}[ĐỔI ACC] Phát hiện cookie mới trong app!{RESET}")
-                        state['is_blocked'] = False
-                        state['block_reason'] = ''
-                        state['bound_name'] = None
-                        state['display_name'] = 'Đang đồng bộ...'
-
-                    if not cookie:
-                        cookie = state.get('cached_cookie')
-
+                    cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
                     state['last_acc_check'] = current_time
                     if cookie:
                         state['cached_cookie'] = cookie
-                        res = check_roblox_account_status(cookie)
+                        try:
+                            res = check_roblox_account_status(cookie)
+                        except Exception:
+                            res = {"status": "ERROR"}
+
                         if res.get('username'):
                             state['bound_name'] = res['username']
                             state['display_name'] = res['username']
 
                         if res.get('status') == 'OK':
-                            # Acc đã được giải hoặc acc mới sạch! Tiến hành Rejoin
+                            # Acc đã sạch hoàn toàn! Tiến hành Rejoin vào game
                             state['is_blocked'] = False
                             state['block_reason'] = ''
                             state['account_status'] = 'OK'
-                            state['text'] = "Acc Sạch -> Rejoin..."
+                            state['text'] = "Cookie Sạch -> Rejoin..."
                             state['color'] = G
-                            u_name = res.get('username') or state.get('bound_name') or 'Acc'
-                            add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
+                            u_name = res.get('username') or state.get('bound_name') or 'Roblox'
+                            add_log(f"[{pkg[-12:]}] {G}[✓ COOKIE SẠCH] Acc {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
                             with pkg_restart_locks[pkg]:
-                                force_restart_app(pkg, states, current_time, "Acc Sạch -> Rejoin", G)
+                                force_restart_app(pkg, states, current_time, "Cookie Sạch -> Rejoin", G)
                             last_ok_ping[pkg] = current_time
                             stop_event.wait(5)
                             continue
-                        elif res.get('status') == 'CAPTCHA_CHECKPOINT':
-                            chal = res.get('challenge_type', '')
-                            if chal in ['CAPTCHA_V1', 'ARKOSE_CAPTCHA'] or "V1" in res.get('badge', '') or "Arkose" in res.get('badge', ''):
-                                badge = res.get('badge', 'Dính Captcha V1')
-                                state['is_blocked'] = False
-                                state['handling_captcha_solve'] = True
-                                state['captcha_type'] = 'CAPTCHA_V1'
-                                state['challenge_url'] = res.get('challenge_url') or ''
-                                state['captcha_solve_start'] = current_time
-                                state['captcha_miss_count'] = 0
-                                state['text'] = "Giải Captcha V1 (OMO)..."
-                                state['color'] = M
-                                add_log(f"[{pkg[-12:]}] {M}[CAPTCHA V1 CHROME] Bắt link Hybrid Challenge & mở Chrome giải OMO...{RESET}")
-                                launch_roblox_to_game(pkg)
-                                stop_event.wait(3)
-                                continue
-                            else:
-                                # Khi recheck thấy dính CaptchaV2 (Nhấn và Giữ) -> Bắn vào game tự giữ nút
-                                add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Bắn vào game để kích hoạt bảng 'Nhấn và Giữ' tự giải...{RESET}")
-                                state['is_blocked'] = False
-                                state['handling_captcha_solve'] = True
-                                state['captcha_solve_start'] = current_time
-                                state['captcha_miss_count'] = 0
-                                state['text'] = "Bắn Game Giải Captcha..."
-                                state['color'] = Y
-                                launch_roblox_to_game(pkg)
-                                stop_event.wait(3)
-                                continue
                         else:
-                            # Vẫn đang bị dính Not-Approved hoặc Cookie Die
-                            state['is_blocked'] = True
-                            badge = res.get('badge', 'Kẹt Acc')
+                            # Vẫn chưa sạch (vẫn còn Captcha V1 / V2 / Not-Approved)
+                            badge = res.get('badge', short_reason)
                             state['block_reason'] = badge
                             state['account_status'] = res.get('status')
-                            if res.get('status') == 'NOT_APPROVED':
-                                handle_not_approved_in_app(pkg)
-                            add_log(f"[{pkg[-12:]}] Vẫn {badge} (chờ tiếp {recheck_interval}s)")
+                            add_log(f"[{pkg[-12:]}] {Y}[CHỜ COOKIE] Acc vẫn {badge}. Tiếp tục chờ {recheck_interval}s...{RESET}")
                     else:
                         add_log(f"[{pkg[-12:]}] Chưa lấy được Cookie để kiểm tra lại.")
 
@@ -5318,31 +3118,70 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 stop_event.wait(5)
                 continue
 
-            # === KIỂM TRA POPUP 'BẢO MẬT / NHẤN VÀ GIỮ' KHI APP ĐANG CHẠY MÀ CHƯA VÀO ĐƯỢC GAME ===
+            # === KIỂM TRA PHÁT HIỆN CAPTCHA V1 / V2 TRONG APP (CHỐNG TREO MÁY) ===
             bound = state.get('bound_name')
             hb = get_heartbeat(bound, pkg) if bound else -1
             if hb != -1 and (current_time - hb <= 120):
                 state['in_game'] = True
 
-            if uptime_seconds > 15 and is_app_running(pkg) and not state.get('in_game'):
+            if uptime_seconds > 10 and is_app_running(pkg) and not state.get('in_game'):
                 last_scr_chk = state.get('last_screen_security_check', 0)
                 if current_time - last_scr_chk >= 8:
                     state['last_screen_security_check'] = current_time
-                    sec_res = detect_press_and_hold_screen(pkg, auto_solve=True)
-                    if sec_res.get("detected"):
-                        ref = sec_res.get('ref_id', 'N/A')
-                        if sec_res.get("solved"):
-                            add_log(f"[{pkg[-12:]}] {G}[BẢO MẬT] Đã tự động 'Nhấn và Giữ' thành công! Đang vào game...{RESET}")
+                    cap_res = detect_in_app_captcha(pkg, auto_solve_v2=False)
+                    if cap_res.get("detected"):
+                        c_type = cap_res.get("type")
+                        if c_type == "CAPTCHA_V1":
+                            add_log(f"[{pkg[-12:]}] {R}[PHÁT HIỆN CAPTCHA V1 TRONG APP] Game bị chặn bởi câu đố Arkose FunCaptcha!{RESET}")
+                            add_log(f"[{pkg[-12:]}] {Y}[CHỐNG TREO] Đã tắt app ngay lập tức để không bị treo. Chuyển sang chờ Cookie sạch...{RESET}")
+                            _kill_pkg(pkg)
+                            state['is_blocked'] = True
+                            state['in_game'] = False
+                            state['captcha_type'] = 'CAPTCHA_V1'
+                            state['block_reason'] = 'Dính Captcha V1 Trong App'
+                            state['text'] = 'Dính V1 App -> Tắt App Chờ'
+                            state['color'] = Y
                             state['last_acc_check'] = current_time
-                            state['rejoin_time'] = current_time
-                            state['warmup_until'] = current_time + 45
-                        else:
-                            add_log(f"[{pkg[-12:]}] {Y}[BẢO MẬT] Phát hiện màn hình 'Nhấn và Giữ' (ID: {ref[:8]}..)! Đang chuyển chế độ giữ nút...{RESET}")
-                            state['handling_captcha_solve'] = True
-                            state['captcha_solve_start'] = current_time
-                            state['captcha_miss_count'] = 0
-                            stop_event.wait(2)
+                            stop_event.wait(5)
                             continue
+                        elif c_type == "CAPTCHAV2":
+                            ref = cap_res.get('ref_id', 'N/A')
+                            coords = cap_res.get('btn_coords')
+                            attempts = state.get('v2_in_app_attempts', 0) + 1
+                            state['v2_in_app_attempts'] = attempts
+
+                            if attempts <= 2 and coords:
+                                cx, cy = coords
+                                add_log(f"[{pkg[-12:]}] {Y}[BẢO MẬT] Phát hiện 'Nhấn và Giữ' in-app (Lần {attempts}/2, ID: {ref[:8]}..)! Đang giữ nút ({cx}, {cy}) 16s...{RESET}")
+                                safe_root(f"su -c 'input tap {cx} {cy}'", timeout=3)
+                                time.sleep(0.3)
+                                safe_root(f"su -c 'input swipe {cx} {cy} {cx} {cy} 16000'", timeout=20)
+                                time.sleep(2.5)
+
+                                # Kiểm tra lại xem đã qua chưa
+                                re_chk = detect_in_app_captcha(pkg)
+                                if not re_chk.get("detected") or re_chk.get("type") != "CAPTCHAV2":
+                                    add_log(f"[{pkg[-12:]}] {G}[✓ BẢO MẬT] Đã giữ 16s thành công vượt qua 'Nhấn và Giữ'! Đang nạp game...{RESET}")
+                                    state['v2_in_app_attempts'] = 0
+                                    state['rejoin_time'] = current_time
+                                    state['warmup_until'] = current_time + 45
+                                    stop_event.wait(3)
+                                    continue
+                                else:
+                                    add_log(f"[{pkg[-12:]}] {Y}[!] Màn hình 'Nhấn và Giữ' vẫn còn sau lần {attempts}.{RESET}")
+
+                            if attempts > 2 or not coords:
+                                add_log(f"[{pkg[-12:]}] {R}[CHỐNG TREO] Đã quá số lần thử 'Nhấn và Giữ' hoặc không có nút. Tắt app ngay để tránh treo máy!{RESET}")
+                                _kill_pkg(pkg)
+                                state['is_blocked'] = True
+                                state['in_game'] = False
+                                state['v2_in_app_attempts'] = 0
+                                state['block_reason'] = 'Kẹt Nhấn&Giữ Trong App'
+                                state['text'] = 'Kẹt Nhấn&Giữ -> Chờ'
+                                state['color'] = Y
+                                state['last_acc_check'] = current_time
+                                stop_event.wait(5)
+                                continue
 
             # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
             if uptime_seconds > 15 and not is_app_running(pkg):
@@ -5393,7 +3232,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             bound = state['bound_name']
             is_grace = (uptime_seconds < 120)  # 150s thay vì 240s → detect fail nhanh hơn
 
-            # === CHƯ A BIND ĐƯỢC TÊN ===
+            # === CHƯA BIND ĐƯỢC TÊN ===
             if not bound:
                 if is_grace:
                     # Nếu app không chạy sau 30s warmup → restart ngay
@@ -5429,7 +3268,6 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 continue
 
             # === CHECK HEARTBEAT ===
-            # Nếu pkg khác vừa restart (< 180s), cho thêm grace để tránh cascade
             other_just_restarted = (current_time - last_any_restart_time < 90) and \
                                    (last_any_restart_time != last_restart_time.get(pkg, 0))
 
@@ -5442,62 +3280,45 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['text'] = f"Đang Nạp Data ({max(0,remain)}s)"
                     state['color'] = Y
                 elif misses >= 3 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90):
-                    # Cần 3 miss liên tiếp (~30s) mới restart - kiểm tra acc trước khi restart
                     if check_and_handle_account_health(pkg, states, current_time):
                         stop_event.wait(5)
                         continue
                     with pkg_restart_locks[pkg]:
                         force_restart_app(pkg, states, current_time, "Treo Màn/Chưa Vô Game!", R)
-                    last_ok_ping[pkg] = current_time
                     state['heartbeat_misses'] = 0
-                else:
-                    state['text'] = f"Mất HB ({misses}/3 lần)..."
-                    state['color'] = Y
-            else:
-                state['heartbeat_misses'] = 0  # Reset khi có heartbeat
-                diff = current_time - last_ping
-                if diff <= 120:
                     last_ok_ping[pkg] = current_time
-                    state['in_game'] = True
-                real_diff = current_time - last_ok_ping.get(pkg, current_time)
-                if diff > 120:
-                    state['in_game'] = False
-                    if is_grace or other_just_restarted:
-                        remain = int(240 - uptime_seconds) if is_grace else int(180 - (current_time - last_any_restart_time))
-                        state['text'] = f"Vào Server... ({max(0,remain)}s)"
-                        state['color'] = Y
-                    elif real_diff >= 120 and (pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90):
-                        if check_and_handle_account_health(pkg, states, current_time):
-                            stop_event.wait(5)
-                            continue
-                        with pkg_restart_locks[pkg]:
-                            force_restart_app(pkg, states, current_time, f"Văng Game ({int(diff)}s)", R)
-                        last_ok_ping[pkg] = current_time
-                    elif real_diff < 120:
-                        state['text'] = f"Cảnh báo lag ({int(diff)}s)"
-                        state['color'] = Y
                 else:
-                    state['in_game'] = True
-                    state['text'] = f"Đang Farm ({int(diff)}s trước)"
-                    state['color'] = G
-                    # Acc đang farm bình thường trong game -> cập nhật last_acc_check, tuyệt đối không làm gián đoạn
-                    state['last_acc_check'] = current_time
-        except Exception as e:
-            # Ghi lỗi nhưng không crash thread - quan trọng cho 24/7
-            try:
-                states[pkg]['text'] = f"Lỗi ({str(e)[:15]})"
-                states[pkg]['color'] = R
-            except:
-                pass
-        stop_event.wait(10)
+                    state['text'] = f"Chờ Ping (#{misses})"
+                    state['color'] = Y
+                stop_event.wait(10)
+                continue
 
+            # Heartbeat có ping hợp lệ
+            state['heartbeat_misses'] = 0
+            diff = current_time - last_ping
+            if diff <= 120:
+                state['text'] = f"Đang Farm ({int(diff)}s)"
+                state['color'] = G
+                state['in_game'] = True
+                last_ok_ping[pkg] = current_time
+            else:
+                state['in_game'] = False
+                if check_and_handle_account_health(pkg, states, current_time):
+                    stop_event.wait(5)
+                    continue
+                can_restart = pkg not in last_restart_time or current_time - last_restart_time[pkg] >= 90
+                if can_restart:
+                    with pkg_restart_locks[pkg]:
+                        force_restart_app(pkg, states, current_time, f"Mất Ping ({int(diff)}s)!", R)
+                    last_ok_ping[pkg] = current_time
+                else:
+                    wait_sec = int(90 - (current_time - last_restart_time.get(pkg, current_time)))
+                    state['text'] = f"Chờ Restart ({wait_sec}s)"
+                    state['color'] = R
 
-
-# =====================================================================
-# BACON BYPASS API CLIENT & DELTA AUTO-BYPASS ENGINE
-# =====================================================================
-from collections import deque
-import random
+            stop_event.wait(10)
+        except Exception as exc:
+            time.sleep(2)
 
 def mask_secret(secret):
     """Che giấu chuỗi bảo mật/API Key khi hiển thị trên terminal hoặc log."""
@@ -6109,10 +3930,11 @@ def delta_license_sync_thread(stop_event):
         stop_event.wait(15)
 
 def start_auto_rejoin():
-    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding, global_live_states
-    start_web_log_server(WEB_LOG_PORT)
+    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
     if not selected_packages:
-        print(f"{R}[!] Chọn package trước!{RESET}")
+        auto_select_vip_packages()
+    if not selected_packages:
+        print(f"{R}[!] Chưa tìm thấy package nào! Vui lòng vào mục [1] để chọn.{RESET}")
         time.sleep(2)
         return
 
@@ -6125,11 +3947,11 @@ def start_auto_rejoin():
     global_restart_semaphore = threading.Semaphore(1)
     file_to_pkg_binding = {}
 
-    print(f"\n{Y}[*] Inject script universal...{RESET}")
+    print(f"\n{Y}[*] Inject script universal & user script...{RESET}")
     inject_universal_lua()
+    inject_user_script()
 
     states = {}
-    global_live_states = states
     last_ok_ping = {}
     stop_event = threading.Event()
     sync_t = threading.Thread(target=delta_license_sync_thread, args=(stop_event,), daemon=True)
@@ -6459,19 +4281,31 @@ def delta_key_menu():
 
 def main():
     fix_tty()
+    load_settings()
+    # Mặc định luôn là script số 1 (Hop Fin_Tail) trừ khi người dùng đã chủ động tùy chỉnh
+    if not SELECTED_SCRIPT_KEY or (SELECTED_SCRIPT_KEY not in AUTO_INJECT_SCRIPTS and SELECTED_SCRIPT_KEY not in ["custom", "0"]):
+        SELECTED_SCRIPT_KEY = "1"
+    # Tự động chọn mặc định các package có đầu 'vip'
+    auto_select_vip_packages()
+    # Tự động inject script user mặc định (số 1: Hop Fin_Tail)
+    inject_user_script()
+
     while True:
         clear_screen()
         print_banner()
-        start_web_log_server(WEB_LOG_PORT)
-        print(f"[{C}1{RESET}] Quét và Chọn Package Roblox")
-        print(f"[{C}2{RESET}] Cài đặt Game ID & Time Kill All")
+        vip_cnt = len(selected_packages)
+        vip_tag = f"{G}(Mặc định {vip_cnt} VIP){RESET}" if vip_cnt > 0 else f"{Y}(Chưa có VIP nào){RESET}"
+        def_tag = " [Mặc định]" if SELECTED_SCRIPT_KEY == "1" else ""
+        sc_name = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Tắt") + def_tag
+
+        print(f"[{C}1{RESET}] Quét và Chọn Package Roblox {vip_tag}")
+        print(f"[{C}2{RESET}] Cài đặt Game ID & Auto Inject Script {C}[Script: {Y}{sc_name}{C}]{RESET}")
         print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
         print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
         print(f"[{C}5{RESET}] Quản lý Delta Key & Auto Bypass (Bacon API)")
         print(f"[{C}6{RESET}] Kiểm tra file Delta License (Test)")
         print(f"[{C}7{RESET}] Kiểm tra Trạng thái Acc / Captcha / Not-Approved (Test)")
-        print(f"[{C}8{RESET}] Bật Cửa Sổ Nổi (Floating Overlay HUD) đè lên Game")
-        print(f"[{C}9{RESET}] Thoát")
+        print(f"[{C}8{RESET}] Thoát")
         try:
             fix_tty()
             choice = safe_input(f"\n{M}HuDy > {RESET}")
@@ -6493,8 +4327,6 @@ def main():
         elif choice == '7':
             account_captcha_check_menu()
         elif choice == '8':
-            floating_overlay_menu()
-        elif choice == '9':
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
             fix_tty()
@@ -6502,7 +4334,4 @@ def main():
 
 if __name__ == "__main__":
     fix_tty()
-    if len(sys.argv) > 1 and sys.argv[1] in ("--hud", "-hud", "hud"):
-        run_compact_hud_cli()
-    else:
-        main()
+    main()
