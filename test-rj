@@ -1,4 +1,5 @@
-import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json, base64
+import os, time, subprocess, re, sys, builtins, sqlite3, tempfile, threading, json, base64, html, socket, http.server, io, random
+from collections import deque
 import urllib.request, urllib.error
 from datetime import datetime
 import xml.etree.ElementTree as ET
@@ -86,13 +87,49 @@ def safe_root(cmd, timeout=15):
 
 
 system_logs = []
+web_logs_buffer = deque(maxlen=300)
+
+def ansi_to_html(text):
+    text = html.escape(text)
+    colors = {
+        '96': '#00e5ff', # Cyan
+        '92': '#00ff88', # Green
+        '93': '#ffd700', # Yellow
+        '91': '#ff4757', # Red
+        '95': '#e056fd', # Magenta
+        '97': '#ffffff', # White
+        '0': None        # Reset
+    }
+    def repl(m):
+        code = m.group(1)
+        if code == '0' or code not in colors or colors[code] is None:
+            return '</span>'
+        return f'<span style="color:{colors[code]};font-weight:600">'
+    res = re.sub(r'\x1b\[(\d+)m', repl, text)
+    open_spans = res.count('<span') - res.count('</span>')
+    if open_spans > 0:
+        res += '</span>' * open_spans
+    return res
+
 def add_log(msg):
-    global system_logs
+    global system_logs, web_logs_buffer
     import time
     t_str = time.strftime("%H:%M:%S")
-    system_logs.append(f"[{t_str}] {msg}")
+    formatted = f"[{t_str}] {msg}"
+    system_logs.append(formatted)
     if len(system_logs) > 8:
         system_logs.pop(0)
+
+    try:
+        html_entry = ansi_to_html(formatted)
+        plain_entry = re.sub(r'\x1b\[\d+m', '', formatted)
+        web_logs_buffer.append({
+            'time': t_str,
+            'html': html_entry,
+            'plain': plain_entry
+        })
+    except Exception:
+        pass
 
 def clear_screen():
     fix_tty()
@@ -135,8 +172,46 @@ CHECK_UI_TIME = 180
 AUTO_BLOCK = "Disable"
 AUTO_RESTORE_DELTA_KEY = "Disable"
 AUTO_CHECK_ACC_HEALTH = "Enable"
-CHECK_ACC_TIME_BLOCKED = 60      # Chu kỳ check lại khi acc bị dính Captcha/Not-Approved (giây)
-CHECK_ACC_TIME_NORMAL = 180      # Chu kỳ check định kỳ khi acc đang farm bình thường (giây)
+MANDATORY_COOKIE_CHECK_INTERVAL = 60  # Bắt buộc check Cookie mỗi 60s kể cả khi Lua gửi heartbeat
+CHECK_ACC_TIME_BLOCKED = 60           # Chu kỳ check lại khi acc bị dính Captcha/Not-Approved (giây)
+CHECK_ACC_TIME_NORMAL = 180           # Chu kỳ check định kỳ khi acc đang farm bình thường (giây)
+WEB_LOG_PORT = 8080                   # Cổng Web UI Log chạy ngoài Termux
+global_live_states = {}               # Trạng thái dùng chung cho Web UI và dashboard
+_web_server_instance = None
+OMOCAPTCHA_KEY = ""
+
+def load_omocaptcha_key():
+    global OMOCAPTCHA_KEY
+    for candidate in [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "omocaptcha_key.txt"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "license.txt"),
+        "/sdcard/omocaptcha_key.txt"
+    ]:
+        if os.path.exists(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            OMOCAPTCHA_KEY = line
+                            return OMOCAPTCHA_KEY
+            except:
+                pass
+    return OMOCAPTCHA_KEY
+
+def save_omocaptcha_key(new_key):
+    global OMOCAPTCHA_KEY
+    OMOCAPTCHA_KEY = new_key.strip()
+    target = os.path.join(os.path.dirname(os.path.abspath(__file__)), "omocaptcha_key.txt")
+    try:
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(OMOCAPTCHA_KEY)
+        return True
+    except:
+        return False
+
+# Nạp key ngay khi khởi động
+load_omocaptcha_key()
 
 # Delta key: số giờ trước khi coi key là hết hạn và cần lấy mới
 KEY_EXPIRE_HOURS = 23
@@ -194,7 +269,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.4{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.3{RESET} | {C}Web UI: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -206,7 +281,8 @@ def print_dashboard(states):
     print(f"{C}Change accounts: {Y}{CHANGE_ACCOUNTS}{RESET}")
     print(f"{C}Change accounts custom: {Y}{CHANGE_ACCOUNTS_CUSTOM}{RESET}")
     print(f"{C}Check UI time: {Y}{CHECK_UI_TIME}{RESET}")
-    print(f"{C}Auto check Acc / Cookie: {G}{AUTO_CHECK_ACC_HEALTH}{RESET} ({Y}{CHECK_ACC_TIME_BLOCKED}s re-check{RESET})")
+    print(f"{C}Auto check Acc / Cookie: {G}{AUTO_CHECK_ACC_HEALTH}{RESET} ({Y}Bắt buộc mỗi {MANDATORY_COOKIE_CHECK_INTERVAL}s{RESET})")
+    print(f"{C}Web UI Log Ngoài Termux: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
     print(f"{C}Auto block: {Y}{AUTO_BLOCK}{RESET}")
     print(f"{C}Auto restore Delta Key: {Y}{AUTO_RESTORE_DELTA_KEY}{RESET}")
     print("-" * 65)
@@ -229,6 +305,472 @@ def print_dashboard(states):
         print(f"{Y}--- HỆ THỐNG LOG ---{RESET}")
         for log in system_logs:
             print(log)
+
+# =====================================================================
+# WEB UI LOG SERVER (HIỂN THỊ LOG TRỰC QUAN NGOÀI TERMUX)
+# =====================================================================
+HTML_PAGE = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HuDy Tool Rejoin - Live Web UI</title>
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-card: rgba(18, 24, 38, 0.85);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-cyan: #00e5ff;
+            --accent-green: #00ff88;
+            --accent-yellow: #ffd700;
+            --accent-red: #ff4757;
+            --accent-purple: #a855f7;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .header {
+            background: var(--bg-card);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 12px 16px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+        .title-group { display: flex; align-items: center; gap: 10px; }
+        .logo-badge {
+            background: linear-gradient(135deg, #00e5ff, #3b82f6);
+            color: #000;
+            font-weight: 800;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            letter-spacing: 1px;
+        }
+        .status-dot {
+            width: 10px; height: 10px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 10px var(--accent-green);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        .metrics { display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap; }
+        .metric-badge {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-color);
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+        .metric-val { font-weight: bold; color: var(--accent-cyan); }
+        .packages-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 12px;
+        }
+        .pkg-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .pkg-card:hover {
+            border-color: rgba(0, 229, 255, 0.4);
+            transform: translateY(-2px);
+        }
+        .pkg-header { display: flex; justify-content: space-between; align-items: center; }
+        .pkg-name { font-weight: 700; font-size: 14px; color: #fff; }
+        .acc-name { font-size: 13px; color: var(--accent-cyan); font-weight: 600; }
+        .badge {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .badge-green { background: rgba(0, 255, 136, 0.15); color: var(--accent-green); border: 1px solid var(--accent-green); }
+        .badge-yellow { background: rgba(255, 215, 0, 0.15); color: var(--accent-yellow); border: 1px solid var(--accent-yellow); }
+        .badge-red { background: rgba(255, 71, 87, 0.15); color: var(--accent-red); border: 1px solid var(--accent-red); }
+        .badge-cyan { background: rgba(0, 229, 255, 0.15); color: var(--accent-cyan); border: 1px solid var(--accent-cyan); }
+        .status-text { font-size: 13px; font-weight: 600; }
+        .pkg-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; font-size: 11px; color: var(--text-muted); }
+        .btn-mini {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-mini:hover { background: var(--accent-cyan); color: #000; }
+        .log-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 380px;
+            overflow: hidden;
+        }
+        .log-header {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0,0,0,0.2);
+        }
+        .log-title { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+        .log-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .search-box {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 4px 8px;
+            color: #fff;
+            font-size: 12px;
+            outline: none;
+            width: 140px;
+        }
+        .search-box:focus { border-color: var(--accent-cyan); }
+        .log-console {
+            background: #06090e;
+            color: #cbd5e1;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            padding: 12px;
+            flex: 1;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 480px;
+        }
+        .log-entry { margin-bottom: 2px; }
+        .log-entry:hover { background: rgba(255,255,255,0.03); }
+        .filter-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .filter-btn.active {
+            background: var(--accent-cyan);
+            color: #000;
+            border-color: var(--accent-cyan);
+            font-weight: bold;
+        }
+        .toggle-label { font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-muted); }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title-group">
+            <span class="logo-badge">HUDY REJOIN</span>
+            <div style="display:flex; align-items:center; gap:6px;">
+                <span class="status-dot"></span>
+                <span style="font-weight:700; font-size:14px;">LIVE MONITOR</span>
+            </div>
+        </div>
+        <div class="metrics">
+            <div class="metric-badge">CPU: <span class="metric-val" id="cpu-val">--</span></div>
+            <div class="metric-badge">RAM: <span class="metric-val" id="ram-val">--</span></div>
+            <div class="metric-badge">Auto-Check Cookie: <span class="metric-val" style="color:var(--accent-green)">60s</span></div>
+            <div class="metric-badge">Time: <span class="metric-val" id="time-val">--</span></div>
+        </div>
+    </div>
+
+    <div class="packages-grid" id="packages-grid">
+        <div class="pkg-card" style="text-align:center; padding: 24px; color: var(--text-muted);">
+            Đang tải dữ liệu Roblox Packages...
+        </div>
+    </div>
+
+    <div class="log-section">
+        <div class="log-header">
+            <div class="log-title">
+                <span>SYSTEM LOGS CONSOLE</span>
+                <span id="log-count" style="font-size:11px; color:var(--text-muted); font-weight:normal;">(0 logs)</span>
+            </div>
+            <div class="log-controls">
+                <input type="text" id="log-search" class="search-box" placeholder="Tìm kiếm log..." oninput="renderLogs()">
+                <button class="filter-btn active" onclick="setFilter('ALL', this)">Tất cả</button>
+                <button class="filter-btn" onclick="setFilter('CAPTCHA', this)">Captcha</button>
+                <button class="filter-btn" onclick="setFilter('REJOIN', this)">Rejoin</button>
+                <button class="filter-btn" onclick="setFilter('OMO', this)">OMO</button>
+                <label class="toggle-label">
+                    <input type="checkbox" id="auto-scroll" checked> Auto Scroll
+                </label>
+                <button class="btn-mini" onclick="clearLogsUI()">Xóa Log</button>
+                <button class="btn-mini" onclick="copyLogs()">Copy</button>
+            </div>
+        </div>
+        <div class="log-console" id="log-console"></div>
+    </div>
+
+    <script>
+        let rawLogs = [];
+        let currentFilter = 'ALL';
+
+        function setFilter(type, btn) {
+            currentFilter = type;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderLogs();
+        }
+
+        function clearLogsUI() {
+            fetch('/api/action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: 'clear_logs'})
+            }).then(() => {
+                rawLogs = [];
+                renderLogs();
+            });
+        }
+
+        function copyLogs() {
+            const text = rawLogs.map(l => l.plain || l.html).join('\n');
+            navigator.clipboard.writeText(text).then(() => alert('Đã sao chép toàn bộ logs vào Clipboard!'));
+        }
+
+        function renderLogs() {
+            const container = document.getElementById('log-console');
+            const search = document.getElementById('log-search').value.toLowerCase();
+            const autoScroll = document.getElementById('auto-scroll').checked;
+
+            let filtered = rawLogs.filter(item => {
+                const plain = (item.plain || '').toLowerCase();
+                if (search && !plain.includes(search)) return false;
+                if (currentFilter === 'CAPTCHA') return plain.includes('captcha') || plain.includes('giữ nút') || plain.includes('bảo mật');
+                if (currentFilter === 'REJOIN') return plain.includes('rejoin') || plain.includes('restart');
+                if (currentFilter === 'OMO') return plain.includes('omo');
+                return true;
+            });
+
+            document.getElementById('log-count').innerText = `(${filtered.length} logs)`;
+
+            let htmlStr = '';
+            for (let item of filtered) {
+                htmlStr += `<div class="log-entry">${item.html}</div>`;
+            }
+            container.innerHTML = htmlStr || '<div style="color:#64748b; padding:10px;">Chưa có log phù hợp...</div>';
+
+            if (autoScroll) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        function renderPackages(packages) {
+            const grid = document.getElementById('packages-grid');
+            if (!packages || packages.length === 0) {
+                grid.innerHTML = '<div class="pkg-card" style="grid-column: 1/-1; text-align:center; color: var(--text-muted);">Chưa có package nào đang chạy Auto Rejoin.</div>';
+                return;
+            }
+
+            let html = '';
+            for (let p of packages) {
+                let badgeClass = 'badge-cyan';
+                let col = p.color_name || 'cyan';
+                if (col === 'green' || p.in_game) badgeClass = 'badge-green';
+                else if (col === 'red' || p.is_blocked) badgeClass = 'badge-red';
+                else if (col === 'yellow') badgeClass = 'badge-yellow';
+
+                html += `
+                <div class="pkg-card">
+                    <div class="pkg-header">
+                        <span class="pkg-name">${p.pkg_short}</span>
+                        <span class="badge ${badgeClass}">${p.status_badge || 'ACTIVE'}</span>
+                    </div>
+                    <div class="acc-name">Acc: ${p.name || 'Đang bind...'}</div>
+                    <div class="status-text" style="color: ${p.hex_color || '#fff'}">${p.text}</div>
+                    <div class="pkg-footer">
+                        <span>Check: ${p.last_check_ago || '--'}</span>
+                        <div style="display:flex; gap:4px;">
+                            <button class="btn-mini" onclick="triggerAction('check_cookie', '${p.pkg}')">Check Cookie</button>
+                            <button class="btn-mini" onclick="triggerAction('rejoin', '${p.pkg}')">Rejoin</button>
+                        </div>
+                    </div>
+                </div>
+                `;
+            }
+            grid.innerHTML = html;
+        }
+
+        function triggerAction(action, pkg) {
+            fetch('/api/action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: action, pkg: pkg})
+            }).then(r => r.json()).then(res => {
+                alert(`Đã gửi yêu cầu [${action}] cho ${pkg.slice(-12)}!`);
+            });
+        }
+
+        function fetchData() {
+            fetch('/api/data')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('cpu-val').innerText = data.cpu || 'N/A';
+                    document.getElementById('ram-val').innerText = data.ram || 'N/A';
+                    document.getElementById('time-val').innerText = data.time || '--:--:--';
+                    rawLogs = data.logs || [];
+                    renderLogs();
+                    renderPackages(data.packages || []);
+                })
+                .catch(err => {
+                    console.log("Fetch error:", err);
+                });
+        }
+
+        fetchData();
+        setInterval(fetchData, 1500);
+    </script>
+</body>
+</html>
+"""
+
+class WebLogHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # Không in log HTTP ra console để tránh spam terminal
+
+    def do_GET(self):
+        if self.path == '/' or self.path.startswith('/index'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(HTML_PAGE.encode('utf-8'))
+        elif self.path.startswith('/api/data'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+
+            now = time.time()
+            pkg_list = []
+            for pkg, st in global_live_states.items():
+                col_hex = '#00ff88' if st.get('color') == G else ('#ff4757' if st.get('color') == R else '#ffd700')
+                col_name = 'green' if st.get('color') == G else ('red' if st.get('color') == R else 'yellow')
+                last_chk = int(now - st.get('last_acc_check', now))
+                pkg_list.append({
+                    'pkg': pkg,
+                    'pkg_short': pkg[-16:] if len(pkg) > 16 else pkg,
+                    'name': st.get('display_name', 'N/A'),
+                    'text': st.get('text', 'Chờ...'),
+                    'hex_color': col_hex,
+                    'color_name': col_name,
+                    'in_game': st.get('in_game', False),
+                    'is_blocked': st.get('is_blocked', False),
+                    'status_badge': 'FARMING' if st.get('in_game') else ('BLOCKED' if st.get('is_blocked') else 'RUNNING'),
+                    'last_check_ago': f"{last_chk}s trước"
+                })
+
+            data = {
+                'cpu': get_cpu_usage(),
+                'ram': get_memory_usage(),
+                'time': time.strftime("%H:%M:%S"),
+                'packages': pkg_list,
+                'logs': list(web_logs_buffer)
+            }
+            self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == '/api/action':
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length).decode('utf-8') if length > 0 else '{}'
+            try:
+                req = json.loads(body)
+                act = req.get('action')
+                target_p = req.get('pkg')
+                if act == 'clear_logs':
+                    web_logs_buffer.clear()
+                elif act == 'rejoin' and target_p and target_p in global_live_states:
+                    now = time.time()
+                    with pkg_restart_locks.get(target_p, threading.Lock()):
+                        force_restart_app(target_p, global_live_states, now, "Web UI Force Rejoin", G)
+                elif act == 'check_cookie' and target_p and target_p in global_live_states:
+                    check_and_handle_account_health(target_p, global_live_states, time.time(), force=True)
+            except:
+                pass
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
+
+def start_web_log_server(initial_port=8080):
+    global WEB_LOG_PORT, _web_server_instance
+    if _web_server_instance:
+        return WEB_LOG_PORT
+
+    for port in [initial_port, initial_port + 1, initial_port + 2, 8888, 5000]:
+        try:
+            server = http.server.ThreadingHTTPServer(('0.0.0.0', port), WebLogHandler)
+            WEB_LOG_PORT = port
+            _web_server_instance = server
+            t = threading.Thread(target=server.serve_forever, daemon=True, name="web-log-ui")
+            t.start()
+            return port
+        except Exception:
+            continue
+    return WEB_LOG_PORT
+
+def open_web_ui_in_browser():
+    start_web_log_server(WEB_LOG_PORT)
+    ip = get_local_ip()
+    local_url = f"http://localhost:{WEB_LOG_PORT}"
+    network_url = f"http://{ip}:{WEB_LOG_PORT}"
+    print(f"\n{C}=== WEB UI LOG DASHBOARD (NGOÀI TERMUX) ==={RESET}")
+    print(f"  • Link trên máy (Trình duyệt):    {G}{local_url}{RESET}")
+    print(f"  • Link từ thiết bị khác / PC:    {Y}{network_url}{RESET}")
+    print(f"\n{C}[*] Đang gửi lệnh mở Web UI trên trình duyệt máy...{RESET}")
+    safe_root(f"am start -a android.intent.action.VIEW -d '{local_url}' 2>/dev/null || true")
+    print(f"{G}[✓] Đã mở trình duyệt! Bạn có thể xem log thời gian thực mà không lo bị ẩn Termux.{RESET}")
+    time.sleep(2.5)
 
 # =====================================================================
 # CÀI ĐẶT
@@ -1866,7 +2408,7 @@ def check_roblox_account_status(cookie):
                 "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'security'}, body={raw_body.strip()[:150]}",
                 "message": f"Roblox chặn (Auth Ticket 403) và yêu cầu vượt qua màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {chal_id or 'N/A'})!"
             }
-        elif "captchav2" in chal_type or ("challenge is required" in err_body and ("captchav2" in chal_type or "captcha" in chal_type)):
+        elif "captchav2" in chal_type or ("captchav2" in chal_meta.lower() if chal_meta else False):
             meta_json = {}
             if chal_meta:
                 try:
@@ -1875,7 +2417,7 @@ def check_roblox_account_status(cookie):
                     pass
             return {
                 "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính CaptchaV2 Vào Game (Arkose)",
+                "badge": "Dính Captcha V2 Vào Game",
                 "color": Y,
                 "user_id": user_id,
                 "username": username or "N/A",
@@ -1884,20 +2426,27 @@ def check_roblox_account_status(cookie):
                 "challenge_meta": chal_meta,
                 "meta_data": meta_json,
                 "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn xác thực (Auth Ticket 403, challenge_type=captchav2) và yêu cầu giải CaptchaV2 Arkose (ID: {chal_id or 'N/A'})!"
+                "message": f"Roblox chặn xác thực (Auth Ticket 403, challenge_type=captchav2) và yêu cầu giải Captcha V2 (ID: {chal_id or 'N/A'})!"
             }
-        elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body:
+        elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body or "challenge is required" in err_body:
+            meta_json = {}
+            if chal_meta:
+                try:
+                    meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
+                except:
+                    pass
             return {
                 "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha Vào Game (Arkose)",
+                "badge": "Dính Captcha V1 (Arkose FunCaptcha)",
                 "color": Y,
                 "user_id": user_id,
                 "username": username or "N/A",
-                "challenge_type": "ARKOSE_CAPTCHA",
+                "challenge_type": "CAPTCHA_V1",
                 "challenge_id": chal_id,
                 "challenge_meta": chal_meta,
+                "meta_data": meta_json,
                 "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
-                "message": "Roblox chặn xác thực (Auth Ticket 403) và yêu cầu giải Captcha!"
+                "message": f"Roblox chặn xác thực (Auth Ticket 403, challenge_type={chal_type or 'captcha'}) và yêu cầu giải Captcha V1 (Arkose FunCaptcha, ID: {chal_id or 'N/A'})!"
             }
         elif chal_id or chal_type or chal_meta:
             return {
@@ -2026,7 +2575,7 @@ def check_roblox_account_status(cookie):
                 "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
                 "message": "Roblox yêu cầu xác minh 2 bước trước khi vào game!"
             }
-        elif "captchav2" in chal_type or ("challenge is required" in err_body and ("captchav2" in chal_type or not chal_type or "captcha" in chal_type)):
+        elif "captchav2" in chal_type or ("captchav2" in chal_meta.lower() if chal_meta else False):
             meta_json = {}
             if chal_meta:
                 try:
@@ -2036,7 +2585,7 @@ def check_roblox_account_status(cookie):
             action_type = meta_json.get("actionType", "JoinGame") if isinstance(meta_json, dict) else "JoinGame"
             return {
                 "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính CaptchaV2 Vào Game (Arkose)",
+                "badge": "Dính Captcha V2 Vào Game",
                 "color": Y,
                 "user_id": user_id,
                 "username": username or "N/A",
@@ -2045,20 +2594,28 @@ def check_roblox_account_status(cookie):
                 "challenge_meta": chal_meta,
                 "meta_data": meta_json,
                 "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn vào game (join-game HTTP 403, challenge_type=captchav2) và yêu cầu giải CaptchaV2 Arkose (Action: {action_type}, ID: {chal_id or 'N/A'})!"
+                "message": f"Roblox chặn vào game (join-game HTTP 403, challenge_type=captchav2) và yêu cầu giải Captcha V2 (Action: {action_type}, ID: {chal_id or 'N/A'})!"
             }
-        elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body:
+        elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body or "funcaptcha" in err_body or "challenge is required" in err_body:
+            meta_json = {}
+            if chal_meta:
+                try:
+                    meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
+                except:
+                    pass
+            action_type = meta_json.get("actionType", "JoinGame") if isinstance(meta_json, dict) else "JoinGame"
             return {
                 "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha Vào Game (Arkose)",
+                "badge": "Dính Captcha V1 (Arkose FunCaptcha)",
                 "color": Y,
                 "user_id": user_id,
                 "username": username or "N/A",
-                "challenge_type": "ARKOSE_CAPTCHA",
+                "challenge_type": "CAPTCHA_V1",
                 "challenge_id": chal_id,
                 "challenge_meta": chal_meta,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
-                "message": "Roblox chặn vào game (join-game HTTP 403) và yêu cầu giải Captcha (Arkose Labs)!"
+                "meta_data": meta_json,
+                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
+                "message": f"Roblox chặn vào game (join-game HTTP 403, challenge_type={chal_type or 'captcha'}) và yêu cầu giải Captcha V1 (Arkose FunCaptcha, Action: {action_type}, ID: {chal_id or 'N/A'})!"
             }
         elif chal_id or chal_type or chal_meta:
             return {
@@ -2120,7 +2677,7 @@ def check_roblox_account_status(cookie):
                     "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'security'}, body={raw_body.strip()[:150]}",
                     "message": f"Roblox chặn sinh Ticket và yêu cầu vượt qua màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {chal_id or 'N/A'})!"
                 }
-            elif "captchav2" in chal_type or ("challenge is required" in err_body and ("captchav2" in chal_type or "captcha" in chal_type)):
+            elif "captchav2" in chal_type or ("captchav2" in chal_meta.lower() if chal_meta else False):
                 meta_json = {}
                 if chal_meta:
                     try:
@@ -2129,7 +2686,7 @@ def check_roblox_account_status(cookie):
                         pass
                 return {
                     "status": "CAPTCHA_CHECKPOINT",
-                    "badge": "Dính CaptchaV2 Vào Game (Arkose)",
+                    "badge": "Dính Captcha V2 Vào Game",
                     "color": Y,
                     "user_id": user_id,
                     "username": username or "N/A",
@@ -2138,20 +2695,27 @@ def check_roblox_account_status(cookie):
                     "challenge_meta": chal_meta,
                     "meta_data": meta_json,
                     "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
-                    "message": f"Roblox chặn sinh Ticket vào game (challenge_type=captchav2) và yêu cầu giải CaptchaV2 Arkose (ID: {chal_id or 'N/A'})!"
+                    "message": f"Roblox chặn sinh Ticket vào game (challenge_type=captchav2) và yêu cầu giải Captcha V2 (ID: {chal_id or 'N/A'})!"
                 }
-            elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body:
+            elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body or "challenge is required" in err_body:
+                meta_json = {}
+                if chal_meta:
+                    try:
+                        meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
+                    except:
+                        pass
                 return {
                     "status": "CAPTCHA_CHECKPOINT",
-                    "badge": "Dính Captcha Vào Game (Arkose)",
+                    "badge": "Dính Captcha V1 (Arkose FunCaptcha)",
                     "color": Y,
                     "user_id": user_id,
                     "username": username or "N/A",
-                    "challenge_type": "ARKOSE_CAPTCHA",
+                    "challenge_type": "CAPTCHA_V1",
                     "challenge_id": chal_id,
                     "challenge_meta": chal_meta,
-                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
-                    "message": "Roblox chặn sinh Ticket vào game và yêu cầu giải Captcha!"
+                    "meta_data": meta_json,
+                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
+                    "message": f"Roblox chặn sinh Ticket vào game (challenge_type={chal_type or 'captcha'}) và yêu cầu giải Captcha V1 (Arkose FunCaptcha, ID: {chal_id or 'N/A'})!"
                 }
             elif chal_id or chal_type or chal_meta:
                 return {
@@ -2189,7 +2753,7 @@ def check_roblox_account_status(cookie):
         "message": "Không thể kết nối đến máy chủ Roblox hoặc mạng bị chặn."
     }
 
-def detect_press_and_hold_screen(pkg=None, auto_solve=False):
+def detect_press_and_hold_screen(pkg=None, auto_solve=False, attempt=1):
     """
     Quét màn hình Android (bằng uiautomator dump) để nhận biết cửa sổ thử thách Bảo Mật:
     - Tiêu đề: 'Bảo Mật' / 'Security'
@@ -2217,8 +2781,24 @@ def detect_press_and_hold_screen(pkg=None, auto_solve=False):
         has_en = any(k in xml_lower for k in keywords_en)
         has_sec = ("bảo mật" in xml_lower or "security" in xml_lower) and ("người thật" in xml_lower or "human" in xml_lower or "id tham chiếu" in xml_lower or "reference id" in xml_lower)
 
-        if not (has_vn or has_en or has_sec):
+        # Phát hiện Arkose FunCaptcha dạng xoay hình/chọn hình
+        keywords_arkose = ["rotate", "arrow", "match the", "pick the", "xoay hình", "chọn hình", "mũi tên", "xác thực hình ảnh", "thử lại", "funcaptcha", "arkoselabs"]
+        is_arkose = any(k in xml_lower for k in keywords_arkose)
+
+        if not (has_vn or has_en or has_sec or is_arkose):
             return {"detected": False}
+
+        ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', xml_str, re.I)
+        ref_id = ref_m.group(1) if ref_m else "N/A"
+
+        if is_arkose and not (has_vn or has_en):
+            return {
+                "detected": True,
+                "type": "ARKOSE_PUZZLE",
+                "badge": "Dính Arkose FunCaptcha (OMO in-app)",
+                "ref_id": ref_id,
+                "solved": False
+            }
 
         ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', xml_str, re.I)
         ref_id = ref_m.group(1) if ref_m else "N/A"
@@ -2286,16 +2866,29 @@ def detect_press_and_hold_screen(pkg=None, auto_solve=False):
                     btn_coords = ((x1 + x2) // 2, (y1 + y2) // 2)
                     break
 
-        # 3. Tọa độ mặc định chuẩn màn hình ngang (Landscape) của nút xanh "Nhấn và Giữ" (khoảng 28% chiều cao)
-        if not btn_coords:
+        # 3. Tọa độ dự phòng thông minh theo kích thước màn hình & số lần thử (attempt)
+        if not btn_coords or attempt > 1:
             w, h = get_screen_resolution()
-            btn_coords = (w // 2, int(h * 0.28))
+            is_landscape = (w >= h)
+            if attempt == 1:
+                if not btn_coords:
+                    btn_coords = (w // 2, int(h * 0.52)) if is_landscape else (w // 2, int(h * 0.45))
+            elif attempt == 2:
+                # Bù trừ xuống dưới
+                btn_coords = (w // 2, int(h * 0.62)) if is_landscape else (w // 2, int(h * 0.55))
+            else:
+                # Bù trừ lên trên
+                btn_coords = (w // 2, int(h * 0.38)) if is_landscape else (w // 2, int(h * 0.35))
 
         solved = False
         if auto_solve and btn_coords:
             cx, cy = btn_coords
-            add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {Y}Phát hiện 'Nhấn và Giữ' (ID: {ref_id[:8]}..)! Đang tự động giữ nút ({cx}, {cy}) 15s...{RESET}")
-            safe_root(f"su -c 'input swipe {cx} {cy} {cx} {cy} 15000'", timeout=22)
+            add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {Y}Phát hiện 'Nhấn và Giữ' (ID: {ref_id[:8]}.., Lần {attempt})! Đang giữ nút ({cx}, {cy}) 16s...{RESET}")
+            # Đánh thức/focus cửa sổ bằng 1 tap nhẹ trước
+            safe_root(f"su -c 'input tap {cx} {cy}'", timeout=3)
+            time.sleep(0.3)
+            # Nhấn giữ 16s
+            safe_root(f"su -c 'input swipe {cx} {cy} {cx} {cy} 16000'", timeout=24)
             time.sleep(2.5)
 
             _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
@@ -2306,7 +2899,7 @@ def detect_press_and_hold_screen(pkg=None, auto_solve=False):
                 still_has = any(k in chk_lower for k in keywords_vn + keywords_en)
                 if not still_has:
                     solved = True
-                    add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {G}[✓] Đã giữ 15s và giải quyết thành công màn hình 'Nhấn và Giữ'!{RESET}")
+                    add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {G}[✓] Đã giữ 16s và giải quyết thành công màn hình 'Nhấn và Giữ'!{RESET}")
 
         return {
             "detected": True,
@@ -2343,157 +2936,307 @@ def print_account_check_result(label, cookie, res):
     if res.get('url'):
         print(f"{Y}URL KẸT:{RESET}   {C}{res['url']}{RESET}")
 
-def resolve_not_approved_with_kiwi(cookie, pkg=None):
-    """
-    Tự động xử lý tài khoản bị kẹt Not-Approved / Checkpoint duyệt:
-    1. Kiểm tra Kiwi Browser (com.kiwibrowser.browser) đã cài trên máy chưa.
-    2. Tắt Kiwi Browser, trích xuất cookie và tiêm .ROBLOSECURITY vào Cookies DB của Kiwi.
-    3. Mở thẳng https://www.roblox.com/not-approved trên Kiwi Browser để người dùng
-       hoặc extension YesCaptcha tự động giải Arkose Captcha và bấm Re-activate / Đồng ý.
-    """
-    if not cookie:
-        add_log(f"{R}[KIWI] Không có cookie để tiêm vào Kiwi Browser!{RESET}")
-        return False
+# =====================================================================
+# OMOCAPTCHA API ENGINE & IN-APP ARKOSE FUNCAPTCHA V1 SOLVER
+# =====================================================================
+API_URL = "https://api.omocaptcha.com/v2"
 
-    pkg_tag = pkg[-12:] if pkg else "KIWI"
+class OmoCaptchaError(RuntimeError):
+    pass
 
-    # 1. Kiểm tra Kiwi Browser đã cài trên máy chưa
-    code, out, _ = _run_root_capture("pm path com.kiwibrowser.browser 2>/dev/null", timeout=3)
-    if code != 0 or not out.strip():
-        add_log(f"[{pkg_tag}] {R}[KIWI] Chưa cài Kiwi Browser (com.kiwibrowser.browser) trên máy! Hãy cài Kiwi Browser từ CH Play hoặc APK.{RESET}")
-        return False
+def classify_match_image(client_key, image_base64, question, stop_event=None, api_url=API_URL):
+    """Gửi ảnh và câu hỏi tới OMOCaptcha API (FuncaptchaImageTask) để lấy số lần xoay."""
+    if not client_key:
+        raise OmoCaptchaError("Thiếu omocaptcha_key! Vui lòng nhập Key tại Menu [7]->[5].")
 
-    add_log(f"[{pkg_tag}] {C}[KIWI] Đang chuẩn bị tiêm Cookie tài khoản vào Kiwi Browser...{RESET}")
+    base = api_url.rstrip("/")
+    clean_b64 = image_base64.split(",", 1)[-1].strip()
+    payload = {
+        "clientKey": client_key,
+        "appId": "",
+        "task": {
+            "type": "FuncaptchaImageTask",
+            "imageBase64": clean_b64,
+            "other": question,
+        },
+    }
 
-    # 2. Đảm bảo Kiwi tắt trước khi can thiệp SQLite DB
-    safe_root("am force-stop com.kiwibrowser.browser", timeout=5)
-    time.sleep(1)
-
-    # 3. Kiểm tra xem Kiwi đã có file DB chưa
-    code_find, out_find, _ = _run_root_capture(
-        "find '/data/data/com.kiwibrowser.browser/' \\( -name 'Cookies' -o -iname '*cookie*.db' \\) -type f 2>/dev/null",
-        timeout=3
+    req_data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(
+        f"{base}/createTask",
+        data=req_data,
+        headers={"Content-Type": "application/json"}
     )
-    if not out_find.strip():
-        # Chưa có DB -> Khởi chạy Kiwi 3s để sinh profile Chromium mặc định
-        add_log(f"[{pkg_tag}] {Y}[KIWI] Khởi tạo profile mặc định cho Kiwi...{RESET}")
-        safe_root("am start -n com.kiwibrowser.browser/com.google.android.apps.chrome.Main", timeout=5)
-        time.sleep(3)
-        safe_root("am force-stop com.kiwibrowser.browser", timeout=5)
-        time.sleep(1)
-
-    # 4. Thử tiêm Cookie vào WebView/Chromium DB của Kiwi (dự phòng)
-    clean_cookie = _normalize_roblosecurity_cookie(cookie)
     try:
-        inject_cookie_webview("com.kiwibrowser.browser", clean_cookie)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            created = json.loads(resp.read().decode('utf-8'))
+    except Exception as exc:
+        raise OmoCaptchaError(f"OMO createTask lỗi mạng: {exc}") from exc
+
+    if created.get("errorId") not in (None, 0):
+        raise OmoCaptchaError(created.get("errorCode") or created.get("errorDescription") or "OMO createTask thất bại")
+    task_id = created.get("taskId")
+    if not task_id:
+        raise OmoCaptchaError("OMO không trả về taskId")
+
+    deadline = time.monotonic() + 120
+    poll_payload = json.dumps({"clientKey": client_key, "taskId": task_id}).encode('utf-8')
+    while time.monotonic() < deadline:
+        if stop_event and stop_event.is_set():
+            raise OmoCaptchaError("Đã dừng tiến trình")
+        time.sleep(0.7)
+        req_poll = urllib.request.Request(
+            f"{base}/getTaskResult",
+            data=poll_payload,
+            headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req_poll, timeout=20) as resp_poll:
+                result = json.loads(resp_poll.read().decode('utf-8'))
+        except Exception:
+            continue
+
+        status = result.get("status")
+        if status == "processing":
+            continue
+        if status == "fail" or result.get("errorId") not in (None, 0):
+            err_msg = result.get("errorCode") or result.get("errorDescription") or "OMO xử lý ảnh thất bại"
+            raise OmoCaptchaError(err_msg)
+
+        solution = result.get("solution") or {}
+        try:
+            index = int(solution.get("index"))
+        except (TypeError, ValueError) as exc:
+            raise OmoCaptchaError("OMO không trả về index hợp lệ") from exc
+
+        if not 1 <= index <= 31:
+            raise OmoCaptchaError(f"OMO index ngoài phạm vi (1-31): {index}")
+        return index
+
+    raise OmoCaptchaError("Hết thời gian chờ OMO API (120s)")
+
+def handle_not_approved_in_app(pkg=None):
+    """Tự động kiểm tra và bấm nút Đồng ý / Tôi hiểu / Reactivate trực tiếp trong app Roblox."""
+    time.sleep(2.0)
+    dump_file = "/data/local/tmp/dump_moderated.xml"
+    _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
+    code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
+    _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
+    if code != 0 or not xml_str:
+        return False
+
+    xml_lower = xml_str.lower()
+    btn_keywords = ["tôi hiểu", "i understand", "tôi đồng ý", "i agree", "reactivate", "kích hoạt lại", "đồng ý", "tiếp tục", "continue", "chấp nhận", "accept", "ok"]
+    try:
+        root = ET.fromstring(xml_str)
+        for node in root.iter('node'):
+            t = (node.get('text') or node.get('content-desc') or '').strip().lower()
+            if any(k in t for k in btn_keywords):
+                bounds = node.get('bounds') or ''
+                m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                if m:
+                    x1, y1, x2, y2 = map(int, m.groups())
+                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                    add_log(f"[{pkg[-12:] if pkg else 'IN-APP'}] {G}[NOT-APPROVED] Tự động bấm nút '{t}' tại ({cx}, {cy}) để kích hoạt lại acc!{RESET}")
+                    safe_root(f"su -c 'input tap {cx} {cy}'")
+                    time.sleep(2)
+                    return True
     except:
         pass
+    return False
 
-    # 5. Mở Kiwi Browser kèm tham số hash #rbx_cookie=...
-    # Extension YesCaptcha (roblox_helper.js) sẽ tự động bắt hash, gọi chrome.cookies.set()
-    # để đăng nhập trực tiếp trên trình duyệt và tự động bấm 'Tiếp tục' / 'Reactivate'!
-    add_log(f"[{pkg_tag}] {G}[KIWI] Đang mở Kiwi Browser nạp Cookie & giải Not-Approved qua Extension...{RESET}")
-    import urllib.parse
-    encoded_cookie = urllib.parse.quote(clean_cookie)
-    open_url = f"https://www.roblox.com/login#rbx_cookie={encoded_cookie}"
-    open_cmd = f"am start -a android.intent.action.VIEW -d '{open_url}' -p com.kiwibrowser.browser"
-    safe_root(open_cmd, timeout=6)
-    return True
-
-def setup_kiwi_extension():
+def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
     """
-    Tự động chuẩn bị và mở trang cài đặt Extension trên Kiwi Browser:
-    1. Tự động đóng gói và sao chép yescaptcha_extension.zip vào /sdcard/Download/
-    2. Mở trực tiếp trang chrome://extensions trên Kiwi Browser
-    3. Hướng dẫn người dùng bật Developer mode và bấm + (from .zip)
+    Giải Captcha V1 (Arkose Match-Game / FunCaptcha) trực tiếp trong app Roblox bằng OMOCaptcha API:
+    - Quét XML uiautomator dump nhận biết giao diện câu đố Arkose.
+    - Tự động click 'Xác minh' / 'Bắt đầu câu đố' nếu ở trang bắt đầu.
+    - Trích xuất câu hỏi (question) và crop ảnh câu đố từ screencap.
+    - Gửi OMO API FuncaptchaImageTask để lấy số lần xoay (rotations = index - 1).
+    - Tự động click mũi tên phải 'rotations' lần và click Submit.
+    - Lặp qua từng vòng (1/3, 2/3, 3/3...) đến khi hoàn tất!
     """
-    import shutil
-    print(f"\n{C}=== CÀI ĐẶT YESCAPTCHA EXTENSION VÀO KIWI BROWSER ==={RESET}")
+    global OMOCAPTCHA_KEY
+    if not client_key:
+        client_key = load_omocaptcha_key()
+    if not client_key:
+        add_log(f"[{pkg[-12:] if pkg else 'OMO'}] {R}[OMO ERROR] Chưa có OMOCaptcha Key! Vào Menu [7]->[5] để nhập.{RESET}")
+        return {"detected": False, "solved": False, "error": "MISSING_KEY"}
 
-    # 1. Kiểm tra Kiwi Browser đã cài trên máy chưa
-    code, out, _ = _run_root_capture("pm path com.kiwibrowser.browser 2>/dev/null", timeout=3)
-    if code != 0 or not out.strip():
-        print(f"{R}[!] Chưa cài đặt Kiwi Browser (com.kiwibrowser.browser)! Hãy tải Kiwi Browser từ CH Play hoặc APK trước.{RESET}")
-        return False
+    tag = pkg[-12:] if pkg else "OMO_V1"
 
-    # 2. Tìm thư mục extension trên máy hoặc tự động tải về từ Cloud
-    src_ext_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha extension")
-    src_zip = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha_extension.zip")
-    target_dl_zip = "/sdcard/Download/yescaptcha_extension.zip"
+    if pkg:
+        safe_root(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null || monkey -p {pkg} 1")
+        time.sleep(1.0)
 
-    # Tạo file zip nếu chưa có từ thư mục nguồn
-    try:
-        if os.path.exists(src_ext_dir) and not os.path.exists(src_zip):
-            print(f"{Y}[*] Đang nén thư mục extension thành file zip...{RESET}")
-            shutil.make_archive(os.path.join(os.path.dirname(os.path.abspath(__file__)), "yescaptcha_extension"), 'zip', src_ext_dir)
-    except Exception as e:
-        pass
+    w, h = get_screen_resolution()
+    dump_file = "/data/local/tmp/dump_arkose.xml"
+    scr_file = "/sdcard/Download/arkose_frame.png"
 
-    # Kiểm tra xem file đã có trong /sdcard/Download/ chưa
-    code_chk, out_chk, _ = _run_root_capture(f"ls -la '{target_dl_zip}' 2>/dev/null", timeout=3)
-    file_ready = (code_chk == 0 and "yescaptcha_extension.zip" in out_chk)
+    total_rounds_solved = 0
+    max_rounds = 10
 
-    if not file_ready:
-        if os.path.exists(src_zip):
-            print(f"{C}[*] Đang sao chép file cài đặt vào bộ nhớ máy...{RESET}")
+    for round_num in range(1, max_rounds + 1):
+        if stop_event and stop_event.is_set():
+            break
+
+        _run_root_capture(f"uiautomator dump '{dump_file}' 2>/dev/null", timeout=6)
+        code, xml_str, _ = _run_root_capture(f"cat '{dump_file}' 2>/dev/null", timeout=4)
+        _run_root_capture(f"rm -f '{dump_file}' 2>/dev/null", timeout=2)
+
+        if code != 0 or not xml_str:
+            time.sleep(1.5)
+            continue
+
+        xml_lower = xml_str.lower()
+        keywords_verify = ["xác minh", "verify", "bắt đầu câu đố", "start puzzle", "authenticate", "descriptionverify"]
+        keywords_match = ["sử dụng mũi tên", "use the arrows", "rotate", "arrow", "xoay", "hướng", "direction", "pick the", "chọn hình", "match the", "bàn tay", "con vật"]
+        keywords_submit = ["gửi", "submit", "hoàn thành", "done"]
+
+        has_arkose = any(k in xml_lower for k in keywords_verify + keywords_match + ["arkoselabs", "funcaptcha"])
+        if not has_arkose:
+            if total_rounds_solved > 0:
+                add_log(f"[{tag}] {G}[✓ OMO THÀNH CÔNG] Đã giải qua {total_rounds_solved} vòng! Màn hình Captcha đã đóng.{RESET}")
+                return {"detected": True, "solved": True, "rounds": total_rounds_solved}
+            return {"detected": False, "solved": False}
+
+        try:
+            root = ET.fromstring(xml_str)
+        except Exception:
+            time.sleep(1)
+            continue
+
+        # 1. Kiểm tra màn hình Home (Nút Xác minh / Start Puzzle)
+        verify_clicked = False
+        for node in root.iter('node'):
+            t = (node.get('text') or node.get('content-desc') or '').strip().lower()
+            if any(kv in t for kv in keywords_verify) and node.get('clickable') == 'true':
+                bounds = node.get('bounds') or ''
+                m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                if m:
+                    x1, y1, x2, y2 = map(int, m.groups())
+                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                    add_log(f"[{tag}] {C}[OMO] Phát hiện nút '{t}'! Đang click ({cx}, {cy}) để bắt đầu câu đố...{RESET}")
+                    safe_root(f"su -c 'input tap {cx} {cy}'")
+                    time.sleep(2.5)
+                    verify_clicked = True
+                    break
+        if verify_clicked:
+            continue
+
+        # 2. Đang trong câu đố: Tìm text câu hỏi (question)
+        question = ""
+        candidates_q = []
+        for node in root.iter('node'):
+            t = (node.get('text') or node.get('content-desc') or '').strip()
+            tl = t.lower()
+            if any(km in tl for km in keywords_match) and len(t) >= 6:
+                candidates_q.append(t)
+
+        if candidates_q:
+            question = max(candidates_q, key=len)
+            question = question.split('(', 1)[0].strip().rstrip('.')
+        if not question:
+            question = "Use the arrows to rotate the animal to face in the direction of the hand"
+
+        # 3. Tìm tọa độ nút Mũi tên phải, Mũi tên trái, Nút Gửi (Submit)
+        right_arrow_coords = None
+        left_arrow_coords = None
+        submit_coords = None
+
+        center_x, center_y = w // 2, h // 2
+        is_landscape = (w >= h)
+
+        for node in root.iter('node'):
+            t = (node.get('text') or '').strip()
+            desc = (node.get('content-desc') or '').strip()
+            comb = (t or desc).lower()
+            bounds = node.get('bounds') or ''
+            m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+            if not m:
+                continue
+            x1, y1, x2, y2 = map(int, m.groups())
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+            if any(sb in comb for sb in keywords_submit) and (node.get('clickable') == 'true' or 'button' in node.get('class', '').lower()):
+                submit_coords = (cx, cy)
+            elif any(ra in comb for ra in ["right", "phải", ">"]) and node.get('clickable') == 'true':
+                right_arrow_coords = (cx, cy)
+            elif any(la in comb for la in ["left", "trái", "<"]) and node.get('clickable') == 'true':
+                left_arrow_coords = (cx, cy)
+
+        if not right_arrow_coords:
+            right_arrow_coords = (int(center_x + w * 0.18), center_y) if is_landscape else (int(center_x + w * 0.32), center_y)
+        if not left_arrow_coords:
+            left_arrow_coords = (int(center_x - w * 0.18), center_y) if is_landscape else (int(center_x - w * 0.32), center_y)
+        if not submit_coords:
+            submit_coords = (center_x, int(center_y + h * 0.28)) if is_landscape else (center_x, int(center_y + h * 0.24))
+
+        # 4. Chụp ảnh màn hình và crop ảnh câu đố
+        safe_root(f"screencap -p '{scr_file}' && chmod 666 '{scr_file}'", timeout=5)
+        time.sleep(0.3)
+
+        image_b64 = None
+        try:
+            if os.path.exists(scr_file):
+                from PIL import Image
+                im = Image.open(scr_file)
+                rx, _ = right_arrow_coords
+                lx, _ = left_arrow_coords
+                crop_x1 = max(0, lx + 20)
+                crop_x2 = min(im.width, rx - 20)
+                crop_y1 = max(0, int(center_y - (im.height * 0.22 if is_landscape else im.height * 0.18)))
+                crop_y2 = min(im.height, int(submit_coords[1] - 15))
+
+                if crop_x1 < crop_x2 and crop_y1 < crop_y2:
+                    cropped = im.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+                    buf = io.BytesIO()
+                    cropped.save(buf, format="JPEG", quality=92)
+                    image_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+        except Exception as e:
+            add_log(f"[{tag}] {Y}[OMO] Lỗi crop ảnh: {e}, thử chụp full frame...{RESET}")
+
+        if not image_b64:
             try:
-                shutil.copy2(src_zip, target_dl_zip)
+                with open(scr_file, "rb") as f:
+                    image_b64 = base64.b64encode(f.read()).decode('utf-8')
             except:
-                safe_root(f"cp '{src_zip}' '{target_dl_zip}' 2>/dev/null || true")
-        elif os.path.exists(src_ext_dir):
-            safe_root(f"mkdir -p /sdcard/Download/yescaptcha_extension && cp -r '{src_ext_dir}/'* /sdcard/Download/yescaptcha_extension/ 2>/dev/null || true")
-        else:
-            # Máy Cloud / Termux chạy script đơn lẻ không có sẵn file -> TỰ ĐỘNG TẢI TRỰC TIẾP
-            print(f"{Y}[*] Đang chạy trên Cloud/Termux, tự động tải bộ cài Extension (1MB) về máy...{RESET}")
-            download_urls = [
-                "https://files.catbox.moe/coobut.zip",
-                "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/yescaptcha_extension.zip"
-            ]
-            downloaded = False
-            for d_url in download_urls:
-                try:
-                    import urllib.request
-                    host_name = d_url.split('/')[2]
-                    print(f"{C}[*] Đang tải từ cloud ({host_name})...{RESET}")
-                    req = urllib.request.Request(d_url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(req, timeout=20) as resp:
-                        if resp.status == 200:
-                            content = resp.read()
-                            with open(target_dl_zip, "wb") as f_out:
-                                f_out.write(content)
-                            downloaded = True
-                            print(f"{G}[✓] Tải thành công ({len(content) // 1024} KB)!{RESET}")
-                            break
-                except Exception as ex:
-                    # Thử tải qua curl của Termux/Linux
-                    code_curl = os.system(f"curl -sL '{d_url}' -o '{target_dl_zip}'")
-                    if code_curl == 0 and os.path.exists(target_dl_zip) and os.path.getsize(target_dl_zip) > 100000:
-                        downloaded = True
-                        print(f"{G}[✓] Tải thành công qua curl!{RESET}")
-                        break
+                pass
 
-            if not downloaded and not os.path.exists(target_dl_zip):
-                print(f"{R}[!] Không thể tự động tải file extension về máy. Hãy kiểm tra kết nối mạng!{RESET}")
-                return False
+        if not image_b64:
+            add_log(f"[{tag}] {R}[OMO] Không thể lấy ảnh màn hình! Bỏ qua vòng {round_num}.{RESET}")
+            time.sleep(2)
+            continue
 
-    safe_root(f"chmod 666 '{target_dl_zip}' 2>/dev/null || true")
-    print(f"{G}[✓] File cài đặt đã sẵn sàng tại: {W}{target_dl_zip}{RESET}")
+        # 5. Gửi OMO API giải mã
+        add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Đang gửi ảnh câu đố: '{question[:32]}...' tới OMOCaptcha...{RESET}")
+        try:
+            api_index = classify_match_image(client_key, image_b64, question, stop_event)
+        except OmoCaptchaError as err:
+            add_log(f"[{tag}] {R}[OMO LỖI] {err}{RESET}")
+            time.sleep(2.5)
+            continue
 
-    # 3. Mở thẳng trang chrome://extensions trên Kiwi Browser
-    print(f"{C}[*] Đang mở trang quản lý Tiện ích mở rộng (chrome://extensions) trên Kiwi Browser...{RESET}")
-    safe_root("am start -a android.intent.action.VIEW -d 'chrome://extensions' -p com.kiwibrowser.browser", timeout=6)
+        rotations = api_index - 1
+        add_log(f"[{tag}] {G}[OMO VÒNG {round_num}] API trả về Index={api_index} -> Cần xoay phải {rotations} lần.{RESET}")
 
-    print(f"\n{G}╔═══════════════════════════════════════════════════════════════════════╗{RESET}")
-    print(f"{G}║             HƯỚNG DẪN CÀI ĐẶT 1 LẦN DUY NHẤT TRÊN KIWI:               ║{RESET}")
-    print(f"{G}╚═══════════════════════════════════════════════════════════════════════╝{RESET}")
-    print(f"  {Y}1.{RESET} Trên Kiwi Browser vừa mở, gạt bật {G}Chế độ cho nhà phát triển (Developer mode){RESET} ở góc trên bên phải.")
-    print(f"  {Y}2.{RESET} Bấm vào nút {C}+(from .zip / .crx / .user.js){RESET}.")
-    print(f"  {Y}3.{RESET} Chọn file {W}yescaptcha_extension.zip{RESET} trong thư mục {W}Download{RESET} vừa được tool chuẩn bị sẵn!")
-    print(f"  {Y}4.{RESET} Bấm vào chi tiết tiện ích YesCaptcha, nhập ClientKey của bạn (nếu có).")
-    print(f"\n{G}[✓] Xong! Extension sẽ lưu vĩnh viễn trong Kiwi Browser. Mọi lần sau Tool sẽ tự động 100%!{RESET}")
-    return True
+        # 6. Click xoay mũi tên phải 'rotations' lần
+        rx, ry = right_arrow_coords
+        for r in range(rotations):
+            safe_root(f"su -c 'input tap {rx} {ry}'")
+            time.sleep(random.uniform(0.65, 0.95))
 
-def check_and_handle_account_health(pkg, states, current_time):
+        time.sleep(random.uniform(0.5, 0.9))
+
+        # 7. Click nút Submit
+        sx, sy = submit_coords
+        safe_root(f"su -c 'input tap {sx} {sy}'")
+        add_log(f"[{tag}] {G}[OMO VÒNG {round_num}] Đã click Submit! Chờ kiểm tra kết quả...{RESET}")
+        total_rounds_solved += 1
+        time.sleep(3.0)
+
+    return {"detected": True, "solved": (total_rounds_solved > 0), "rounds": total_rounds_solved}
+
+def check_and_handle_account_health(pkg, states, current_time, force=False):
     """
     Kiểm tra trạng thái tài khoản qua Cookie trong app Roblox:
     - Nếu acc bị dính lỗi (NOT_APPROVED, CAPTCHA_CHECKPOINT, EXPIRED):
@@ -2513,19 +3256,19 @@ def check_and_handle_account_health(pkg, states, current_time):
     if not state:
         return False
 
-    # BẢO VỆ TUYỆT ĐỐI: Nếu acc đang ở trong game hoặc đang có heartbeat bình thường
-    # -> TUYỆT ĐỐI KHÔNG làm phiền, không check API làm gián đoạn, không bắn lại vào game!
-    if state.get('in_game'):
-        return False
-    bound = state.get('bound_name')
-    if bound:
-        hb = get_heartbeat(bound, pkg)
-        if hb != -1 and (current_time - hb <= 120):
-            state['in_game'] = True
+    # BẢO VỆ (chỉ áp dụng khi KHÔNG force):
+    if not force:
+        if state.get('in_game'):
             return False
+        bound = state.get('bound_name')
+        if bound:
+            hb = get_heartbeat(bound, pkg)
+            if hb != -1 and (current_time - hb <= 120):
+                state['in_game'] = True
+                return False
 
     # Nếu đang trong tiến trình giải captcha -> để tiến trình giải hoàn tất, không kích hoạt lặp
-    if state.get('handling_captcha_solve'):
+    if not force and state.get('handling_captcha_solve'):
         return False
 
     cookie = extract_roblox_cookie(pkg)
@@ -2560,53 +3303,69 @@ def check_and_handle_account_health(pkg, states, current_time):
 
     if status == 'NOT_APPROVED':
         state['is_blocked'] = True
+        state['in_game'] = False
         badge = res.get('badge', 'Kẹt Not-Approved / Cần Duyệt')
         state['block_reason'] = badge
         state['text'] = "Kẹt Not-Approved"
         state['color'] = R
         msg_detail = res.get('message', '')
-        add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO ACC] {badge}: {msg_detail}{RESET}")
+        add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
         _kill_pkg(pkg)
-
-        # TỰ ĐỘNG TIÊM COOKIE VÀO KIWI BROWSER & MỞ TRANG NOT-APPROVED ĐỂ YESCAPTCHA GIẢI
-        if not state.get('kiwi_opened'):
-            state['kiwi_opened'] = True
-            resolve_not_approved_with_kiwi(cookie, pkg)
-
+        time.sleep(1)
+        launch_roblox_to_game(pkg)
+        handle_not_approved_in_app(pkg)
         return True
     elif status == 'EXPIRED':
         state['is_blocked'] = True
+        state['in_game'] = False
         badge = res.get('badge', 'Cookie Die (401)')
         state['block_reason'] = badge
         state['text'] = "Cookie Die (401)"
         state['color'] = R
         msg_detail = res.get('message', '')
-        add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO ACC] {badge}: {msg_detail}{RESET}")
+        add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
         _kill_pkg(pkg)
         return True
     elif status == 'CAPTCHA_CHECKPOINT':
         badge = res.get('badge', 'Dính Captcha')
+        chal_type = res.get('challenge_type', '')
         msg_detail = res.get('message', '')
 
-        # THÔNG MINH: Nếu dính CaptchaV2 / Nhấn và Giữ -> Bắn vào game để kích hoạt bảng và tự động giữ nút giải!
-        add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] {badge}: {msg_detail}{RESET}")
-        add_log(f"[{pkg[-12:]}] {C}[TỰ ĐỘNG GIẢI] Đang bắn vào game để kích hoạt bảng 'Nhấn và Giữ'...{RESET}")
-
+        state['in_game'] = False
         state['handling_captcha_solve'] = True
         state['captcha_solve_start'] = current_time
+        state['captcha_miss_count'] = 0
         state['is_blocked'] = False
         state['block_reason'] = badge
-        state['text'] = "Bắn Game Giải Captcha..."
-        state['color'] = Y
 
+        # Phân biệt chuẩn xác giữa Captcha V1 (Arkose FunCaptcha) và Captcha V2 (Nhấn và Giữ):
+        if chal_type in ['CAPTCHA_V1', 'ARKOSE_CAPTCHA'] or "V1" in badge or "Arkose" in badge:
+            state['captcha_type'] = 'CAPTCHA_V1'
+            state['text'] = "Giải Captcha V1 (OMO)..."
+            state['color'] = M
+            add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
+            add_log(f"[{pkg[-12:]}] {M}[CAPTCHA V1 IN-APP] Kích hoạt giải Arkose Match-Game bằng OMOCaptcha API...{RESET}")
+        else:
+            state['captcha_type'] = 'CAPTCHAV2'
+            state['text'] = "Bắn Game Giữ Nút..."
+            state['color'] = Y
+            add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail} (Lua vẫn gửi heartbeat){RESET}")
+            add_log(f"[{pkg[-12:]}] {C}[CAPTCHA V2 IN-APP] Kích hoạt chế độ giải Nhấn và Giữ...{RESET}")
+
+        _kill_pkg(pkg)
+        time.sleep(1)
         launch_roblox_to_game(pkg)
-        return False
+        return True
     elif status == 'OK':
-        if state.get('is_blocked'):
+        if state.get('is_blocked') or state.get('handling_captcha_solve'):
             state['is_blocked'] = False
+            state['handling_captcha_solve'] = False
             state['block_reason'] = ''
             u_name = res.get('username') or state.get('bound_name') or 'Acc'
-            add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] Acc {u_name} đã giải xong / bình thường!{RESET}")
+            add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] Acc {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
+            with pkg_restart_locks[pkg]:
+                force_restart_app(pkg, states, current_time, "Acc Sạch -> Rejoin", G)
+            return False
         return False
 
     return False
@@ -2621,8 +3380,8 @@ def account_captcha_check_menu():
         print(f"[{C}2{RESET}] Quét TẤT CẢ Package Roblox trên máy và kiểm tra từng Acc")
         print(f"[{C}3{RESET}] Nhập trực tiếp chuỗi Cookie để test ngay")
         print(f"[{C}4{RESET}] Quét MÀN HÌNH App Roblox xem có dính popup 'Bảo Mật / Nhấn và Giữ' (và tự giữ)")
-        print(f"[{C}5{RESET}] Tiêm Cookie vào Kiwi Browser & Mở roblox.com/not-approved (Duyệt qua Extension)")
-        print(f"[{C}6{RESET}] Hỗ trợ cài Extension vào Kiwi Browser (Tự đẩy file zip & Mở trang cài)")
+        print(f"[{C}5{RESET}] Cấu hình / Nhập OMOCaptcha API Key (Key: {G}{mask_secret(OMOCAPTCHA_KEY)}{RESET})")
+        print(f"[{C}6{RESET}] Quét màn hình & Test giải Captcha V1 in-app (OMOCaptcha API)")
         print(f"[{C}7{RESET}] Quay lại Menu chính")
         fix_tty()
         c = safe_input(f"\n{M}Chọn [1-7]: {RESET}").strip()
@@ -2696,48 +3455,30 @@ def account_captcha_check_menu():
             try: input()
             except: pass
         elif c == '5':
-            print(f"\n{C}=== TIÊM COOKIE VÀO KIWI BROWSER ĐỂ GIẢI NOT-APPROVED ==={RESET}")
-            print(f"[{C}1{RESET}] Lấy Cookie từ Package đang chọn (Mục [1])")
-            print(f"[{C}2{RESET}] Nhập Cookie trực tiếp bằng tay")
-            sub_c = safe_input(f"{M}Chọn [1-2]: {RESET}").strip()
-            cookie_target = None
-            target_p = None
-            if sub_c == '1':
-                if not selected_packages:
-                    print(f"{R}[!] Chưa chọn package nào ở Mục [1]!{RESET}")
-                    time.sleep(2)
-                    continue
-                print(f"\n{Y}Danh sách package đang chọn:{RESET}")
-                for i, item in enumerate(selected_packages, 1):
-                    print(f"  [{i}] {item['pkg']}")
-                p_idx = safe_input(f"{M}Chọn số package [1-{len(selected_packages)}]: {RESET}").strip()
-                try:
-                    p_idx = int(p_idx) - 1
-                    target_p = selected_packages[p_idx]['pkg']
-                    print(f"{Y}[*] Đang trích xuất cookie từ {target_p}...{RESET}")
-                    cookie_target = extract_roblox_cookie(target_p)
-                except:
-                    print(f"{R}[!] Lựa chọn không hợp lệ!{RESET}")
-                    time.sleep(1.5)
-                    continue
-            elif sub_c == '2':
-                cookie_target = safe_input(f"{M}Nhập Cookie Roblox: {RESET}").strip()
-            
-            if cookie_target:
-                print(f"{Y}[*] Đang tiến hành tiêm Cookie vào Kiwi Browser và mở trang roblox.com/not-approved...{RESET}")
-                ok = resolve_not_approved_with_kiwi(cookie_target, target_p)
-                if ok:
-                    print(f"{G}[✓] Đã gửi lệnh mở Kiwi Browser! Hãy kiểm tra trình duyệt trên máy.{RESET}")
+            print(f"\n{C}=== CẤU HÌNH OMOCAPTCHA API KEY ==={RESET}")
+            print(f"Key hiện tại: {G}{mask_secret(OMOCAPTCHA_KEY)}{RESET}")
+            new_k = safe_input(f"{M}Nhập OMOCaptcha Client Key mới (Enter để giữ nguyên): {RESET}").strip()
+            if new_k:
+                if save_omocaptcha_key(new_k):
+                    print(f"{G}[✓] Đã lưu OMOCaptcha Key thành công vào omocaptcha_key.txt!{RESET}")
                 else:
-                    print(f"{R}[!] Thao tác thất bại! Kiểm tra lại Kiwi Browser trên máy.{RESET}")
-            else:
-                print(f"{R}[!] Không có cookie hợp lệ để tiêm!{RESET}")
-            fix_tty()
-            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
-            try: input()
-            except: pass
+                    print(f"{R}[!] Lỗi lưu file omocaptcha_key.txt!{RESET}")
+            time.sleep(1.5)
         elif c == '6':
-            setup_kiwi_extension()
+            print(f"\n{C}=== TEST GIẢI CAPTCHA V1 ARKOSE IN-APP (OMOCAPTCHA) ==={RESET}")
+            if not OMOCAPTCHA_KEY:
+                print(f"{R}[!] Chưa cấu hình OMOCaptcha Key! Hãy chọn Mục [5] để nhập Key trước.{RESET}")
+                time.sleep(2)
+                continue
+            target_p = selected_packages[0]['pkg'] if selected_packages else None
+            print(f"{Y}[*] Đang quét màn hình thiết bị và kích hoạt bộ giải OMOCaptcha in-app...{RESET}")
+            res_omo = solve_arkose_in_app_with_omo(target_p, OMOCAPTCHA_KEY)
+            if res_omo.get("solved"):
+                print(f"\n{G}[✓] ĐÃ GIẢI XONG THÀNH CÔNG CAPTCHA V1 TRỰC TIẾP TRONG APP! (Số vòng: {res_omo.get('rounds', 1)}){RESET}")
+            elif res_omo.get("detected"):
+                print(f"\n{Y}[!] Đã phát hiện giao diện Arkose nhưng chưa giải xong vòng hiện tại. Thử chạy lại!{RESET}")
+            else:
+                print(f"\n{C}[i] Không phát hiện thấy giao diện Arkose FunCaptcha trên màn hình hiện tại.{RESET}")
             fix_tty()
             print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
             try: input()
@@ -2764,36 +3505,103 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             session_uptime = current_time - state['session_start_time']
             uptime_seconds = current_time - state['rejoin_time']
 
-            # === XỬ LÝ TỰ ĐỘNG GIẢI CAPTCHAV2 / NHẤN VÀ GIỮ KHI ĐƯỢC BẮN VÀO GAME ===
+            # === MANDATORY PERIODIC COOKIE CHECK (MỖI 60S LUÔN CHECK BẤT KỂ LUA CÓ GỬI HEARTBEAT) ===
+            last_mandatory_chk = state.get('last_mandatory_cookie_check', 0)
+            if (current_time - last_mandatory_chk >= MANDATORY_COOKIE_CHECK_INTERVAL) and (AUTO_CHECK_ACC_HEALTH == "Enable"):
+                state['last_mandatory_cookie_check'] = current_time
+                chk_res = check_and_handle_account_health(pkg, states, current_time, force=True)
+                if chk_res:
+                    stop_event.wait(3)
+                    continue
+
+            # === XỬ LÝ TỰ ĐỘNG GIẢI CAPTCHA (V1 BẰNG OMO API / V2 BẰNG NHẤN VÀ GIỮ) ===
             if state.get('handling_captcha_solve'):
                 solve_elapsed = current_time - state.get('captcha_solve_start', current_time)
                 time_left_solve = max(0, int(90 - solve_elapsed))
-                state['text'] = f"Chờ Giữ Nút ({time_left_solve}s)"
+                state['text'] = f"Đang Giải ({time_left_solve}s)"
                 state['color'] = Y
+
+                # 1. KIỂM TRA ĐỊNH KỲ QUA API XEM ACC ĐÃ SẠCH CHƯA
+                cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
+                if cookie and (current_time - state.get('last_solve_api_chk', 0) >= 8):
+                    state['last_solve_api_chk'] = current_time
+                    try:
+                        api_chk = check_roblox_account_status(cookie)
+                        if api_chk.get('status') == 'OK':
+                            add_log(f"[{pkg[-12:]}] {G}[✓ ĐÃ GIẢI XONG] API xác nhận Cookie đã sạch (OK)! Rejoin vào game...{RESET}")
+                            state['handling_captcha_solve'] = False
+                            state['is_blocked'] = False
+                            state['block_reason'] = ''
+                            state['account_status'] = 'OK'
+                            state['captcha_miss_count'] = 0
+                            with pkg_restart_locks[pkg]:
+                                force_restart_app(pkg, states, current_time, "Đã Giải Xong -> Rejoin", G)
+                            last_ok_ping[pkg] = current_time
+                            stop_event.wait(5)
+                            continue
+                    except Exception:
+                        pass
 
                 # Đảm bảo app đang chạy và đang load vào game
                 if not is_app_running(pkg):
                     launch_roblox_to_game(pkg)
                     time.sleep(2)
 
-                # Quét màn hình liên tục tìm popup "Bảo Mật / Nhấn và Giữ" và tự động giữ nút 15s
-                sec_res = detect_press_and_hold_screen(pkg, auto_solve=True)
-                if sec_res.get("detected"):
-                    if sec_res.get("solved"):
-                        add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã nhấn giữ 15s vượt qua CaptchaV2! Acc đã sạch!{RESET}")
+                # 2. XỬ LÝ THEO LOẠI CAPTCHA:
+                # Nếu là Captcha V1 (Arkose FunCaptcha): Dùng OMOCaptcha API in-app
+                if state.get('captcha_type') == 'CAPTCHA_V1':
+                    omo_res = solve_arkose_in_app_with_omo(pkg, OMOCAPTCHA_KEY, stop_event)
+                    if omo_res.get("solved"):
+                        add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã giải xong Captcha V1 bằng OMOCaptcha API in-app! Rejoin...{RESET}")
                         state['handling_captcha_solve'] = False
                         state['is_blocked'] = False
                         state['block_reason'] = ''
                         state['account_status'] = 'OK'
-                        state['text'] = "Đã Giải Xong -> Game"
-                        state['color'] = G
                         state['last_acc_check'] = current_time
                         state['rejoin_time'] = current_time
                         state['warmup_until'] = current_time + 45
+                        with pkg_restart_locks[pkg]:
+                            force_restart_app(pkg, states, current_time, "OMO V1 Xong -> Rejoin", G)
+                        last_ok_ping[pkg] = current_time
                         stop_event.wait(5)
                         continue
-                    else:
-                        add_log(f"[{pkg[-12:]}] {Y}[*] Đang thao tác nhấn giữ nút xác nhận trên màn hình...{RESET}")
+                else:
+                    # Captcha V2: Thử Nhấn và Giữ
+                    current_attempt = state.get('captcha_miss_count', 0) + 1
+                    sec_res = detect_press_and_hold_screen(pkg, auto_solve=True, attempt=current_attempt)
+                    if sec_res.get("detected"):
+                        if sec_res.get("solved"):
+                            add_log(f"[{pkg[-12:]}] {G}[✓ THÀNH CÔNG] Đã nhấn giữ 16s vượt qua CaptchaV2! Acc đã sạch!{RESET}")
+                            state['handling_captcha_solve'] = False
+                            state['is_blocked'] = False
+                            state['block_reason'] = ''
+                            state['account_status'] = 'OK'
+                            state['captcha_miss_count'] = 0
+                            state['text'] = "Đã Giải Xong -> Game"
+                            state['color'] = G
+                            state['last_acc_check'] = current_time
+                            state['rejoin_time'] = current_time
+                            state['warmup_until'] = current_time + 45
+                            stop_event.wait(5)
+                            continue
+                        elif sec_res.get("type") == "ARKOSE_PUZZLE":
+                            # Phát hiện thực ra là Arkose V1!
+                            state['captcha_type'] = 'CAPTCHA_V1'
+                            add_log(f"[{pkg[-12:]}] {M}[CHUYỂN HƯỚNG] Phát hiện màn hình Arkose FunCaptcha -> Chuyển sang giải OMO in-app...{RESET}")
+                            continue
+                        else:
+                            state['captcha_miss_count'] = state.get('captcha_miss_count', 0) + 1
+                            add_log(f"[{pkg[-12:]}] {Y}[FALLBACK] Nhấn giữ lần {state['captcha_miss_count']} miss -> Thử lại với tọa độ bù trừ...{RESET}")
+
+                # Fallback: Xóa cache phiên và khởi động lại game để reset thử thách nếu kẹt lâu
+                if solve_elapsed >= 75 and state.get('captcha_miss_count', 0) >= 3:
+                    add_log(f"[{pkg[-12:]}] {Y}[FALLBACK] Thử xóa cache app và khởi động lại để reset thử thách...{RESET}")
+                    safe_root(f"rm -rf /data/data/{pkg}/cache/* /data/data/{pkg}/code_cache/* 2>/dev/null || true")
+                    _kill_pkg(pkg)
+                    time.sleep(2)
+                    launch_roblox_to_game(pkg)
+                    state['captcha_solve_start'] = current_time
+                    state['captcha_miss_count'] = 0
 
                 # Nếu tài khoản đã vào được trong game (có heartbeat checkhudyhub)
                 bound_curr = state.get('bound_name')
@@ -2804,11 +3612,12 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     state['is_blocked'] = False
                     state['block_reason'] = ''
                     state['account_status'] = 'OK'
+                    state['captcha_miss_count'] = 0
                     state['in_game'] = True
                     state['last_acc_check'] = current_time
                     continue
 
-                # Nếu hết 90s mà không giải được (ví dụ captcha dạng xoay ảnh cần mắt người giải)
+                # Nếu hết 90s mà không giải được
                 if solve_elapsed >= 90:
                     add_log(f"[{pkg[-12:]}] {R}[!] Hết 90s chờ bảng 'Nhấn và Giữ'. Tạm dừng để tránh treo máy.{RESET}")
                     state['handling_captcha_solve'] = False
@@ -2836,6 +3645,8 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                     lbl = "Kẹt Not-Approved"
                 elif "Nhấn và Giữ" in short_reason or "Nhấn&Giữ" in short_reason or "Press & Hold" in short_reason or "Bảo Mật" in short_reason:
                     lbl = "Dính Nhấn&Giữ"
+                elif "v1" in short_reason.lower() or "arkose" in short_reason.lower():
+                    lbl = "Dính CaptchaV1"
                 elif "captchav2" in short_reason.lower() or "captchav2" in str(state.get('account_status')).lower():
                     lbl = "Dính CaptchaV2"
                 elif "Captcha" in short_reason or "captcha" in short_reason.lower():
@@ -2874,37 +3685,50 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             state['is_blocked'] = False
                             state['block_reason'] = ''
                             state['account_status'] = 'OK'
-                            state['kiwi_opened'] = False
                             state['text'] = "Acc Sạch -> Rejoin..."
                             state['color'] = G
                             u_name = res.get('username') or state.get('bound_name') or 'Acc'
                             add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
-                            safe_root("am force-stop com.kiwibrowser.browser 2>/dev/null || true")
                             with pkg_restart_locks[pkg]:
                                 force_restart_app(pkg, states, current_time, "Acc Sạch -> Rejoin", G)
                             last_ok_ping[pkg] = current_time
                             stop_event.wait(5)
                             continue
                         elif res.get('status') == 'CAPTCHA_CHECKPOINT':
-                            # Khi recheck vẫn thấy dính CaptchaV2 -> Lại bắn vào game để hiện bảng 'Nhấn và Giữ' tự giải!
-                            add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Bắn vào game để kích hoạt bảng 'Nhấn và Giữ' tự giải...{RESET}")
-                            state['is_blocked'] = False
-                            state['handling_captcha_solve'] = True
-                            state['captcha_solve_start'] = current_time
-                            state['text'] = "Bắn Game Giải Captcha..."
-                            state['color'] = Y
-                            launch_roblox_to_game(pkg)
-                            stop_event.wait(3)
-                            continue
+                            chal = res.get('challenge_type', '')
+                            if chal in ['CAPTCHA_V1', 'ARKOSE_CAPTCHA'] or "V1" in res.get('badge', '') or "Arkose" in res.get('badge', ''):
+                                badge = res.get('badge', 'Dính Captcha V1')
+                                state['is_blocked'] = False
+                                state['handling_captcha_solve'] = True
+                                state['captcha_type'] = 'CAPTCHA_V1'
+                                state['captcha_solve_start'] = current_time
+                                state['captcha_miss_count'] = 0
+                                state['text'] = "Giải Captcha V1 (OMO)..."
+                                state['color'] = M
+                                add_log(f"[{pkg[-12:]}] {M}[CAPTCHA V1 IN-APP] Khởi chạy app Roblox để tự giải OMO in-app...{RESET}")
+                                launch_roblox_to_game(pkg)
+                                stop_event.wait(3)
+                                continue
+                            else:
+                                # Khi recheck thấy dính CaptchaV2 (Nhấn và Giữ) -> Bắn vào game tự giữ nút
+                                add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Bắn vào game để kích hoạt bảng 'Nhấn và Giữ' tự giải...{RESET}")
+                                state['is_blocked'] = False
+                                state['handling_captcha_solve'] = True
+                                state['captcha_solve_start'] = current_time
+                                state['captcha_miss_count'] = 0
+                                state['text'] = "Bắn Game Giải Captcha..."
+                                state['color'] = Y
+                                launch_roblox_to_game(pkg)
+                                stop_event.wait(3)
+                                continue
                         else:
                             # Vẫn đang bị dính Not-Approved hoặc Cookie Die
                             state['is_blocked'] = True
                             badge = res.get('badge', 'Kẹt Acc')
                             state['block_reason'] = badge
                             state['account_status'] = res.get('status')
-                            if res.get('status') == 'NOT_APPROVED' and not state.get('kiwi_opened'):
-                                state['kiwi_opened'] = True
-                                resolve_not_approved_with_kiwi(cookie, pkg)
+                            if res.get('status') == 'NOT_APPROVED':
+                                handle_not_approved_in_app(pkg)
                             add_log(f"[{pkg[-12:]}] Vẫn {badge} (chờ tiếp {recheck_interval}s)")
                     else:
                         add_log(f"[{pkg[-12:]}] Chưa lấy được Cookie để kiểm tra lại.")
@@ -2941,6 +3765,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             add_log(f"[{pkg[-12:]}] {Y}[BẢO MẬT] Phát hiện màn hình 'Nhấn và Giữ' (ID: {ref[:8]}..)! Đang chuyển chế độ giữ nút...{RESET}")
                             state['handling_captcha_solve'] = True
                             state['captcha_solve_start'] = current_time
+                            state['captcha_miss_count'] = 0
                             stop_event.wait(2)
                             continue
 
@@ -3709,7 +4534,8 @@ def delta_license_sync_thread(stop_event):
         stop_event.wait(15)
 
 def start_auto_rejoin():
-    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
+    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding, global_live_states
+    start_web_log_server(WEB_LOG_PORT)
     if not selected_packages:
         print(f"{R}[!] Chọn package trước!{RESET}")
         time.sleep(2)
@@ -3728,6 +4554,7 @@ def start_auto_rejoin():
     inject_universal_lua()
 
     states = {}
+    global_live_states = states
     last_ok_ping = {}
     stop_event = threading.Event()
     sync_t = threading.Thread(target=delta_license_sync_thread, args=(stop_event,), daemon=True)
@@ -3753,6 +4580,8 @@ def start_auto_rejoin():
             'block_reason': '',
             'account_status': 'UNKNOWN',
             'last_acc_check': pkg_now,
+            'last_mandatory_cookie_check': pkg_now,
+            'captcha_miss_count': 0,
             'cached_cookie': None
         }
         last_ok_ping[pkg] = pkg_now
@@ -4058,6 +4887,7 @@ def main():
     while True:
         clear_screen()
         print_banner()
+        start_web_log_server(WEB_LOG_PORT)
         print(f"[{C}1{RESET}] Quét và Chọn Package Roblox")
         print(f"[{C}2{RESET}] Cài đặt Game ID & Time Kill All")
         print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
@@ -4065,7 +4895,8 @@ def main():
         print(f"[{C}5{RESET}] Quản lý Delta Key & Auto Bypass (Bacon API)")
         print(f"[{C}6{RESET}] Kiểm tra file Delta License (Test)")
         print(f"[{C}7{RESET}] Kiểm tra Trạng thái Acc / Captcha / Not-Approved (Test)")
-        print(f"[{C}8{RESET}] Thoát")
+        print(f"[{C}8{RESET}] Mở Web UI Log ngoài Termux ({G}http://localhost:{WEB_LOG_PORT}{RESET})")
+        print(f"[{C}9{RESET}] Thoát")
         try:
             fix_tty()
             choice = safe_input(f"\n{M}HuDy > {RESET}")
@@ -4087,6 +4918,8 @@ def main():
         elif choice == '7':
             account_captcha_check_menu()
         elif choice == '8':
+            open_web_ui_in_browser()
+        elif choice == '9':
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
             fix_tty()
