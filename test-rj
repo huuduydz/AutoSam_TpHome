@@ -323,9 +323,9 @@ def print_dashboard(states):
     pid_display = target_place_id if target_place_id else "Sảnh (0)"
     restart_display = f"{kill_all_time}m" if kill_all_time > 0 else "Tắt"
     
-    print(f"{CYAN_NEON}╭─ 📊 THÔNG SỐ HỆ THỐNG & CẤU HÌNH ─────────────────────────╮{RESET}")
-    print(f"{CYAN_NEON}│{RESET} CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ 🎯 Place: {GOLD_NEON}{pid_display:<11}{RESET}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}│{RESET} Restart: {Y}{restart_display:<5}{RESET}│ Cookie: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}    │ 📜 Script: {PINK_NEON}{cur_sc_name:<10}{RESET} {CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╭─ THÔNG SỐ HỆ THỐNG & CẤU HÌNH ─────────────────────────╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET} CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ Place: {GOLD_NEON}{pid_display:<11}{RESET}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}│{RESET} Restart: {Y}{restart_display:<5}{RESET}│ Cookie: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}    │ Script: {PINK_NEON}{cur_sc_name:<10}{RESET} {CYAN_NEON}│{RESET}")
     print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────╯{RESET}")
     
     p_header = "Package"
@@ -347,7 +347,7 @@ def print_dashboard(states):
     print(f"{CYAN_NEON}╰──────────────────────┴─────────────────┴────────────────────╯{RESET}")
     print(f" {GREEN_MINT}●{RESET} {BOLD}Đang chạy Live Dashboard...{RESET} {GRAY_LIGHT}(Bấm Ctrl+C để dừng và về Menu){RESET}")
     if system_logs:
-        print(f"{CYAN_NEON}╭─ 📋 NHẬT KÝ HỆ THỐNG GẦN ĐÂY ─────────────────────────────╮{RESET}")
+        print(f"{CYAN_NEON}╭─ NHẬT KÝ HỆ THỐNG GẦN ĐÂY ─────────────────────────────╮{RESET}")
         for log in system_logs[-6:]:
             l_str = log if len(log) <= 57 else log[:54] + "..."
             print(f"{CYAN_NEON}│{RESET} {l_str:<57} {CYAN_NEON}│{RESET}")
@@ -360,7 +360,7 @@ def select_auto_inject_script_menu():
     global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL
     clear_screen()
     print_banner()
-    print(f"{CYAN_NEON}╭────────────────── 📜 CHỌN SCRIPT AUTO INJECT ─────────────────╮{RESET}")
+    print(f"{CYAN_NEON}╭────────────────── CHỌN SCRIPT AUTO INJECT ─────────────────╮{RESET}")
     print(f"{CYAN_NEON}│{RESET} {GRAY_LIGHT}Script sẽ tự động nạp vào thư mục autoexec của executor      {RESET}{CYAN_NEON}│{RESET}")
     print(f"{CYAN_NEON}├───────────────────────────────────────────────────────────────┤{RESET}")
     
@@ -606,7 +606,6 @@ def select_package_menu():
 # =====================================================================
 def inject_universal_lua():
     lua_code = """
-loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hihi",true))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
