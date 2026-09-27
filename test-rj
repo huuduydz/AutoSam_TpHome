@@ -70,10 +70,15 @@ def safe_input(prompt=''):
     return val.strip()
 
 def safe_root(cmd, timeout=15):
-    """Chạy lệnh root với timeout - tránh subprocess treo mãi khi 24/7."""
+    """Chạy lệnh root với timeout - luôn đảm bảo chạy dưới quyền su."""
+    cmd_str = cmd.strip()
+    if not cmd_str.startswith("su ") and not cmd_str.startswith("su\t") and not cmd_str.startswith("su -c"):
+        cmd_exec = f"su -c '{cmd_str}'"
+    else:
+        cmd_exec = cmd_str
     try:
         subprocess.run(
-            cmd, shell=True,
+            cmd_exec, shell=True,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -269,7 +274,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.3{RESET} | {C}Web UI: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.5{RESET} | {C}Web UI: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -662,6 +667,179 @@ HTML_PAGE = """<!DOCTYPE html>
 </html>
 """
 
+HTML_HUD_WIDGET = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HuDy Floating HUD</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body {
+            background: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #f1f2f6;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 6px;
+        }
+        .hud-card {
+            width: 100%;
+            max-width: 420px;
+            background: rgba(13, 17, 23, 0.88);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 255, 136, 0.4);
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
+            padding: 10px 12px;
+            font-size: 12px;
+        }
+        .hud-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 6px;
+            margin-bottom: 8px;
+        }
+        .hud-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: bold;
+            font-size: 13px;
+            color: #00ff88;
+        }
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+            box-shadow: 0 0 8px #00ff88;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.85); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .hud-meta {
+            font-size: 11px;
+            color: #8b949e;
+        }
+        .pkg-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            padding: 5px 8px;
+            margin-bottom: 5px;
+            border-left: 3px solid #00ff88;
+        }
+        .pkg-row.blocked { border-left-color: #ff4757; }
+        .pkg-row.captcha { border-left-color: #eccc68; }
+        .pkg-name { font-weight: 600; color: #fff; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pkg-status { font-size: 11px; color: #a4b0be; }
+        .badge {
+            font-size: 10px;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .badge-farm { background: rgba(0, 255, 136, 0.2); color: #00ff88; }
+        .badge-block { background: rgba(255, 71, 87, 0.2); color: #ff4757; }
+        .badge-wait { background: rgba(236, 204, 104, 0.2); color: #eccc68; }
+        .hud-logs {
+            margin-top: 6px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            color: #ced6e0;
+            max-height: 48px;
+            overflow: hidden;
+        }
+        .log-line {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="hud-card" id="hud-card">
+        <div class="hud-header">
+            <div class="hud-title">
+                <div class="pulse-dot"></div>
+                <span>HuDy HUD</span>
+            </div>
+            <div class="hud-meta">
+                <span id="h-cpu">CPU: --</span> | <span id="h-ram">RAM: --</span> | <span id="h-time">--:--:--</span>
+            </div>
+        </div>
+        <div id="hud-pkgs">
+            <div style="color: #888; text-align: center; padding: 6px;">Đang nạp trạng thái...</div>
+        </div>
+        <div class="hud-logs" id="hud-logs">
+            <div class="log-line" style="color: #888;">• Đang theo dõi tiến trình...</div>
+        </div>
+    </div>
+
+    <script>
+        function updateHUD() {
+            fetch('/api/data')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('h-cpu').innerText = 'CPU ' + (data.cpu || 'N/A');
+                    document.getElementById('h-ram').innerText = data.ram || 'N/A';
+                    document.getElementById('h-time').innerText = data.time || '--:--:--';
+
+                    let pkgs = data.packages || [];
+                    let p_html = '';
+                    if (pkgs.length === 0) {
+                        p_html = '<div style="color: #eccc68; text-align: center; padding: 4px;">Chưa chạy Auto Rejoin (Menu [3])</div>';
+                    } else {
+                        pkgs.forEach(p => {
+                            let cls = p.is_blocked ? 'blocked' : (p.text.toLowerCase().includes('captcha') ? 'captcha' : '');
+                            let b_cls = p.in_game ? 'badge-farm' : (p.is_blocked ? 'badge-block' : 'badge-wait');
+                            p_html += `
+                                <div class="pkg-row ${cls}">
+                                    <div>
+                                        <div class="pkg-name">${p.name || p.pkg_short}</div>
+                                        <div class="pkg-status">${p.text}</div>
+                                    </div>
+                                    <span class="badge ${b_cls}">${p.status_badge || 'ACTIVE'}</span>
+                                </div>
+                            `;
+                        });
+                    }
+                    document.getElementById('hud-pkgs').innerHTML = p_html;
+
+                    let logs = data.logs || [];
+                    let l_html = '';
+                    let recent = logs.slice(-2);
+                    recent.forEach(l => {
+                        let txt = l.plain || '';
+                        l_html += `<div class="log-line">• ${txt}</div>`;
+                    });
+                    if (l_html) {
+                        document.getElementById('hud-logs').innerHTML = l_html;
+                    }
+                })
+                .catch(() => {});
+        }
+        updateHUD();
+        setInterval(updateHUD, 1200);
+    </script>
+</body>
+</html>
+"""
+
 class WebLogHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # Không in log HTTP ra console để tránh spam terminal
@@ -672,6 +850,11 @@ class WebLogHandler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(HTML_PAGE.encode('utf-8'))
+        elif self.path == '/hud' or self.path.startswith('/hud'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(HTML_HUD_WIDGET.encode('utf-8'))
         elif self.path.startswith('/api/data'):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -759,18 +942,181 @@ def start_web_log_server(initial_port=8080):
             continue
     return WEB_LOG_PORT
 
-def open_web_ui_in_browser():
+def run_compact_hud_cli(port=WEB_LOG_PORT):
+    """
+    Chế độ hiển thị HUD siêu nhỏ gọn (compact floating widget) dành riêng cho
+    Termux:Float hoặc chia đôi màn hình / cửa sổ nổi đè lên game Roblox.
+    """
+    clear_screen()
+    print(f"{C}[*] Đang kết nối tới HuDy Live Engine (Port {port})...{RESET}")
+    url = f"http://127.0.0.1:{port}/api/data"
+    last_err_time = 0
+    try:
+        while True:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "HuDy-HUD/1.0"})
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+
+                t_str = data.get('time', '--:--:--')
+                cpu_s = data.get('cpu', 'N/A')
+                ram_s = data.get('ram', 'N/A')
+
+                lines = []
+                lines.append(f"{C}╔══════════════════ [ HuDy HUD OVERLAY ] ══════════════════╗{RESET}")
+                lines.append(f"{C}║{RESET} {G}● LIVE{RESET}  Giờ: {W}{t_str}{RESET}  CPU: {Y}{cpu_s}{RESET}  RAM: {M}{ram_s}{RESET}")
+                lines.append(f"{C}╠──────────────────────────────────────────────────────────╢{RESET}")
+
+                pkgs = data.get('packages', [])
+                if not pkgs:
+                    lines.append(f"{C}║{RESET}  {Y}[!] Chưa chạy Auto Rejoin (Vào Menu [3] để bật){RESET}")
+                else:
+                    for i, p in enumerate(pkgs[:4], 1):
+                        name = p.get('name', 'N/A')[:14]
+                        badge = p.get('status_badge', 'ACTIVE')
+                        b_col = G if badge == 'FARMING' else (R if badge == 'BLOCKED' else Y)
+                        text = p.get('text', '')[:28]
+                        lines.append(f"{C}║{RESET} [{i}] {W}{name:<14}{RESET} {b_col}[{badge:<7}]{RESET} {text}")
+
+                lines.append(f"{C}╠──────────────────────────────────────────────────────────╢{RESET}")
+                lines.append(f"{C}║{RESET} {C}LOG MỚI NHẤT:{RESET}")
+                logs = data.get('logs', [])
+                recent_logs = logs[-2:] if logs else []
+                if not recent_logs:
+                    lines.append(f"{C}║{RESET}   {W}(Chưa có log mới){RESET}")
+                else:
+                    for l in recent_logs:
+                        p_txt = (l.get('plain') or '')[:52]
+                        lines.append(f"{C}║{RESET}   • {W}{p_txt}{RESET}")
+                lines.append(f"{C}╚══════════════════════════════════════════════════════════╝{RESET}")
+
+                sys.stdout.write("\033[H" + "\n".join(lines) + "\n\033[J")
+                sys.stdout.flush()
+                time.sleep(1.2)
+            except Exception as e:
+                now_t = time.time()
+                if now_t - last_err_time >= 3:
+                    sys.stdout.write(f"\r{Y}[HUD] Đang đợi Tool Rejoin chính hoạt động... ({e})  {RESET}")
+                    sys.stdout.flush()
+                    last_err_time = now_t
+                time.sleep(1.5)
+    except KeyboardInterrupt:
+        print(f"\n{Y}[HUD] Đã đóng Floating HUD.{RESET}")
+
+def floating_overlay_menu():
+    global WEB_LOG_PORT
     start_web_log_server(WEB_LOG_PORT)
     ip = get_local_ip()
     local_url = f"http://localhost:{WEB_LOG_PORT}"
-    network_url = f"http://{ip}:{WEB_LOG_PORT}"
-    print(f"\n{C}=== WEB UI LOG DASHBOARD (NGOÀI TERMUX) ==={RESET}")
-    print(f"  • Link trên máy (Trình duyệt):    {G}{local_url}{RESET}")
-    print(f"  • Link từ thiết bị khác / PC:    {Y}{network_url}{RESET}")
-    print(f"\n{C}[*] Đang gửi lệnh mở Web UI trên trình duyệt máy...{RESET}")
-    safe_root(f"am start -a android.intent.action.VIEW -d '{local_url}' 2>/dev/null || true")
-    print(f"{G}[✓] Đã mở trình duyệt! Bạn có thể xem log thời gian thực mà không lo bị ẩn Termux.{RESET}")
-    time.sleep(2.5)
+    hud_url = f"http://localhost:{WEB_LOG_PORT}/hud"
+
+    while True:
+        clear_screen()
+        print_banner()
+        print(f"{C}=== CẤU HÌNH & BẬT CỬA SỔ NỔI (FLOATING OVERLAY HUD) ĐÈ LÊN GAME ==={RESET}")
+        print(f"Cơ chế hiển thị trực tiếp lên trên màn hình Game Roblox, không cần mở trình duyệt rời!\n")
+        print(f"[{C}1{RESET}] Bật Floating Terminal HUD (Termux:Float - Cửa sổ nổi kéo thả đè lên game)")
+        print(f"[{C}2{RESET}] Mở Cửa Sổ Nổi Pop-up / Freeform Window (Android Multi-Window HUD)")
+        print(f"[{C}3{RESET}] Chạy chế độ Mini HUD ngay trên Terminal hiện tại ({W}hudy_3.py --hud{RESET})")
+        print(f"[{C}4{RESET}] Mở Web Dashboard đầy đủ trên trình duyệt ({G}{local_url}{RESET})")
+        print(f"[{C}5{RESET}] Quay lại Menu chính")
+
+        fix_tty()
+        c = safe_input(f"\n{M}Chọn [1-5]: {RESET}").strip()
+
+        if c == '1':
+            print(f"\n{C}=== KHỞI CHẠY TERMUX:FLOAT OVERLAY ==={RESET}")
+            # Cấp quyền SYSTEM_ALERT_WINDOW (Vẽ trên ứng dụng khác)
+            safe_root("appops set com.termux.float SYSTEM_ALERT_WINDOW allow 2>/dev/null || true")
+            safe_root("appops set com.termux SYSTEM_ALERT_WINDOW allow 2>/dev/null || true")
+
+            # Kiểm tra xem Termux:Float đã cài chưa
+            code, out, _ = _run_root_capture("pm path com.termux.float 2>/dev/null", timeout=3)
+            if code != 0 or not out.strip():
+                print(f"{Y}[!] Chưa phát hiện ứng dụng Termux:Float (com.termux.float) trên máy.{RESET}")
+                dl_c = safe_input(f"{C}Bạn có muốn tự động tải APK và cài đặt Termux:Float ngay không? (Y/n): {RESET}").strip().lower()
+                if dl_c != 'n':
+                    dl_path = "/sdcard/Download/termux_float.apk"
+                    cdn_url = "https://f-droid.org/repo/com.termux.float_15.apk"
+                    gh_url = "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/termux-float.apk"
+                    print(f"{Y}[*] Đang tải Termux:Float APK về máy...{RESET}")
+                    downloaded = False
+                    for u in [gh_url, cdn_url]:
+                        try:
+                            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=25) as resp:
+                                if resp.status == 200:
+                                    with open(dl_path, "wb") as f_out:
+                                        f_out.write(resp.read())
+                                    downloaded = True
+                                    break
+                        except Exception:
+                            continue
+                    if not downloaded:
+                        os.system(f"curl -sL '{cdn_url}' -o '{dl_path}' 2>/dev/null")
+                        if os.path.exists(dl_path) and os.path.getsize(dl_path) > 100000:
+                            downloaded = True
+
+                    if downloaded:
+                        print(f"{G}[✓] Đã tải xong! Đang tự động cài đặt qua root (pm install)...{RESET}")
+                        code_inst, _, _ = _run_root_capture(f"pm install -r -g '{dl_path}'", timeout=20)
+                        if code_inst == 0:
+                            print(f"{G}[✓] Cài đặt Termux:Float thành công!{RESET}")
+                            safe_root("appops set com.termux.float SYSTEM_ALERT_WINDOW allow 2>/dev/null || true")
+                        else:
+                            print(f"{Y}[!] Tự động cài không thành công, hãy mở file tại {dl_path} để cài thủ công.{RESET}")
+                    else:
+                        print(f"{R}[!] Không thể tải APK tự động. Bạn hãy cài 'Termux:Float' từ F-Droid nhé!{RESET}")
+                        time.sleep(2.5)
+                        continue
+                else:
+                    continue
+
+            # Chuẩn bị file launcher lệnh HUD cho Termux:Float
+            script_abs = os.path.abspath(__file__)
+            launcher_sh = "/data/data/com.termux/files/home/.termux_float_hud.sh"
+            try:
+                with open(launcher_sh, "w", encoding="utf-8") as f:
+                    f.write(f'#!/data/data/com.termux/files/usr/bin/bash\npython "{script_abs}" --hud\n')
+                safe_root(f"chmod 755 '{launcher_sh}'")
+            except:
+                pass
+
+            print(f"{Y}[*] Đang bật Cửa Sổ Nổi Termux:Float...{RESET}")
+            safe_root("am start -n com.termux.float/.TermuxFloatActivity 2>/dev/null || monkey -p com.termux.float 1 2>/dev/null || true")
+            print(f"\n{G}╔═══════════════════════════════════════════════════════════════════╗{RESET}")
+            print(f"{G}║             ĐÃ KÍCH HOẠT CỬA SỔ NỔI OVERLAY!                      ║{RESET}")
+            print(f"{G}╚═══════════════════════════════════════════════════════════════════╝{RESET}")
+            print(f"  • Cửa sổ nổi {W}Termux:Float{RESET} đã xuất hiện đè lên trên màn hình!")
+            print(f"  • Tại cửa sổ nổi, chỉ cần gõ: {C}python '{script_abs}' --hud{RESET}")
+            print(f"  • Bạn có thể kéo thả, thu nhỏ hoặc đặt cửa sổ ở bất kỳ góc nào trên game Roblox.")
+            fix_tty()
+            print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+            try: input()
+            except: pass
+            break
+
+        elif c == '2':
+            print(f"\n{C}=== MỞ CỬA SỔ NỔI POP-UP / FREEFORM WINDOW ==={RESET}")
+            print(f"{Y}[*] Đang gửi lệnh mở HUD dạng Pop-up Multi-Window (--windowingMode 5)...{RESET}")
+            cmd_freeform = f"am start -a android.intent.action.VIEW -d '{hud_url}' --windowingMode 5 --bounds 30,50,720,480 2>/dev/null || am start -a android.intent.action.VIEW -d '{hud_url}' 2>/dev/null || true"
+            safe_root(cmd_freeform)
+            print(f"{G}[✓] Đã gửi lệnh mở HUD Pop-up đè lên màn hình!{RESET}")
+            time.sleep(2.5)
+            break
+
+        elif c == '3':
+            run_compact_hud_cli(WEB_LOG_PORT)
+            break
+
+        elif c == '4':
+            print(f"\n{C}[*] Link Web đầy đủ: {G}{local_url}{RESET}")
+            safe_root(f"am start -a android.intent.action.VIEW -d '{local_url}' 2>/dev/null || true")
+            time.sleep(2)
+            break
+
+        elif c == '5':
+            break
 
 # =====================================================================
 # CÀI ĐẶT
@@ -3045,6 +3391,96 @@ def handle_not_approved_in_app(pkg=None):
         pass
     return False
 
+def capture_arkose_screen_image(tag="OMO"):
+    """
+    Chụp ảnh màn hình bằng quyền root (su -c) với 3 cơ chế dự phòng:
+    1. screencap -p /data/local/tmp/arkose_frame.png (chmod 666) -> Python đọc trực tiếp
+    2. base64 /data/local/tmp/arkose_frame.png -> root đọc và trả chuỗi base64
+    3. screencap -p | base64 -> pipe trực tiếp qua stdout
+    """
+    tmp_path = "/data/local/tmp/arkose_frame.png"
+    _run_root_capture(f"rm -f '{tmp_path}' 2>/dev/null", timeout=2)
+
+    # Cơ chế 1: Chụp vào file /data/local/tmp bằng root
+    code, _, err = _run_root_capture(f"screencap -p '{tmp_path}' && chmod 666 '{tmp_path}'", timeout=6)
+
+    data = None
+    if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 1000:
+        try:
+            with open(tmp_path, "rb") as f:
+                data = f.read()
+        except:
+            pass
+
+    # Cơ chế 2: Đọc qua root base64 nếu Termux bị hạn chế quyền đọc
+    if not data:
+        code_b64, out_b64, _ = _run_root_capture(f"base64 '{tmp_path}' 2>/dev/null", timeout=6)
+        if code_b64 == 0 and len(out_b64.strip()) > 1000:
+            try:
+                data = base64.b64decode(out_b64.strip())
+            except:
+                pass
+
+    # Cơ chế 3: Pipe trực tiếp screencap qua base64
+    if not data:
+        code_pipe, out_pipe, _ = _run_root_capture("screencap -p | base64", timeout=8)
+        if code_pipe == 0 and len(out_pipe.strip()) > 1000:
+            try:
+                data = base64.b64decode(out_pipe.strip())
+            except:
+                pass
+
+    _run_root_capture(f"rm -f '{tmp_path}' 2>/dev/null", timeout=2)
+    return data
+
+def crop_and_encode_puzzle_image(png_bytes, crop_box, tag="OMO"):
+    """
+    Crop ảnh câu đố theo crop_box = (x1, y1, x2, y2) và trả về base64.
+    Hỗ trợ Pillow (nếu có), ImageMagick convert, hoặc fallback full image.
+    """
+    if not png_bytes or len(png_bytes) < 1000:
+        return None
+
+    x1, y1, x2, y2 = crop_box
+    x1, y1 = max(0, int(x1)), max(0, int(y1))
+
+    # 1. Thử dùng Pillow (PIL.Image)
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(png_bytes))
+        x2 = min(im.width, int(x2))
+        y2 = min(im.height, int(y2))
+        if x1 < x2 and y1 < y2:
+            cropped = im.crop((x1, y1, x2, y2))
+            buf = io.BytesIO()
+            cropped.save(buf, format="JPEG", quality=92)
+            add_log(f"[{tag}] {G}[✓ CROP] Đã crop ảnh câu đố ({x2-x1}x{y2-y1}) qua Pillow!{RESET}")
+            return base64.b64encode(buf.getvalue()).decode('utf-8')
+    except Exception as e:
+        add_log(f"[{tag}] {Y}[OMO] Pillow ({e}), đang dùng phương thức fallback...{RESET}")
+
+    # 2. Thử dùng ImageMagick 'convert' trên máy nếu có
+    tmp_in = "/data/local/tmp/crop_in.png"
+    tmp_out = "/data/local/tmp/crop_out.jpg"
+    try:
+        with open(tmp_in, "wb") as f:
+            f.write(png_bytes)
+        cw = int(x2 - x1)
+        ch = int(y2 - y1)
+        c, _, _ = _run_root_capture(f"convert '{tmp_in}' -crop {cw}x{ch}+{x1}+{y1} '{tmp_out}' 2>/dev/null", timeout=3)
+        if c == 0 and os.path.exists(tmp_out) and os.path.getsize(tmp_out) > 500:
+            with open(tmp_out, "rb") as f:
+                res = base64.b64encode(f.read()).decode('utf-8')
+            _run_root_capture(f"rm -f '{tmp_in}' '{tmp_out}' 2>/dev/null")
+            add_log(f"[{tag}] {G}[✓ CROP] Đã crop ảnh qua ImageMagick convert!{RESET}")
+            return res
+    except:
+        pass
+
+    # 3. Fallback: Dùng toàn bộ ảnh screenshot
+    add_log(f"[{tag}] {Y}[OMO] Gửi full screenshot tới OMO API...{RESET}")
+    return base64.b64encode(png_bytes).decode('utf-8')
+
 def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
     """
     Giải Captcha V1 (Arkose Match-Game / FunCaptcha) trực tiếp trong app Roblox bằng OMOCaptcha API:
@@ -3065,12 +3501,11 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
     tag = pkg[-12:] if pkg else "OMO_V1"
 
     if pkg:
-        safe_root(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null || monkey -p {pkg} 1")
+        _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
         time.sleep(1.0)
 
     w, h = get_screen_resolution()
     dump_file = "/data/local/tmp/dump_arkose.xml"
-    scr_file = "/sdcard/Download/arkose_frame.png"
 
     total_rounds_solved = 0
     max_rounds = 10
@@ -3088,9 +3523,9 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
             continue
 
         xml_lower = xml_str.lower()
-        keywords_verify = ["xác minh", "verify", "bắt đầu câu đố", "start puzzle", "authenticate", "descriptionverify"]
-        keywords_match = ["sử dụng mũi tên", "use the arrows", "rotate", "arrow", "xoay", "hướng", "direction", "pick the", "chọn hình", "match the", "bàn tay", "con vật"]
-        keywords_submit = ["gửi", "submit", "hoàn thành", "done"]
+        keywords_verify = ["xác minh", "verify", "bắt đầu câu đố", "start puzzle", "bắt đầu", "authenticate", "descriptionverify", "home_children_button"]
+        keywords_match = ["sử dụng mũi tên", "use the arrows", "rotate", "arrow", "xoay", "hướng", "direction", "pick the", "chọn hình", "match the", "bàn tay", "con vật", "animal", "hand", "pair", "matching"]
+        keywords_submit = ["gửi", "submit", "hoàn thành", "done", "tiếp tục", "continue"]
 
         has_arkose = any(k in xml_lower for k in keywords_verify + keywords_match + ["arkoselabs", "funcaptcha"])
         if not has_arkose:
@@ -3109,14 +3544,14 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
         verify_clicked = False
         for node in root.iter('node'):
             t = (node.get('text') or node.get('content-desc') or '').strip().lower()
-            if any(kv in t for kv in keywords_verify) and node.get('clickable') == 'true':
+            if any(kv in t for kv in keywords_verify):
                 bounds = node.get('bounds') or ''
                 m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
                 if m:
                     x1, y1, x2, y2 = map(int, m.groups())
                     cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                     add_log(f"[{tag}] {C}[OMO] Phát hiện nút '{t}'! Đang click ({cx}, {cy}) để bắt đầu câu đố...{RESET}")
-                    safe_root(f"su -c 'input tap {cx} {cy}'")
+                    _run_root_capture(f"input tap {cx} {cy}")
                     time.sleep(2.5)
                     verify_clicked = True
                     break
@@ -3138,77 +3573,83 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
         if not question:
             question = "Use the arrows to rotate the animal to face in the direction of the hand"
 
-        # 3. Tìm tọa độ nút Mũi tên phải, Mũi tên trái, Nút Gửi (Submit)
-        right_arrow_coords = None
-        left_arrow_coords = None
-        submit_coords = None
-
-        center_x, center_y = w // 2, h // 2
-        is_landscape = (w >= h)
-
+        # 3. Phân tích vùng chứa (Container/WebView) và tọa độ nút
+        container_bounds = None
         for node in root.iter('node'):
-            t = (node.get('text') or '').strip()
-            desc = (node.get('content-desc') or '').strip()
-            comb = (t or desc).lower()
+            cls = (node.get('class') or '').lower()
             bounds = node.get('bounds') or ''
             m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-            if not m:
-                continue
-            x1, y1, x2, y2 = map(int, m.groups())
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            if m:
+                x1, y1, x2, y2 = map(int, m.groups())
+                cw, ch = x2 - x1, y2 - y1
+                if ('webview' in cls or 'dialog' in cls) and (cw >= w * 0.4 and ch >= h * 0.4):
+                    container_bounds = (x1, y1, x2, y2)
+                    break
 
-            if any(sb in comb for sb in keywords_submit) and (node.get('clickable') == 'true' or 'button' in node.get('class', '').lower()):
-                submit_coords = (cx, cy)
-            elif any(ra in comb for ra in ["right", "phải", ">"]) and node.get('clickable') == 'true':
-                right_arrow_coords = (cx, cy)
-            elif any(la in comb for la in ["left", "trái", "<"]) and node.get('clickable') == 'true':
-                left_arrow_coords = (cx, cy)
+        if container_bounds:
+            bx1, by1, bx2, by2 = container_bounds
+            bcx, bcy = (bx1 + bx2) // 2, (by1 + by2) // 2
+            bw, bh = bx2 - bx1, by2 - by1
+        else:
+            bcx, bcy = w // 2, h // 2
+            bw, bh = w, h
 
-        if not right_arrow_coords:
-            right_arrow_coords = (int(center_x + w * 0.18), center_y) if is_landscape else (int(center_x + w * 0.32), center_y)
-        if not left_arrow_coords:
-            left_arrow_coords = (int(center_x - w * 0.18), center_y) if is_landscape else (int(center_x - w * 0.32), center_y)
+        is_landscape = (w >= h)
+
+        # Tìm nút Submit thật từ XML
+        submit_coords = None
+        for node in root.iter('node'):
+            t = (node.get('text') or node.get('content-desc') or '').strip().lower()
+            if any(sb in t for sb in keywords_submit) and len(t) <= 15:
+                bounds = node.get('bounds') or ''
+                m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                if m:
+                    x1, y1, x2, y2 = map(int, m.groups())
+                    submit_coords = ((x1 + x2) // 2, (y1 + y2) // 2)
+                    break
+
         if not submit_coords:
-            submit_coords = (center_x, int(center_y + h * 0.28)) if is_landscape else (center_x, int(center_y + h * 0.24))
+            submit_coords = (bcx, int(by2 - bh * 0.12)) if container_bounds else (
+                (bcx, int(bcy + h * 0.28)) if is_landscape else (bcx, int(bcy + h * 0.22))
+            )
 
-        # 4. Chụp ảnh màn hình và crop ảnh câu đố
-        safe_root(f"screencap -p '{scr_file}' && chmod 666 '{scr_file}'", timeout=5)
-        time.sleep(0.3)
+        # Tọa độ Right Arrow và Left Arrow
+        if is_landscape:
+            right_arrow_coords = (int(bcx + bw * 0.22), bcy)
+            left_arrow_coords = (int(bcx + bw * 0.02), bcy)
+            crop_box = (
+                int(bcx - bw * 0.32),
+                int(bcy - bh * 0.25),
+                int(bcx + bw * 0.32),
+                int(submit_coords[1] - 10)
+            )
+        else:
+            right_arrow_coords = (int(bcx + bw * 0.30), bcy)
+            left_arrow_coords = (int(bcx + bw * 0.05), bcy)
+            crop_box = (
+                int(bcx - bw * 0.42),
+                int(bcy - bh * 0.20),
+                int(bcx + bw * 0.42),
+                int(submit_coords[1] - 10)
+            )
 
-        image_b64 = None
-        try:
-            if os.path.exists(scr_file):
-                from PIL import Image
-                im = Image.open(scr_file)
-                rx, _ = right_arrow_coords
-                lx, _ = left_arrow_coords
-                crop_x1 = max(0, lx + 20)
-                crop_x2 = min(im.width, rx - 20)
-                crop_y1 = max(0, int(center_y - (im.height * 0.22 if is_landscape else im.height * 0.18)))
-                crop_y2 = min(im.height, int(submit_coords[1] - 15))
+        # 4. Chụp ảnh màn hình bằng quyền root
+        add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Đang chụp ảnh màn hình câu đố...{RESET}")
+        raw_png = capture_arkose_screen_image(tag)
+        if not raw_png:
+            add_log(f"[{tag}] {R}[OMO] Không thể chụp ảnh màn hình bằng root! Bỏ qua vòng {round_num}.{RESET}")
+            time.sleep(2)
+            continue
 
-                if crop_x1 < crop_x2 and crop_y1 < crop_y2:
-                    cropped = im.crop((crop_x1, crop_y1, crop_x2, crop_y2))
-                    buf = io.BytesIO()
-                    cropped.save(buf, format="JPEG", quality=92)
-                    image_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-        except Exception as e:
-            add_log(f"[{tag}] {Y}[OMO] Lỗi crop ảnh: {e}, thử chụp full frame...{RESET}")
-
+        add_log(f"[{tag}] {G}[OMO VÒNG {round_num}] Đã chụp xong ({len(raw_png)//1024} KB), đang xử lý crop...{RESET}")
+        image_b64 = crop_and_encode_puzzle_image(raw_png, crop_box, tag)
         if not image_b64:
-            try:
-                with open(scr_file, "rb") as f:
-                    image_b64 = base64.b64encode(f.read()).decode('utf-8')
-            except:
-                pass
-
-        if not image_b64:
-            add_log(f"[{tag}] {R}[OMO] Không thể lấy ảnh màn hình! Bỏ qua vòng {round_num}.{RESET}")
+            add_log(f"[{tag}] {R}[OMO] Không thể mã hóa ảnh base64! Bỏ qua vòng {round_num}.{RESET}")
             time.sleep(2)
             continue
 
         # 5. Gửi OMO API giải mã
-        add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Đang gửi ảnh câu đố: '{question[:32]}...' tới OMOCaptcha...{RESET}")
+        add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Gửi câu hỏi: '{question[:32]}...' tới OMOCaptcha API...{RESET}")
         try:
             api_index = classify_match_image(client_key, image_b64, question, stop_event)
         except OmoCaptchaError as err:
@@ -3221,18 +3662,23 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
 
         # 6. Click xoay mũi tên phải 'rotations' lần
         rx, ry = right_arrow_coords
-        for r in range(rotations):
-            safe_root(f"su -c 'input tap {rx} {ry}'")
-            time.sleep(random.uniform(0.65, 0.95))
+        if rotations > 0:
+            add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Đang click mũi tên phải tại ({rx}, {ry}) {rotations} lần...{RESET}")
+            for r in range(rotations):
+                _run_root_capture(f"input tap {rx} {ry}")
+                time.sleep(random.uniform(0.65, 0.95))
+        else:
+            add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Không cần xoay (rotations = 0).{RESET}")
 
-        time.sleep(random.uniform(0.5, 0.9))
+        time.sleep(random.uniform(0.6, 1.0))
 
         # 7. Click nút Submit
         sx, sy = submit_coords
-        safe_root(f"su -c 'input tap {sx} {sy}'")
-        add_log(f"[{tag}] {G}[OMO VÒNG {round_num}] Đã click Submit! Chờ kiểm tra kết quả...{RESET}")
+        add_log(f"[{tag}] {C}[OMO VÒNG {round_num}] Đang click Submit tại ({sx}, {sy})...{RESET}")
+        _run_root_capture(f"input tap {sx} {sy}")
+        add_log(f"[{tag}] {G}[OMO VÒNG {round_num}] Đã click Submit! Chờ kết quả...{RESET}")
         total_rounds_solved += 1
-        time.sleep(3.0)
+        time.sleep(3.5)
 
     return {"detected": True, "solved": (total_rounds_solved > 0), "rounds": total_rounds_solved}
 
@@ -4895,7 +5341,7 @@ def main():
         print(f"[{C}5{RESET}] Quản lý Delta Key & Auto Bypass (Bacon API)")
         print(f"[{C}6{RESET}] Kiểm tra file Delta License (Test)")
         print(f"[{C}7{RESET}] Kiểm tra Trạng thái Acc / Captcha / Not-Approved (Test)")
-        print(f"[{C}8{RESET}] Mở Web UI Log ngoài Termux ({G}http://localhost:{WEB_LOG_PORT}{RESET})")
+        print(f"[{C}8{RESET}] Bật Cửa Sổ Nổi (Floating Overlay HUD) đè lên Game")
         print(f"[{C}9{RESET}] Thoát")
         try:
             fix_tty()
@@ -4918,7 +5364,7 @@ def main():
         elif choice == '7':
             account_captcha_check_menu()
         elif choice == '8':
-            open_web_ui_in_browser()
+            floating_overlay_menu()
         elif choice == '9':
             clear_screen()
             print(f"{G}Tạm biệt!{RESET}")
@@ -4927,4 +5373,7 @@ def main():
 
 if __name__ == "__main__":
     fix_tty()
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] in ("--hud", "-hud", "hud"):
+        run_compact_hud_cli()
+    else:
+        main()
