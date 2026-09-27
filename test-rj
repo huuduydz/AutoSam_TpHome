@@ -274,7 +274,7 @@ def print_banner():
 {RESET}"""
     print(banner)
     print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.5{RESET} | {C}Web UI: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
+    print(f"{G}Core: {Y}Python Tool Rejoin V3.4{RESET} | {C}Web UI: {G}http://localhost:{WEB_LOG_PORT}{RESET}")
     print("-" * 65)
 
 def print_dashboard(states):
@@ -3500,9 +3500,9 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
 
     tag = pkg[-12:] if pkg else "OMO_V1"
 
-    if pkg:
+    if pkg and not is_app_running(pkg):
         _run_root_capture(f"am start -n {pkg}/com.roblox.client.Activity 2>/dev/null", timeout=4)
-        time.sleep(1.0)
+        time.sleep(2.0)
 
     w, h = get_screen_resolution()
     dump_file = "/data/local/tmp/dump_arkose.xml"
@@ -3540,25 +3540,7 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
             time.sleep(1)
             continue
 
-        # 1. Kiểm tra màn hình Home (Nút Xác minh / Start Puzzle)
-        verify_clicked = False
-        for node in root.iter('node'):
-            t = (node.get('text') or node.get('content-desc') or '').strip().lower()
-            if any(kv in t for kv in keywords_verify):
-                bounds = node.get('bounds') or ''
-                m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-                if m:
-                    x1, y1, x2, y2 = map(int, m.groups())
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    add_log(f"[{tag}] {C}[OMO] Phát hiện nút '{t}'! Đang click ({cx}, {cy}) để bắt đầu câu đố...{RESET}")
-                    _run_root_capture(f"input tap {cx} {cy}")
-                    time.sleep(2.5)
-                    verify_clicked = True
-                    break
-        if verify_clicked:
-            continue
-
-        # 2. Đang trong câu đố: Tìm text câu hỏi (question)
+        # 1. Đang trong câu đố: Tìm text câu hỏi (question) trước
         question = ""
         candidates_q = []
         for node in root.iter('node'):
@@ -3566,6 +3548,46 @@ def solve_arkose_in_app_with_omo(pkg=None, client_key=None, stop_event=None):
             tl = t.lower()
             if any(km in tl for km in keywords_match) and len(t) >= 6:
                 candidates_q.append(t)
+
+        is_puzzle_active = (len(candidates_q) > 0)
+
+        # 2. Kiểm tra màn hình Home (Nút Xác minh / Start Puzzle) - CHỈ KHI CHƯA Ở TRONG CÂU ĐỐ
+        if not is_puzzle_active:
+            verify_clicked = False
+            for node in root.iter('node'):
+                t = (node.get('text') or node.get('content-desc') or '').strip()
+                tl = t.lower()
+                bounds = node.get('bounds') or ''
+                m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                if not m:
+                    continue
+                x1, y1, x2, y2 = map(int, m.groups())
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+                # Bỏ qua nếu là tiêu đề ở trên cùng (y < 22% chiều cao màn hình)
+                if cy < h * 0.22:
+                    continue
+
+                # Bỏ qua các câu văn tiêu đề/mô tả
+                if any(bad in tl for bad in ["verifying you", "verifying that", "not a bot", "not a robot", "xác minh rằng", "kiểm tra bảo mật"]):
+                    continue
+
+                # So khớp nút thật
+                is_btn = False
+                for kv in keywords_verify:
+                    if tl == kv or tl.startswith(kv) or tl.endswith(kv):
+                        is_btn = True
+                        break
+
+                if is_btn:
+                    add_log(f"[{tag}] {C}[OMO] Phát hiện nút '{t}'! Đang click ({cx}, {cy}) để bắt đầu câu đố...{RESET}")
+                    _run_root_capture(f"input tap {cx} {cy}")
+                    time.sleep(2.5)
+                    verify_clicked = True
+                    break
+
+            if verify_clicked:
+                continue
 
         if candidates_q:
             question = max(candidates_q, key=len)
@@ -3777,6 +3799,10 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
         chal_type = res.get('challenge_type', '')
         msg_detail = res.get('message', '')
 
+        # Nếu đang trong tiến trình giải -> TUYỆT ĐỐI KHÔNG kill app và không restart app!
+        if state.get('handling_captcha_solve'):
+            return True
+
         state['in_game'] = False
         state['handling_captcha_solve'] = True
         state['captcha_solve_start'] = current_time
@@ -3798,9 +3824,9 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
             add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail} (Lua vẫn gửi heartbeat){RESET}")
             add_log(f"[{pkg[-12:]}] {C}[CAPTCHA V2 IN-APP] Kích hoạt chế độ giải Nhấn và Giữ...{RESET}")
 
-        _kill_pkg(pkg)
-        time.sleep(1)
-        launch_roblox_to_game(pkg)
+        # Chỉ mở game nếu app chưa chạy, KHÔNG kill app khi đang chuẩn bị giải
+        if not is_app_running(pkg):
+            launch_roblox_to_game(pkg)
         return True
     elif status == 'OK':
         if state.get('is_blocked') or state.get('handling_captcha_solve'):
@@ -3952,8 +3978,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             uptime_seconds = current_time - state['rejoin_time']
 
             # === MANDATORY PERIODIC COOKIE CHECK (MỖI 60S LUÔN CHECK BẤT KỂ LUA CÓ GỬI HEARTBEAT) ===
+            # Bỏ qua khi đang giải captcha để không ngắt quãng quá trình giải
             last_mandatory_chk = state.get('last_mandatory_cookie_check', 0)
-            if (current_time - last_mandatory_chk >= MANDATORY_COOKIE_CHECK_INTERVAL) and (AUTO_CHECK_ACC_HEALTH == "Enable"):
+            if not state.get('handling_captcha_solve') and (current_time - last_mandatory_chk >= MANDATORY_COOKIE_CHECK_INTERVAL) and (AUTO_CHECK_ACC_HEALTH == "Enable"):
                 state['last_mandatory_cookie_check'] = current_time
                 chk_res = check_and_handle_account_health(pkg, states, current_time, force=True)
                 if chk_res:
