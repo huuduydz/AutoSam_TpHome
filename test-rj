@@ -113,15 +113,29 @@ def clear_screen():
         sys.stdout.flush()
 
 # =====================================================================
-# MÀU SẮC
+# MÀU SẮC & THEME CYBERPUNK NEON
 # =====================================================================
-C = '\033[96m'
-G = '\033[92m'
-Y = '\033[93m'
-R = '\033[91m'
-M = '\033[95m'
-W = '\033[97m'
-RESET = '\033[0m'
+BOLD = '\033[1m'
+DIM = '\033[2m'
+ITALIC = '\033[3m'
+UNDERLINE = '\033[4m'
+C = '\033[96m'        # Cyan sáng
+G = '\033[92m'        # Green sáng
+Y = '\033[93m'        # Yellow sáng
+R = '\033[91m'        # Red sáng
+M = '\033[95m'        # Magenta sáng
+W = '\033[97m'        # White sáng
+RESET = '\033[0m'     # Reset màu
+
+# Bảng màu mở rộng Modern Neon (256-color mượt mà trên Termux)
+CYAN_NEON = '\033[38;5;51m'
+PURPLE_NEON = '\033[38;5;141m'
+PINK_NEON = '\033[38;5;205m'
+GOLD_NEON = '\033[38;5;220m'
+GREEN_MINT = '\033[38;5;48m'
+BLUE_ICE = '\033[38;5;39m'
+GRAY_DARK = '\033[38;5;240m'
+GRAY_LIGHT = '\033[38;5;250m'
 
 # =====================================================================
 # BIẾN TOÀN CỤC
@@ -284,55 +298,60 @@ def get_memory_usage():
         return "N/A"
 
 # =====================================================================
-# GIAO DIỆN DASHBOARD
+# GIAO DIỆN BANNER & DASHBOARD LIVE
 # =====================================================================
 def print_banner():
-    banner = f"""{C}
- ██░ ██  █    ██  ██▓███ ▓██   ██▓
-▓██░ ██▒ ██  ▓██▒▓██░  ██▒▒██  ██▒
-▒██▀▀██░▓██  ▒██░▓██░ ██▓▒ ▒██ ██░
-░▓█ ░██ ▓▓█  ░██░▒██▄█▓▒ ▒ ░ ▐██▓░
-░▓█▒░██▓▒▒█████▓ ▒██▒ ░  ░ ░ ██▒▓░
-{RESET}"""
+    banner = f"""
+  {CYAN_NEON}██╗  ██╗██╗   ██╗██████╗ ██╗   ██╗{RESET}
+  {CYAN_NEON}██║  ██║██║   ██║██╔══██╗╚██╗ ██╔╝{RESET}
+  {PURPLE_NEON}███████║██║   ██║██║  ██║ ╚████╔╝ {BOLD}{GOLD_NEON}HUDY TOOL REJOIN{RESET}
+  {PURPLE_NEON}██╔══██║██║   ██║██║  ██║  ╚██╔╝  {PINK_NEON}Version: 3.5 Core High-Speed{RESET}
+  {PINK_NEON}██║  ██║╚██████╔╝██████╔╝   ██║   {GREEN_MINT}Author: HuDy | Status: Active{RESET}
+  {PINK_NEON}╚═╝  ╚═╝ ╚═════╝ ╚═════╝    ╚═╝   {GRAY_LIGHT}Anti-Hang & Auto-Bypass{RESET}
+"""
     print(banner)
-    print(f"{G}Developer: {Y}HuDy{RESET}")
-    print(f"{G}Core: {Y}Python Tool Rejoin V3.5{RESET}")
-    print("-" * 65)
+    print(f"{CYAN_NEON}╭─────────────────────────────────────────────────────────────╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET} {BOLD}{W}HuDy Automation Core{RESET} {GRAY_DARK}•{RESET} {GREEN_MINT}Anti-Hang{RESET} {GRAY_DARK}•{RESET} {GOLD_NEON}Auto-Bypass{RESET} {GRAY_DARK}•{RESET} {CYAN_NEON}Auto-Inject{RESET}    {CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰─────────────────────────────────────────────────────────────╯{RESET}")
 
 def print_dashboard(states):
     clear_screen()
     print_banner()
-    print(f"{C}CPU: {G}{get_cpu_usage()}{RESET} | {C}RAM: {G}{get_memory_usage()}{RESET}")
-    print("-" * 65)
-    print(f"{C}Check executor method: {Y}{CHECK_EXECUTOR_METHOD}{RESET}")
-    print(f"{C}Change accounts: {Y}{CHANGE_ACCOUNTS}{RESET}")
-    print(f"{C}Change accounts custom: {Y}{CHANGE_ACCOUNTS_CUSTOM}{RESET}")
-    print(f"{C}Check UI time: {Y}{CHECK_UI_TIME}{RESET}")
-    print(f"{C}Auto check Acc / Cookie: {G}{AUTO_CHECK_ACC_HEALTH}{RESET} ({Y}Bắt buộc mỗi {MANDATORY_COOKIE_CHECK_INTERVAL}s{RESET})")
-    print(f"{C}Auto block: {Y}{AUTO_BLOCK}{RESET}")
-    print(f"{C}Auto restore Delta Key: {Y}{AUTO_RESTORE_DELTA_KEY}{RESET}")
-    cur_sc_name = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom URL" if SELECTED_SCRIPT_KEY == "custom" else "Disabled")
-    print(f"{C}Auto inject script: {G}{cur_sc_name}{RESET}")
-    print("-" * 65)
-    print(f"{C}{'Package':<20} | {'Username':<16} | {'Status':<25}{RESET}")
-    print("-" * 65)
+    cpu_str = get_cpu_usage()
+    ram_str = get_memory_usage()
+    cur_sc_name = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Disabled")
+    pid_display = target_place_id if target_place_id else "Sảnh (0)"
+    restart_display = f"{kill_all_time}m" if kill_all_time > 0 else "Tắt"
+    
+    print(f"{CYAN_NEON}╭─ 📊 THÔNG SỐ HỆ THỐNG & CẤU HÌNH ─────────────────────────╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET} CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ 🎯 Place: {GOLD_NEON}{pid_display:<11}{RESET}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}│{RESET} Restart: {Y}{restart_display:<5}{RESET}│ Cookie: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}    │ 📜 Script: {PINK_NEON}{cur_sc_name:<10}{RESET} {CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────╯{RESET}")
+    
+    p_header = "Package"
+    u_header = "Username"
+    s_header = "Trạng Thái"
+    pkg_cnt = len(selected_packages)
+    print(f"{CYAN_NEON}╭─ 🎮 TIẾN TRÌNH TÀI KHOẢN ({pkg_cnt} Package) ─────────────────────╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET} {BOLD}{p_header:<20} │ {u_header:<15} │ {s_header:<18}{RESET} {CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}├──────────────────────┼─────────────────┼────────────────────┤{RESET}")
     for item in selected_packages:
         pkg = item['pkg']
-        s_pkg = pkg if len(pkg) <= 19 else pkg[:16] + "..."
+        s_pkg = pkg if len(pkg) <= 20 else pkg[:17] + "..."
         s_name = states[pkg]['display_name']
         if len(s_name) > 15: s_name = s_name[:12] + "..."
         txt = states[pkg]['text']
-        # Truncate text để tránh tràn dòng dashboard
-        if len(txt) > 24: txt = txt[:21] + "..."
+        if len(txt) > 18: txt = txt[:15] + "..."
         col = states[pkg]['color']
-        print(f"{s_pkg:<20} | {s_name:<16} | {col}{txt:<25}{RESET}")
-    print("-" * 65)
-    print(f"{C} Đang chạy Live... (Bấm Ctrl+C để dừng){RESET}")
+        print(f"{CYAN_NEON}│{RESET} {s_pkg:<20} │ {W}{s_name:<15}{RESET} │ {col}{txt:<18}{RESET} {CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰──────────────────────┴─────────────────┴────────────────────╯{RESET}")
+    print(f" {GREEN_MINT}●{RESET} {BOLD}Đang chạy Live Dashboard...{RESET} {GRAY_LIGHT}(Bấm Ctrl+C để dừng và về Menu){RESET}")
     if system_logs:
-        print("-" * 65)
-        print(f"{Y}--- HỆ THỐNG LOG ---{RESET}")
-        for log in system_logs:
-            print(log)
+        print(f"{CYAN_NEON}╭─ 📋 NHẬT KÝ HỆ THỐNG GẦN ĐÂY ─────────────────────────────╮{RESET}")
+        for log in system_logs[-6:]:
+            l_str = log if len(log) <= 57 else log[:54] + "..."
+            print(f"{CYAN_NEON}│{RESET} {l_str:<57} {CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────╯{RESET}")
 
 # =====================================================================
 # CÀI ĐẶT & AUTO INJECT SCRIPT
@@ -341,21 +360,24 @@ def select_auto_inject_script_menu():
     global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL
     clear_screen()
     print_banner()
-    print(f"{C}--- CHỌN SCRIPT AUTO INJECT CHO EXECUTOR ---{RESET}")
-    print(f"{Y}Script được chọn sẽ tự động inject vào thư mục autoexec của executor (Delta/Fluxus...){RESET}\n")
+    print(f"{CYAN_NEON}╭────────────────── 📜 CHỌN SCRIPT AUTO INJECT ─────────────────╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET} {GRAY_LIGHT}Script sẽ tự động nạp vào thư mục autoexec của executor      {RESET}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}├───────────────────────────────────────────────────────────────┤{RESET}")
     
     for key, info in AUTO_INJECT_SCRIPTS.items():
-        is_cur = f" {G}[✓ Đang chọn]{RESET}" if SELECTED_SCRIPT_KEY == key else ""
-        print(f"[{C}{key}{RESET}] {info['name']}{is_cur}")
-        print(f"    {Y}URL: {info['url']}{RESET}")
+        def_lbl = " / Mặc định" if key == "1" else ""
+        is_cur = f" {GREEN_MINT}[✓ Đang chọn{def_lbl}]{RESET}" if SELECTED_SCRIPT_KEY == key else ""
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[{key}]{RESET} {GOLD_NEON}{info['name']:<20}{RESET}{is_cur}")
+        print(f"{CYAN_NEON}│{RESET}      {GRAY_LIGHT}URL: {info['url'][:45]}...{RESET}")
     
-    custom_cur = f" {G}[✓ Đang chọn]{RESET}" if SELECTED_SCRIPT_KEY == "custom" else ""
-    print(f"[{C}4{RESET}] Tự nhập Link Script tùy chỉnh (Custom URL){custom_cur}")
-    disabled_cur = f" {G}[✓ Đang chọn]{RESET}" if SELECTED_SCRIPT_KEY == "0" else ""
-    print(f"[{C}0{RESET}] Tắt Auto Inject script thêm{disabled_cur}")
+    custom_cur = f" {GREEN_MINT}[✓ Đang chọn]{RESET}" if SELECTED_SCRIPT_KEY == "custom" else ""
+    print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[4]{RESET} {PURPLE_NEON}Tự Nhập Link Script Tùy Chỉnh (Custom Raw URL){RESET}{custom_cur}")
+    disabled_cur = f" {R}[✓ Đang tắt]{RESET}" if SELECTED_SCRIPT_KEY == "0" else ""
+    print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[0]{RESET} {R}Tắt Auto Inject Script Thêm{RESET}{disabled_cur}")
+    print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────────╯{RESET}")
     
     fix_tty()
-    sel = safe_input(f"\n{M}Chọn script [0-4] (Enter giữ nguyên): {RESET}").strip()
+    sel = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy Script{RESET} {PINK_NEON}❯{RESET} Chọn [0-4] (Enter giữ nguyên): ").strip()
     if sel in AUTO_INJECT_SCRIPTS:
         SELECTED_SCRIPT_KEY = sel
         print(f"\n{G}[✓] Đã chọn Script: {AUTO_INJECT_SCRIPTS[sel]['name']}!{RESET}")
@@ -386,30 +408,31 @@ def settings_menu():
         print_banner()
         if SELECTED_SCRIPT_KEY in AUTO_INJECT_SCRIPTS:
             def_tag = " (Mặc định)" if SELECTED_SCRIPT_KEY == "1" else ""
-            cur_script_name = f"{G}{AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]['name']}{def_tag}{RESET}"
+            cur_script_name = f"{GREEN_MINT}{AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]['name']}{def_tag}{RESET}"
         elif SELECTED_SCRIPT_KEY == "custom":
-            cur_script_name = f"{C}Custom URL ({CUSTOM_SCRIPT_URL[:25]}...){RESET}"
+            cur_script_name = f"{BLUE_ICE}Custom URL ({CUSTOM_SCRIPT_URL[:20]}...){RESET}"
         else:
             cur_script_name = f"{R}Tắt (Không inject thêm script){RESET}"
             
         cur_pid = target_place_id if target_place_id else "Vào sảnh chính (0)"
         cur_restart = f"{kill_all_time} phút" if kill_all_time > 0 else "Tắt (0)"
         
-        print(f"{C}--- CÀI ĐẶT HỆ THỐNG & AUTO INJECT SCRIPT ---{RESET}")
-        print(f"1. Place ID (Game ID):               {Y}{cur_pid}{RESET}")
-        print(f"2. Script Auto Inject đang chọn:     {cur_script_name}")
-        print(f"3. Thời gian Auto Restart:           {Y}{cur_restart}{RESET}")
-        print(f"4. Chu kỳ re-check Acc kẹt Captcha:  {Y}{CHECK_ACC_TIME_BLOCKED}s{RESET}")
-        print("-" * 65)
-        print(f"[{C}1{RESET}] Cài đặt Place ID (Game ID)")
-        print(f"[{C}2{RESET}] Chọn Script Auto Inject (1: Hop Fin_Tail, 2: Hop_Tear, 3: Main_KingLegacy)")
-        print(f"[{C}3{RESET}] Cài đặt thời gian Auto Restart (phút)")
-        print(f"[{C}4{RESET}] Cài đặt chu kỳ re-check Acc dính Captcha/Not-Approved")
-        print(f"[{C}5{RESET}] Cấu hình nhanh tất cả (Wizard Setup)")
-        print(f"[{C}6{RESET}] Quay lại Menu chính")
+        print(f"{CYAN_NEON}╭──────────────────── ⚙️ CÀI ĐẶT HỆ THỐNG ──────────────────────╮{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  1. Place ID (Game ID):             {GOLD_NEON}{cur_pid:<22}{RESET}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  2. Script Auto Inject:             {cur_script_name:<30}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  3. Thời Gian Auto Restart:         {Y}{cur_restart:<22}{RESET}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  4. Chu Kỳ Re-Check Acc Kẹt:        {G}{CHECK_ACC_TIME_BLOCKED}s{'':<20}{RESET}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}├───────────────────────────────────────────────────────────────┤{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[1]{RESET} Đổi Place ID (Game ID)                                   {CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[2]{RESET} Chọn Script Auto Inject (1: Fin_Tail, 2: Tear, 3: King)  {CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[3]{RESET} Cài Đặt Thời Gian Auto Restart (phút)                    {CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[4]{RESET} Cài Đặt Chu Kỳ Re-check Acc Dính Captcha                 {CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[5]{RESET} Cấu Hình Nhanh Tất Cả (Wizard Setup)                  {CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{R}[6]{RESET} ↩Quay Lại Menu Chính                                   {CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────────╯{RESET}")
         
         fix_tty()
-        c = safe_input(f"\n{M}HuDy Settings > {RESET}").strip()
+        c = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy Settings{RESET} {PINK_NEON}❯{RESET} ").strip()
         if c == '1':
             fix_tty()
             p_id_raw = safe_input(f"{M}Nhập Place ID [Mặc định 4520749081, nhập 0 để vào sảnh]: {RESET}").strip()
@@ -534,20 +557,25 @@ def select_package_menu():
         print(f"{R}[!] Không tìm thấy app nào trên thiết bị!{RESET}")
         time.sleep(2)
         return
-    print(f"\n{G}Danh sách Package tìm thấy:{RESET}")
+    clear_screen()
+    print_banner()
+    print(f"{CYAN_NEON}╭────────────────── QUẢN LÝ PACKAGE ROBLOX ──────────────────╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET} {GRAY_LIGHT}Mặc định hệ thống tự động chọn tất cả package có đầu 'vip'   {RESET}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}├───────────────────────────────────────────────────────────────┤{RESET}")
     current_selected_pkgs = {item['pkg'] for item in selected_packages}
     for i, pkg in enumerate(packages, 1):
-        mark = f"{G} [✓ Đang chọn]{RESET}" if pkg in current_selected_pkgs else ""
-        vip_tag = f"{Y} [VIP]{RESET}" if is_vip_package(pkg) else ""
-        print(f"[{i}] {pkg}{vip_tag}{mark}")
+        mark = f" {GREEN_MINT}[✓ Đang chọn]{RESET}" if pkg in current_selected_pkgs else ""
+        vip_tag = f" {GOLD_NEON}[VIP]{RESET}" if is_vip_package(pkg) else ""
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[{i}]{RESET} {pkg}{vip_tag}{mark}")
     
-    print(f"\n{Y}Mặc định hệ thống tự chọn các package có đầu 'vip' ({len(selected_packages)} package).{RESET}")
-    print(f"{C}• Bấm Enter để giữ nguyên danh sách hiện tại{RESET}")
-    print(f"{C}• Gõ 'vip' để quét lại và tự động chọn toàn bộ package đầu VIP{RESET}")
-    print(f"{C}• Nhập số thứ tự cách nhau khoảng trắng để tùy chỉnh lại (VD: 1 3 5){RESET}")
+    print(f"{CYAN_NEON}├───────────────────────────────────────────────────────────────┤{RESET}")
+    print(f"{CYAN_NEON}│{RESET}  • Bấm {BOLD}[Enter]{RESET} : Giữ nguyên danh sách hiện tại ({len(selected_packages)} Package)       {CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}│{RESET}  • Gõ {BOLD}'vip'{RESET}   : Tự động quét lại toàn bộ package có đầu VIP       {CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}│{RESET}  • Nhập số    : Tùy chỉnh chọn theo số thứ tự (VD: 1 3 5)         {CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────────╯{RESET}")
     try:
         fix_tty()
-        choice_str = safe_input(f"{M}Lựa chọn của bạn: {RESET}").strip()
+        choice_str = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy Package{RESET} {PINK_NEON}❯{RESET} ").strip()
         if not choice_str:
             print(f"\n{G}[✓] Giữ nguyên danh sách ({len(selected_packages)} package).{RESET}")
             time.sleep(1.2)
@@ -4295,21 +4323,27 @@ def main():
         clear_screen()
         print_banner()
         vip_cnt = len(selected_packages)
-        vip_tag = f"{G}(Mặc định {vip_cnt} VIP){RESET}" if vip_cnt > 0 else f"{Y}(Chưa có VIP nào){RESET}"
+        vip_tag = f"{GREEN_MINT}({vip_cnt} VIP Active){RESET}" if vip_cnt > 0 else f"{Y}(Chưa có VIP){RESET}"
         def_tag = " [Mặc định]" if SELECTED_SCRIPT_KEY == "1" else ""
-        sc_name = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Tắt") + def_tag
+        raw_sc = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Tắt")
+        sc_display = f"{GOLD_NEON}[{raw_sc}{def_tag}]{RESET}"
 
-        print(f"[{C}1{RESET}] Quét và Chọn Package Roblox {vip_tag}")
-        print(f"[{C}2{RESET}] Cài đặt Game ID & Auto Inject Script {C}[Script: {Y}{sc_name}{C}]{RESET}")
-        print(f"[{C}3{RESET}] Bắt đầu Auto Rejoin (Live Dashboard)")
-        print(f"[{C}4{RESET}] Login via Cookie (Nạp trực tiếp vào App)")
-        print(f"[{C}5{RESET}] Quản lý Delta Key & Auto Bypass (Bacon API)")
-        print(f"[{C}6{RESET}] Kiểm tra file Delta License (Test)")
-        print(f"[{C}7{RESET}] Kiểm tra Trạng thái Acc / Captcha / Not-Approved (Test)")
-        print(f"[{C}8{RESET}] Thoát")
+        box = f"""{CYAN_NEON}╭─────────────────────── ⚡ MENU ĐIỀU KHIỂN ─────────────────────╮{RESET}
+{CYAN_NEON}│{RESET}                                                               {CYAN_NEON}│{RESET}
+{CYAN_NEON}│{RESET}   {BOLD}{C}[1]{RESET} {W}Quét & Chọn Package Roblox{RESET}     {vip_tag}
+{CYAN_NEON}│{RESET}   {BOLD}{C}[2]{RESET} {W}Cài Đặt Game ID & Script{RESET}       {sc_display}
+{CYAN_NEON}│{RESET}   {BOLD}{C}[3]{RESET} {W}Bắt Đầu Auto Rejoin{RESET}             {BLUE_ICE}(Live Dashboard){RESET}      {CYAN_NEON}│{RESET}
+{CYAN_NEON}│{RESET}   {BOLD}{C}[4]{RESET} {W}Login Cookie Vào App{RESET}            {PURPLE_NEON}(Direct Inject){RESET}       {CYAN_NEON}│{RESET}
+{CYAN_NEON}│{RESET}   {BOLD}{C}[5]{RESET} {W}Quản Lý Delta Key & Bypass{RESET}      {GOLD_NEON}(Bacon API){RESET}           {CYAN_NEON}│{RESET}
+{CYAN_NEON}│{RESET}   {BOLD}{C}[6]{RESET} {W}Kiểm Tra License Delta{RESET}          {GRAY_LIGHT}(Test File){RESET}           {CYAN_NEON}│{RESET}
+{CYAN_NEON}│{RESET}   {BOLD}{C}[7]{RESET} {W}Trạng Thái Acc / Captcha{RESET}        {PINK_NEON}(Diagnostic){RESET}          {CYAN_NEON}│{RESET}
+{CYAN_NEON}│{RESET}   {BOLD}{R}[8]{RESET} {W}Thoát Chương Trình{RESET}                                          {CYAN_NEON}│{RESET}
+{CYAN_NEON}│{RESET}                                                               {CYAN_NEON}│{RESET}
+{CYAN_NEON}╰───────────────────────────────────────────────────────────────╯{RESET}"""
+        print(box)
         try:
             fix_tty()
-            choice = safe_input(f"\n{M}HuDy > {RESET}")
+            choice = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy{RESET} {PINK_NEON}❯{RESET} ").strip()
         except EOFError:
             fix_tty()
             continue
