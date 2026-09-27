@@ -697,10 +697,7 @@ end)"""
 # =====================================================================
 def inject_user_script():
     global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE, AUTO_INJECT_SCRIPTS
-    
-    # Xóa file script user cũ nếu có
-    safe_root("su -c 'find /sdcard/ -maxdepth 5 -type f -name \"*user_autoinject.lua\" -delete 2>/dev/null'")
-    
+
     script_name = ""
     script_content_raw = ""
     is_direct_code = False
@@ -708,52 +705,50 @@ def inject_user_script():
     if SELECTED_SCRIPT_KEY in AUTO_INJECT_SCRIPTS:
         script_name = AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]["name"]
         script_content_raw = AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]["url"].strip()
-        is_direct_code = False  # Script có sẵn luôn là URL
+        is_direct_code = False
     elif SELECTED_SCRIPT_KEY == "custom" and CUSTOM_SCRIPT_URL:
         script_name = "Custom Script"
         script_content_raw = CUSTOM_SCRIPT_URL.strip()
         is_direct_code = CUSTOM_SCRIPT_IS_CODE
 
     if not script_content_raw or SELECTED_SCRIPT_KEY == "0":
-        print(f"{Y}[*] Không inject script người dùng (Tắt hoặc chưa có nội dung).{RESET}")
+        print(f"{Y}[*] Không inject user script (Tắt hoặc chưa có nội dung).{RESET}")
         return
 
-    print(f"{G}[+] Đang inject script riêng: {C}{script_name}{RESET}...")
+    print(f"{G}[+] Đang inject: {C}{script_name}{RESET}...")
 
     if is_direct_code:
-        # Inject code Lua trực tiếp (không qua HttpGet)
-        indented_code = "\n".join("        " + line for line in script_content_raw.splitlines())
-        lua_code = f"""-- [HuDy Custom Code Inject: {script_name}]
+        indented = "\n".join("        " + ln for ln in script_content_raw.splitlines())
+        lua_code = f"""-- [HuDy Custom Code: {script_name}]
 task.spawn(function()
     repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer
     task.wait(2)
     pcall(function()
-{indented_code}
+{indented}
     end)
-end)
-"""
+end)"""
     else:
-        # Inject qua URL (loadstring + HttpGet)
-        lua_code = f"""-- [HuDy Auto Inject Script: {script_name}]
+        lua_code = f"""-- [HuDy Auto Inject: {script_name}]
 task.spawn(function()
     repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer
     task.wait(2)
     pcall(function()
         loadstring(game:HttpGet("{script_content_raw}", true))()
     end)
-end)
-"""
+end)"""
 
+    safe_root("su -c 'find /sdcard/ -maxdepth 5 -type f -name \"*user_autoinject.lua\" -delete 2>/dev/null'")
     temp_lua = "/sdcard/Download/user_autoinject.lua"
     try:
         with open(temp_lua, "w", encoding="utf-8") as f:
             f.write(lua_code)
     except Exception:
-        safe_root(f"su -c 'cat <<\\ \\'EOF\\' > {temp_lua}\\n{lua_code}\\nEOF'")
-    root_cmd = f"""su -c "for dir in \\\\$(find /sdcard/ -maxdepth 5 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\\"\\\\$dir/user_autoinject.lua\\\" && chmod 777 \\\"\\\\$dir/user_autoinject.lua\\\"; done; rm {temp_lua}" """
+        pass
+
+    root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/user_autoinject.lua\\" && chmod 777 \\"\\$dir/user_autoinject.lua\\"; done; rm {temp_lua}" """
     safe_root(root_cmd)
     inject_type = "Code trực tiếp" if is_direct_code else "URL"
-    print(f"{G}[✓] Đã inject '{script_name}' ({inject_type}) → user_autoinject.lua vào autoexec!{RESET}")
+    print(f"{G}[✓] Đã inject '{script_name}' ({inject_type}) -> user_autoinject.lua!{RESET}")
 
 # =====================================================================
 # HEARTBEAT & ACCOUNT DISCOVERY (ĐÃ SỬA TÌM ĐÚNG FILE)
