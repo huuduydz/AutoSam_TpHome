@@ -184,11 +184,12 @@ AUTO_INJECT_SCRIPTS = {
     },
 }
 SELECTED_SCRIPT_KEY = "1"  # Mặc định chọn script số 1: Hop Fin_Tail
-CUSTOM_SCRIPT_URL = ""
+CUSTOM_SCRIPT_URL = ""  # URL hoặc code Lua tùy chỉnh
+CUSTOM_SCRIPT_IS_CODE = False  # True nếu CUSTOM_SCRIPT_URL là code Lua trực tiếp
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hudy_config.json")
 
 def load_settings():
-    global target_place_id, kill_all_time, CHECK_ACC_TIME_BLOCKED, SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL
+    global target_place_id, kill_all_time, CHECK_ACC_TIME_BLOCKED, SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -200,6 +201,7 @@ def load_settings():
                 if not SELECTED_SCRIPT_KEY or (SELECTED_SCRIPT_KEY not in AUTO_INJECT_SCRIPTS and SELECTED_SCRIPT_KEY not in ["custom", "0"]):
                     SELECTED_SCRIPT_KEY = "1"
                 CUSTOM_SCRIPT_URL = str(data.get("custom_script_url", CUSTOM_SCRIPT_URL))
+                CUSTOM_SCRIPT_IS_CODE = bool(data.get("custom_script_is_code", False))
         else:
             SELECTED_SCRIPT_KEY = "1"
     except:
@@ -213,6 +215,7 @@ def save_settings():
             "check_acc_time_blocked": CHECK_ACC_TIME_BLOCKED,
             "selected_script_key": SELECTED_SCRIPT_KEY,
             "custom_script_url": CUSTOM_SCRIPT_URL,
+            "custom_script_is_code": CUSTOM_SCRIPT_IS_CODE,
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
@@ -357,24 +360,29 @@ def print_dashboard(states):
 # CÀI ĐẶT & AUTO INJECT SCRIPT
 # =====================================================================
 def select_auto_inject_script_menu():
-    global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL
+    global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE
     clear_screen()
     print_banner()
     print(f"{CYAN_NEON}╭────────────────── CHỌN SCRIPT AUTO INJECT ─────────────────╮{RESET}")
     print(f"{CYAN_NEON}│{RESET} {GRAY_LIGHT}Script sẽ tự động nạp vào thư mục autoexec của executor      {RESET}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}├───────────────────────────────────────────────────────────────┤{RESET}")
+    print(f"{CYAN_NEON}├─────────────────────────────────────────────────────────────┤{RESET}")
     
     for key, info in AUTO_INJECT_SCRIPTS.items():
         def_lbl = " / Mặc định" if key == "1" else ""
         is_cur = f" {GREEN_MINT}[✓ Đang chọn{def_lbl}]{RESET}" if SELECTED_SCRIPT_KEY == key else ""
-        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[{key}]{RESET} {GOLD_NEON}{info['name']:<20}{RESET}{is_cur}")
-        print(f"{CYAN_NEON}│{RESET}      {GRAY_LIGHT}URL: {info['url'][:45]}...{RESET}")
+        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[{key}]{RESET} {GOLD_NEON}{info['name']:<18}{RESET}{is_cur}")
+        print(f"{CYAN_NEON}│{RESET}      {GRAY_LIGHT}↳ {info['url'][:43]}...{RESET}")
     
-    custom_cur = f" {GREEN_MINT}[✓ Đang chọn]{RESET}" if SELECTED_SCRIPT_KEY == "custom" else ""
-    print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[4]{RESET} {PURPLE_NEON}Tự Nhập Link Script Tùy Chỉnh (Custom Raw URL){RESET}{custom_cur}")
+    # Hiển thị trạng thái custom
+    custom_cur = ""
+    if SELECTED_SCRIPT_KEY == "custom":
+        custom_type = "[Code Lua]" if CUSTOM_SCRIPT_IS_CODE else "[URL]"
+        custom_cur = f" {GREEN_MINT}[✓ Đang chọn {custom_type}]{RESET}"
+    print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[4]{RESET} {PURPLE_NEON}Tự Nhập Script/URL Tùy Chỉnh (Custom){RESET}{custom_cur}")
+    print(f"{CYAN_NEON}│{RESET}      {GRAY_LIGHT}↳ Nhập raw URL hoặc dán thẳng code Lua{RESET}")
     disabled_cur = f" {R}[✓ Đang tắt]{RESET}" if SELECTED_SCRIPT_KEY == "0" else ""
     print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[0]{RESET} {R}Tắt Auto Inject Script Thêm{RESET}{disabled_cur}")
-    print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────────╯{RESET}")
+    print(f"{CYAN_NEON}╰─────────────────────────────────────────────────────────────╯{RESET}")
     
     fix_tty()
     sel = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy Script{RESET} {PINK_NEON}❯{RESET} Chọn [0-4] (Enter giữ nguyên): ").strip()
@@ -386,14 +394,48 @@ def select_auto_inject_script_menu():
         time.sleep(1.5)
     elif sel == '4':
         fix_tty()
-        url = safe_input(f"{M}Nhập URL Script mới (raw link): {RESET}").strip()
-        if url:
-            CUSTOM_SCRIPT_URL = url
+        print(f"{CYAN_NEON}╭──────────────── NHẬP CUSTOM SCRIPT ────────────────╮{RESET}")
+        print(f"{CYAN_NEON}│{RESET} {Y}Bạn có thể nhập:{RESET}")
+        print(f"{CYAN_NEON}│{RESET}   {G}• Raw URL{RESET}   : https://raw.githubusercontent.com/...")
+        print(f"{CYAN_NEON}│{RESET}   {G}• Code Lua{RESET}  : Dán thẳng code (bắt đầu bằng -- hoặc local...)")
+        print(f"{CYAN_NEON}│{RESET} {GRAY_LIGHT}Nhập xong, gõ dòng trống (Enter rỗng) để kết thúc.{RESET}")
+        print(f"{CYAN_NEON}╰────────────────────────────────────────────────────╯{RESET}")
+        
+        lines = []
+        print(f"{M}> Nhập nội dung (Enter 2 lần để kết thúc):{RESET}")
+        empty_count = 0
+        while True:
+            try:
+                line = input("  ")
+            except (EOFError, KeyboardInterrupt):
+                break
+            if line == "":
+                empty_count += 1
+                if empty_count >= 2:
+                    break
+                lines.append("")
+            else:
+                empty_count = 0
+                lines.append(line)
+        
+        content = "\n".join(lines).strip()
+        if content:
+            CUSTOM_SCRIPT_URL = content
+            # Phát hiện là URL hay code Lua
+            if content.startswith("http://") or content.startswith("https://"):
+                CUSTOM_SCRIPT_IS_CODE = False
+                print(f"\n{G}[✓] Đã lưu Custom Script URL!{RESET}")
+            else:
+                CUSTOM_SCRIPT_IS_CODE = True
+                line_count = len(content.splitlines())
+                print(f"\n{G}[✓] Đã lưu Code Lua trực tiếp ({line_count} dòng)!{RESET}")
             SELECTED_SCRIPT_KEY = "custom"
-            print(f"\n{G}[✓] Đã lưu Custom Script URL!{RESET}")
             save_settings()
             inject_user_script()
             time.sleep(1.5)
+        else:
+            print(f"\n{Y}[*] Đã hủy, giữ nguyên cài đặt cũ.{RESET}")
+            time.sleep(1)
     elif sel == '0':
         SELECTED_SCRIPT_KEY = "0"
         print(f"\n{Y}[*] Đã tắt tính năng Auto Inject script thêm.{RESET}")
@@ -410,7 +452,11 @@ def settings_menu():
             def_tag = " (Mặc định)" if SELECTED_SCRIPT_KEY == "1" else ""
             cur_script_name = f"{GREEN_MINT}{AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]['name']}{def_tag}{RESET}"
         elif SELECTED_SCRIPT_KEY == "custom":
-            cur_script_name = f"{BLUE_ICE}Custom URL ({CUSTOM_SCRIPT_URL[:20]}...){RESET}"
+            if CUSTOM_SCRIPT_IS_CODE:
+                line_cnt = len(CUSTOM_SCRIPT_URL.splitlines()) if CUSTOM_SCRIPT_URL else 0
+                cur_script_name = f"{BLUE_ICE}Custom Code ({line_cnt} dòng Lua){RESET}"
+            else:
+                cur_script_name = f"{BLUE_ICE}Custom URL ({CUSTOM_SCRIPT_URL[:20]}...){RESET}"
         else:
             cur_script_name = f"{R}Tắt (Không inject thêm script){RESET}"
             
@@ -650,43 +696,64 @@ end)"""
 # INJECT USER SCRIPT (FILE RIÊNG: user_autoinject.lua)
 # =====================================================================
 def inject_user_script():
-    global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, AUTO_INJECT_SCRIPTS
+    global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE, AUTO_INJECT_SCRIPTS
     
     # Xóa file script user cũ nếu có
     safe_root("su -c 'find /sdcard/ -maxdepth 5 -type f -name \"*user_autoinject.lua\" -delete 2>/dev/null'")
     
     script_name = ""
-    script_url = ""
+    script_content_raw = ""
+    is_direct_code = False
+
     if SELECTED_SCRIPT_KEY in AUTO_INJECT_SCRIPTS:
         script_name = AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]["name"]
-        script_url = AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]["url"].strip()
+        script_content_raw = AUTO_INJECT_SCRIPTS[SELECTED_SCRIPT_KEY]["url"].strip()
+        is_direct_code = False  # Script có sẵn luôn là URL
     elif SELECTED_SCRIPT_KEY == "custom" and CUSTOM_SCRIPT_URL:
         script_name = "Custom Script"
-        script_url = CUSTOM_SCRIPT_URL.strip()
+        script_content_raw = CUSTOM_SCRIPT_URL.strip()
+        is_direct_code = CUSTOM_SCRIPT_IS_CODE
 
-    if not script_url or SELECTED_SCRIPT_KEY == "0":
-        print(f"{Y}[*] Không inject script người dùng (Tắt hoặc chưa có link).{RESET}")
+    if not script_content_raw or SELECTED_SCRIPT_KEY == "0":
+        print(f"{Y}[*] Không inject script người dùng (Tắt hoặc chưa có nội dung).{RESET}")
         return
 
     print(f"{G}[+] Đang inject script riêng: {C}{script_name}{RESET}...")
-    lua_code = f"""-- [HuDy Auto Inject Script: {script_name}]
+
+    if is_direct_code:
+        # Inject code Lua trực tiếp (không qua HttpGet)
+        indented_code = "\n".join("        " + line for line in script_content_raw.splitlines())
+        lua_code = f"""-- [HuDy Custom Code Inject: {script_name}]
 task.spawn(function()
     repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer
     task.wait(2)
     pcall(function()
-        loadstring(game:HttpGet("{script_url}", true))()
+{indented_code}
     end)
 end)
 """
+    else:
+        # Inject qua URL (loadstring + HttpGet)
+        lua_code = f"""-- [HuDy Auto Inject Script: {script_name}]
+task.spawn(function()
+    repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer
+    task.wait(2)
+    pcall(function()
+        loadstring(game:HttpGet("{script_content_raw}", true))()
+    end)
+end)
+"""
+
     temp_lua = "/sdcard/Download/user_autoinject.lua"
     try:
         with open(temp_lua, "w", encoding="utf-8") as f:
             f.write(lua_code)
     except Exception:
-        safe_root(f"su -c 'cat << \\'EOF\\' > {temp_lua}\n{lua_code}\nEOF'")
-    root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 5 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/user_autoinject.lua\\" && chmod 777 \\"\\$dir/user_autoinject.lua\\"; done; rm {temp_lua}" """
+        safe_root(f"su -c 'cat <<\\ \\'EOF\\' > {temp_lua}\\n{lua_code}\\nEOF'")
+    root_cmd = f"""su -c "for dir in \\\\$(find /sdcard/ -maxdepth 5 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\\"\\\\$dir/user_autoinject.lua\\\" && chmod 777 \\\"\\\\$dir/user_autoinject.lua\\\"; done; rm {temp_lua}" """
     safe_root(root_cmd)
-    print(f"{G}[✓] Đã inject thành công '{script_name}' (user_autoinject.lua) vào thư mục autoexec!{RESET}")
+    inject_type = "Code trực tiếp" if is_direct_code else "URL"
+    print(f"{G}[✓] Đã inject '{script_name}' ({inject_type}) → user_autoinject.lua vào autoexec!{RESET}")
 
 # =====================================================================
 # HEARTBEAT & ACCOUNT DISCOVERY (ĐÃ SỬA TÌM ĐÚNG FILE)
