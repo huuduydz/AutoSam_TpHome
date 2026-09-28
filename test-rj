@@ -713,9 +713,9 @@ def print_banner():
         # Chế độ xoay ngang (Landscape): Khung thẻ Cyber Card 6 tầng đối xứng 1-1 với Logo
         inner_badge_w = min(54, term_w - 44 - 4)
         
-        b_l1 = f" ⚡ {BOLD}{T1}HUDY REJOIN AUTOMATION{RESET}  {T5}[PRO V3.5]{RESET}"
-        b_l2 = f" 👑 {C_GRAY_LIGHT}Tác Giả:{RESET} {C_MINT}HuDy{RESET}   │ 🛡️ {C_GRAY_LIGHT}Anti-Hang:{RESET} {C_MINT}BẬT 24/7{RESET}"
-        b_l3 = f" 🚀 {C_GRAY_LIGHT}Chế Độ:{RESET}  {C_ICE}Multi-Acc{RESET} │ 🌐 {C_GRAY_LIGHT}CaptchaV2:{RESET} {T6}Đa Ngôn Ngữ{RESET}"
+        b_l1 = f" {BOLD}{T1}HUDY REJOIN AUTOMATION{RESET}  {T5}[PRO V3.5]{RESET}"
+        b_l2 = f" {C_GRAY_LIGHT}Tác Giả:{RESET} {C_MINT}HuDy{RESET}   │ {C_GRAY_LIGHT}Anti-Hang:{RESET} {C_MINT}BẬT 24/7{RESET}"
+        b_l3 = f" {C_GRAY_LIGHT}Chế Độ:{RESET}  {C_ICE}Multi-Acc{RESET} │ {C_GRAY_LIGHT}CaptchaV2:{RESET} {T6}Đa Ngôn Ngữ{RESET}"
 
         side_badge = [
             f"{T2}╭" + "─" * (inner_badge_w) + f"╮{RESET}",
@@ -850,7 +850,7 @@ def print_dashboard(states):
 
     # 3. Khung Nhật Ký Hệ Thống Gần Đây
     if system_logs:
-        log_title = " 📋 NHẬT KÝ HỆ THỐNG GẦN ĐÂY "
+        log_title = " NHẬT KÝ HỆ THỐNG GẦN ĐÂY "
         dashes_log = max(2, inner_w - visible_len(log_title) - 1)
         print(f"{C_CYAN_DEEP}╭─{log_title}{'─' * dashes_log}╮{RESET}")
         for log in system_logs[-8:]:
