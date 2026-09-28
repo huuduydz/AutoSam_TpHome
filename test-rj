@@ -189,14 +189,178 @@ CUSTOM_SCRIPT_IS_CODE = False  # True nếu CUSTOM_SCRIPT_URL là code Lua trự
 AUTO_SOLVE_CAPTCHA_V2 = "Enable"  # Mặc định BẬT auto solve captchav2
 JOIN_SERVER_MODE = "Disable"      # Mặc định TẮT mode join server
 JOIN_SERVER_LINK = ""             # Link Private / VIP server tùy chỉnh
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hudy_config.json")
+# =====================================================================
+# CẤU HÌNH ĐƯỜNG DẪN /STORAGE/EMULATED/0/DOWNLOAD (ANDROID & TERMUX)
+# =====================================================================
+def get_download_dirs():
+    """Danh sách các thư mục Download tìm kiếm theo thứ tự ưu tiên."""
+    dirs = []
+    # 1. Ưu tiên tuyệt đối thư mục Download chính của Android
+    for d in ["/storage/emulated/0/Download", "/sdcard/Download"]:
+        if os.path.exists(d) and os.path.isdir(d):
+            if d not in dirs:
+                dirs.append(d)
+    # 2. Termux storage symlink
+    try:
+        t_dl = os.path.expanduser("~/storage/downloads")
+        if os.path.exists(t_dl) and os.path.isdir(t_dl) and t_dl not in dirs:
+            dirs.append(t_dl)
+        t_sh = os.path.expanduser("~/storage/shared/Download")
+        if os.path.exists(t_sh) and os.path.isdir(t_sh) and t_sh not in dirs:
+            dirs.append(t_sh)
+    except:
+        pass
+    # 3. Chuẩn Android fallback (ngay cả khi chưa mount storage)
+    for std_p in ["/storage/emulated/0/Download", "/sdcard/Download"]:
+        if std_p not in dirs:
+            dirs.append(std_p)
+    # 4. Thư mục script hiện tại và cwd
+    try:
+        s_dir = os.path.dirname(os.path.abspath(__file__))
+        if s_dir not in dirs:
+            dirs.append(s_dir)
+    except:
+        pass
+    cwd = os.getcwd()
+    if cwd not in dirs:
+        dirs.append(cwd)
+    return dirs
+
+def get_primary_download_dir():
+    """Trả về thư mục Download chính ưu tiên /storage/emulated/0/Download."""
+    for d in ["/storage/emulated/0/Download", "/sdcard/Download"]:
+        if os.path.exists(d) and os.path.isdir(d):
+            return d
+    try:
+        t_dl = os.path.expanduser("~/storage/downloads")
+        if os.path.exists(t_dl) and os.path.isdir(t_dl):
+            return t_dl
+    except:
+        pass
+    if os.path.exists("/storage/emulated/0"):
+        return "/storage/emulated/0/Download"
+    return os.path.dirname(os.path.abspath(__file__))
+
+def find_file_in_download(filenames):
+    """Tìm file trong các đường dẫn Download (trả về path đầu tiên tìm thấy hoặc None)."""
+    if isinstance(filenames, str):
+        filenames = [filenames]
+    search_dirs = get_download_dirs()
+    for d in search_dirs:
+        for fname in filenames:
+            p = os.path.join(d, fname)
+            if os.path.exists(p) and os.path.isfile(p):
+                return p
+    return None
+
+def get_download_save_path(filename):
+    """Lấy đường dẫn lưu file vào thư mục Download chuẩn."""
+    primary = get_primary_download_dir()
+    try:
+        os.makedirs(primary, exist_ok=True)
+    except:
+        pass
+    return os.path.join(primary, filename)
+
+def _normalize_roblosecurity_cookie(cookie):
+    """Trả về riêng giá trị .ROBLOSECURITY, không kèm tên/header Cookie hay ngoặc kép."""
+    if not cookie:
+        return ""
+    cookie = str(cookie).strip().replace('\r', '').replace('\n', '').strip('\'"')
+    match = re.search(r'(?:^|[;\s])\.ROBLOSECURITY\s*=\s*([^;]+)', cookie, re.IGNORECASE)
+    if match:
+        cookie = match.group(1).strip().strip('\'"')
+    return cookie
+
+def load_cookies_from_download():
+    """Đọc danh sách cookie Roblox từ file cookie.txt / cookies.txt trong Download."""
+    candidates = ["cookie.txt", "cookies.txt", "cookie", "cookies"]
+    fpath = find_file_in_download(candidates)
+    if not fpath:
+        return [], None
+    cookies = []
+    try:
+        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip().strip('"').strip("'")
+                if not line or line.startswith(('#', '//', '--')):
+                    continue
+                clean_c = _normalize_roblosecurity_cookie(line)
+                if clean_c and clean_c not in cookies:
+                    cookies.append(clean_c)
+    except:
+        pass
+    return cookies, fpath
+
+def save_cookie_to_download(cookie, append=True):
+    """Lưu cookie vào /storage/emulated/0/Download/cookie.txt."""
+    clean_c = _normalize_roblosecurity_cookie(cookie)
+    if not clean_c:
+        return None
+    save_path = get_download_save_path("cookie.txt")
+    try:
+        existing = []
+        if os.path.exists(save_path):
+            with open(save_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    l = line.strip()
+                    if l and not l.startswith(('#', '//', '--')):
+                        existing.append(l)
+        if clean_c not in existing:
+            if append:
+                existing.append(clean_c)
+            else:
+                existing = [clean_c]
+        with open(save_path, "w", encoding="utf-8") as f:
+            for c in existing:
+                f.write(c + "\n")
+        return save_path
+    except:
+        return None
+
+def load_svv_link_from_file():
+    """Đọc link VIP / Private Server từ file svv / svv.txt / server.txt tại Download."""
+    candidates = ["svv.txt", "svv", "server.txt", "vip.txt", "link.txt", "sv.txt"]
+    fpath = find_file_in_download(candidates)
+    if not fpath:
+        return "", None
+    try:
+        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip().strip('"').strip("'")
+                if line and not line.startswith(('#', '//', '--')):
+                    return line, fpath
+    except:
+        pass
+    return "", fpath
+
+def save_svv_link_to_file(link):
+    """Lưu link VIP / Private Server vào file svv.txt tại Download."""
+    save_path = get_download_save_path("svv.txt")
+    try:
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(link.strip() + "\n")
+        return save_path
+    except:
+        return None
+
+def get_config_file_path():
+    """Tìm file config trong Download hoặc thư mục script."""
+    found = find_file_in_download(["hudy_config.json", "config.json"])
+    if found:
+        return found
+    return get_download_save_path("hudy_config.json")
+
+CONFIG_FILE = get_config_file_path()
 
 def load_settings():
     global target_place_id, kill_all_time, CHECK_ACC_TIME_BLOCKED, SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE
-    global AUTO_SOLVE_CAPTCHA_V2, JOIN_SERVER_MODE, JOIN_SERVER_LINK
+    global AUTO_SOLVE_CAPTCHA_V2, JOIN_SERVER_MODE, JOIN_SERVER_LINK, CONFIG_FILE
     try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        cfg_path = get_config_file_path()
+        if cfg_path and os.path.exists(cfg_path):
+            CONFIG_FILE = cfg_path
+            with open(cfg_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 target_place_id = str(data.get("target_place_id", target_place_id))
                 kill_all_time = int(data.get("kill_all_time", kill_all_time))
@@ -218,6 +382,10 @@ def load_settings():
             AUTO_SOLVE_CAPTCHA_V2 = "Enable"
             JOIN_SERVER_MODE = "Disable"
             JOIN_SERVER_LINK = ""
+        # Tự động nạp link VIP server từ file svv.txt trong Download nếu có
+        svv_link, _ = load_svv_link_from_file()
+        if svv_link:
+            JOIN_SERVER_LINK = svv_link
     except:
         SELECTED_SCRIPT_KEY = "1"
         AUTO_SOLVE_CAPTCHA_V2 = "Enable"
@@ -236,8 +404,19 @@ def save_settings():
             "join_server_mode": JOIN_SERVER_MODE,
             "join_server_link": JOIN_SERVER_LINK,
         }
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        primary_cfg = get_download_save_path("hudy_config.json")
+        try:
+            with open(primary_cfg, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+        except:
+            pass
+        script_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hudy_config.json")
+        if script_cfg != primary_cfg:
+            try:
+                with open(script_cfg, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
+            except:
+                pass
     except:
         pass
 
@@ -245,11 +424,17 @@ load_settings()
 
 def load_omocaptcha_key():
     global OMOCAPTCHA_KEY
-    for candidate in [
+    candidates = [
+        get_download_save_path("omocaptcha_key.txt"),
+        get_download_save_path("license.txt"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "omocaptcha_key.txt"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "license.txt"),
+        "/storage/emulated/0/Download/omocaptcha_key.txt",
+        "/storage/emulated/0/Download/license.txt",
+        "/sdcard/Download/omocaptcha_key.txt",
         "/sdcard/omocaptcha_key.txt"
-    ]:
+    ]
+    for candidate in candidates:
         if os.path.exists(candidate):
             try:
                 with open(candidate, "r", encoding="utf-8") as f:
@@ -265,13 +450,15 @@ def load_omocaptcha_key():
 def save_omocaptcha_key(new_key):
     global OMOCAPTCHA_KEY
     OMOCAPTCHA_KEY = new_key.strip()
-    target = os.path.join(os.path.dirname(os.path.abspath(__file__)), "omocaptcha_key.txt")
-    try:
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(OMOCAPTCHA_KEY)
-        return True
-    except:
-        return False
+    saved = False
+    for target in [get_download_save_path("omocaptcha_key.txt"), os.path.join(os.path.dirname(os.path.abspath(__file__)), "omocaptcha_key.txt")]:
+        try:
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(OMOCAPTCHA_KEY)
+            saved = True
+        except:
+            pass
+    return saved
 
 # Nạp key ngay khi khởi động
 load_omocaptcha_key()
@@ -347,19 +534,35 @@ def parse_server_link(link, fallback_place_id="4520749081"):
 def build_roblox_launch_uri(pkg=None, auth_ticket=None):
     """Tạo URI/Deeplink để khởi chạy Roblox vào game thường hoặc Private/VIP server."""
     global JOIN_SERVER_MODE, JOIN_SERVER_LINK, target_place_id
-    if JOIN_SERVER_MODE == "Enable" and JOIN_SERVER_LINK.strip():
-        pid, uri = parse_server_link(JOIN_SERVER_LINK.strip(), target_place_id)
-        if auth_ticket:
-            if "roblox://" in uri:
-                sep = "&" if "?" in uri else "?"
-                uri = f"{uri}{sep}authTicket={auth_ticket}"
-        return uri
-    elif target_place_id:
+    if JOIN_SERVER_MODE == "Enable":
+        cur_link = JOIN_SERVER_LINK.strip()
+        if not cur_link:
+            svv_l, _ = load_svv_link_from_file()
+            if svv_l:
+                cur_link = svv_l
+        if cur_link:
+            pid, uri = parse_server_link(cur_link, target_place_id)
+            if auth_ticket:
+                if "roblox://" in uri:
+                    sep = "&" if "?" in uri else "?"
+                    uri = f"{uri}{sep}authTicket={auth_ticket}"
+            return uri
+    if target_place_id:
         uri = f"roblox://experiences/start?placeId={target_place_id}"
         if auth_ticket:
             uri += f"&authTicket={auth_ticket}"
         return uri
     return ""
+
+import shutil
+
+def get_terminal_width():
+    """Tự động phát hiện độ rộng terminal (tối ưu mượt mà cho cả Màn hình Đứng và Ngang)."""
+    try:
+        cols, _ = shutil.get_terminal_size(fallback=(68, 24))
+        return max(54, min(cols - 1, 80))
+    except:
+        return 66
 
 def visible_len(s):
     """Tính độ dài hiển thị thực tế của chuỗi, bỏ qua các mã màu ANSI."""
@@ -383,14 +586,22 @@ def print_banner():
   {PINK_NEON}╚═╝  ╚═╝ ╚═════╝ ╚═════╝    ╚═╝   {GRAY_LIGHT}Anti-Hang & Auto-Bypass{RESET}
 """
     print(banner)
-    sub = f" {BOLD}{W}HuDy Automation Core{RESET} {GRAY_DARK}•{RESET} {GREEN_MINT}Anti-Hang{RESET} {GRAY_DARK}•{RESET} {GOLD_NEON}Auto-Bypass{RESET} {GRAY_DARK}•{RESET} {CYAN_NEON}Auto-Inject{RESET} {GRAY_DARK}•{RESET} {PURPLE_NEON}Multi-Lang CaptchaV2{RESET}"
-    print(f"{CYAN_NEON}╭──────────────────────────────────────────────────────────────────────────────────────╮{RESET}")
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(sub, 86)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
+    W = get_terminal_width()
+    inner_w = W - 2
+    if inner_w >= 68:
+        sub = f" {BOLD}{W}HuDy Automation Core{RESET} {GRAY_DARK}•{RESET} {GREEN_MINT}Anti-Hang{RESET} {GRAY_DARK}•{RESET} {GOLD_NEON}Auto-Bypass{RESET} {GRAY_DARK}•{RESET} {CYAN_NEON}Auto-Inject{RESET} {GRAY_DARK}•{RESET} {PURPLE_NEON}CaptchaV2{RESET}"
+    else:
+        sub = f" {BOLD}{W}HuDy Core{RESET} {GRAY_DARK}•{RESET} {GREEN_MINT}Anti-Hang{RESET} {GRAY_DARK}•{RESET} {GOLD_NEON}Bypass{RESET} {GRAY_DARK}•{RESET} {CYAN_NEON}Auto-Inject{RESET}"
+    print(f"{CYAN_NEON}╭{'─' * inner_w}╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(sub, inner_w)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
 
 def print_dashboard(states):
     clear_screen()
     print_banner()
+    W = get_terminal_width()
+    inner_w = W - 2
+
     cpu_str = get_cpu_usage()
     ram_str = get_memory_usage()
     cur_sc_name = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Tắt")
@@ -398,41 +609,68 @@ def print_dashboard(states):
     restart_display = f"{kill_all_time}m" if kill_all_time > 0 else "Tắt"
     v2_display = "Bật" if AUTO_SOLVE_CAPTCHA_V2 == "Enable" else "Tắt"
     join_display = "Bật (VIP)" if JOIN_SERVER_MODE == "Enable" else "Tắt"
-    
-    print(f"{CYAN_NEON}╭─ ⚙️ THÔNG SỐ HỆ THỐNG & CẤU HÌNH ───────────────────────────────────────────────────╮{RESET}")
     v2_col = GREEN_MINT if v2_display == 'Bật' else R
     join_col = PURPLE_NEON if join_display != 'Tắt' else GRAY_LIGHT
-    info_line1 = f" CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ Place: {GOLD_NEON}{pid_display:<11}{RESET} │ CaptV2: {v2_col}{v2_display:<5}{RESET} │ JoinSv: {join_col}{join_display:<9}{RESET}"
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(info_line1, 86)}{CYAN_NEON}│{RESET}")
-    info_line2 = f" Restart: {Y}{restart_display:<6}{RESET}│ Cookie Re-check: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}     │ Script: {PINK_NEON}{cur_sc_name}{RESET}"
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(info_line2, 86)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
     
-    p_header = "Package"
-    u_header = "Username"
-    s_header = "Trạng Thái"
+    # 1. Khung Thông Số Hệ Thống & Cấu Hình
+    title_box = " ⚙️ THÔNG SỐ HỆ THỐNG & CẤU HÌNH "
+    dashes_top = max(2, inner_w - visible_len(title_box) - 1)
+    print(f"{CYAN_NEON}╭─{title_box}{'─' * dashes_top}╮{RESET}")
+    
+    if inner_w >= 70:
+        info1 = f" CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ Place: {GOLD_NEON}{pid_display:<11}{RESET} │ CaptV2: {v2_col}{v2_display:<5}{RESET}"
+        info2 = f" Restart: {Y}{restart_display:<5}{RESET} │ Cookie: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}   │ JoinSv: {join_col}{join_display:<9}{RESET} │ Script: {PINK_NEON}{cur_sc_name}{RESET}"
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info1, inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info2, inner_w)}{CYAN_NEON}│{RESET}")
+    else:
+        info1 = f" CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ Place: {GOLD_NEON}{pid_display}{RESET}"
+        info2 = f" Restart: {Y}{restart_display:<5}{RESET} │ Cookie: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET} │ CaptV2: {v2_col}{v2_display}{RESET}"
+        info3 = f" Script: {PINK_NEON}{cur_sc_name}{RESET} │ JoinSv: {join_col}{join_display}{RESET}"
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info1, inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info2, inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info3, inner_w)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
+    
+    # 2. Khung Tiến Trình Tài Khoản (Tính toán cột chính xác theo độ rộng màn hình)
     pkg_cnt = len(selected_packages)
-    print(f"{CYAN_NEON}╭─ 🎮 TIẾN TRÌNH TÀI KHOẢN ({pkg_cnt} Package) ────────────────────────────────────────────────╮{RESET}")
-    hdr_line = f" {BOLD}{p_header:<28} │ {u_header:<22} │ {s_header:<30}{RESET}"
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(hdr_line, 86)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}├──────────────────────────────┼────────────────────────┼──────────────────────────────┤{RESET}")
+    acc_title = f" 🎮 TIẾN TRÌNH TÀI KHOẢN ({pkg_cnt} Package) "
+    dashes_acc = max(2, inner_w - visible_len(acc_title) - 1)
+    print(f"{CYAN_NEON}╭─{acc_title}{'─' * dashes_acc}╮{RESET}")
+    
+    if inner_w >= 70:
+        w_pkg = int(inner_w * 0.35)
+        w_user = int(inner_w * 0.25)
+        w_status = inner_w - w_pkg - w_user - 7
+    else:
+        w_pkg = 20
+        w_user = 13
+        w_status = max(14, inner_w - w_pkg - w_user - 7)
+
+    hdr_str = f" {BOLD}{'Package':<{w_pkg}} │ {'Username':<{w_user}} │ {'Trạng Thái':<{w_status}}{RESET} "
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(hdr_str, inner_w)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}├{'─' * (w_pkg + 2)}┼{'─' * (w_user + 2)}┼{'─' * (w_status + 1)}┤{RESET}")
     for item in selected_packages:
         pkg = item['pkg']
-        s_pkg = pkg if len(pkg) <= 28 else pkg[:25] + "..."
+        s_pkg = pkg if len(pkg) <= w_pkg else pkg[:max(1, w_pkg - 3)] + "..."
         s_name = states[pkg]['display_name']
-        if len(s_name) > 22: s_name = s_name[:19] + "..."
+        if len(s_name) > w_user: s_name = s_name[:max(1, w_user - 3)] + "..."
         txt = states[pkg]['text']
-        if len(txt) > 30: txt = txt[:27] + "..."
+        if len(txt) > w_status: txt = txt[:max(1, w_status - 3)] + "..."
         col = states[pkg]['color']
-        row_str = f" {s_pkg:<28} │ {W}{s_name:<22}{RESET} │ {col}{txt:<30}{RESET}"
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(row_str, 86)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰──────────────────────────────┴────────────────────────┴──────────────────────────────╯{RESET}")
-    print(f" {GREEN_MINT}●{RESET} {BOLD}Đang chạy Live Dashboard...{RESET} {GRAY_LIGHT}(Bấm Ctrl+C để dừng và về Menu){RESET}")
+        row_str = f" {s_pkg:<{w_pkg}} │ {W}{s_name:<{w_user}}{RESET} │ {col}{txt:<{w_status}}{RESET} "
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(row_str, inner_w)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰{'─' * (w_pkg + 2)}┴{'─' * (w_user + 2)}┴{'─' * (w_status + 1)}╯{RESET}")
+    
+    print(f" {GREEN_MINT}●{RESET} {BOLD}Đang chạy Live Dashboard...{RESET} {GRAY_LIGHT}(Bấm Ctrl+C để về Menu){RESET}")
+    
+    # 3. Khung Nhật Ký Hệ Thống Gần Đây
     if system_logs:
-        print(f"{CYAN_NEON}╭─ 📋 NHẬT KÝ HỆ THỐNG GẦN ĐÂY ────────────────────────────────────────────────────────╮{RESET}")
-        for log in system_logs[-10:]:
-            print(f"{CYAN_NEON}│{RESET}{fit_ansi(' ' + log, 86)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
+        log_title = " 📋 NHẬT KÝ HỆ THỐNG GẦN ĐÂY "
+        dashes_log = max(2, inner_w - visible_len(log_title) - 1)
+        print(f"{CYAN_NEON}╭─{log_title}{'─' * dashes_log}╮{RESET}")
+        for log in system_logs[-8:]:
+            print(f"{CYAN_NEON}│{RESET}{fit_ansi(' ' + log, inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
 
 # =====================================================================
 # CÀI ĐẶT & AUTO INJECT SCRIPT
@@ -441,17 +679,22 @@ def select_auto_inject_script_menu():
     global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE
     clear_screen()
     print_banner()
-    print(f"{CYAN_NEON}╭─────────────────────────────── CHỌN SCRIPT AUTO INJECT ─────────────────────────────╮{RESET}")
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi('   ' + GRAY_LIGHT + 'Script sẽ tự động nạp vào thư mục autoexec của executor (Delta/Fluxus...)' + RESET, 86)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}├──────────────────────────────────────────────────────────────────────────────────────┤{RESET}")
+    W = get_terminal_width()
+    inner_w = W - 2
+
+    sc_title = " CHỌN SCRIPT AUTO INJECT "
+    dashes_sc = max(2, inner_w - visible_len(sc_title) - 1)
+    print(f"{CYAN_NEON}╭─{sc_title}{'─' * dashes_sc}╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi('   ' + GRAY_LIGHT + 'Script sẽ tự nạp vào thư mục autoexec của executor' + RESET, inner_w)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}├{'─' * inner_w}┤{RESET}")
     
     for key, info in AUTO_INJECT_SCRIPTS.items():
         def_lbl = " / Mặc định" if key == "1" else ""
         is_cur = f" {GREEN_MINT}[✓ Đang chọn{def_lbl}]{RESET}" if SELECTED_SCRIPT_KEY == key else ""
         l1 = f"  {BOLD}{C}[{key}]{RESET} {GOLD_NEON}{info['name']:<18}{RESET}{is_cur}"
-        l2 = f"      {GRAY_LIGHT}↳ {info['url'][:55]}...{RESET}"
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(l1, 86)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(l2, 86)}{CYAN_NEON}│{RESET}")
+        l2 = f"      {GRAY_LIGHT}↳ {info['url'][:max(15, inner_w - 12)]}...{RESET}"
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(l1, inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(l2, inner_w)}{CYAN_NEON}│{RESET}")
     
     # Hiển thị trạng thái custom
     custom_cur = ""
@@ -460,12 +703,12 @@ def select_auto_inject_script_menu():
         custom_cur = f" {GREEN_MINT}[✓ Đang chọn {custom_type}]{RESET}"
     l_c1 = f"  {BOLD}{C}[4]{RESET} {PURPLE_NEON}Tự Nhập Script/URL Tùy Chỉnh (Custom){RESET}{custom_cur}"
     l_c2 = f"      {GRAY_LIGHT}↳ Nhập raw URL hoặc dán thẳng code Lua{RESET}"
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_c1, 86)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_c2, 86)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_c1, inner_w)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_c2, inner_w)}{CYAN_NEON}│{RESET}")
     disabled_cur = f" {R}[✓ Đang tắt]{RESET}" if SELECTED_SCRIPT_KEY == "0" else ""
     l_d1 = f"  {BOLD}{C}[0]{RESET} {R}Tắt Auto Inject Script Thêm{RESET}{disabled_cur}"
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_d1, 86)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_d1, inner_w)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
     
     fix_tty()
     sel = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy Script{RESET} {PINK_NEON}❯{RESET} Chọn [0-4] (Enter giữ nguyên): ").strip()
@@ -552,33 +795,40 @@ def settings_menu():
         else:
             join_status_lbl = f"{GRAY_LIGHT}Tắt (Vào server thường qua Place ID){RESET}"
         
-        print(f"{CYAN_NEON}╭────────────────────────────── ⚙️ CÀI ĐẶT HỆ THỐNG ────────────────────────────────────╮{RESET}")
-        line_s1 = f"  1. Place ID (Game ID):              {GOLD_NEON}{cur_pid}{RESET}"
-        line_s2 = f"  2. Script Auto Inject:              {cur_script_name}"
-        line_s3 = f"  3. Thời Gian Auto Restart:          {Y}{cur_restart}{RESET}"
-        line_s4 = f"  4. Chu Kỳ Re-Check Acc Kẹt:         {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}"
-        line_s5 = f"  5. Auto Solve Captcha V2:           {v2_status_lbl}"
-        line_s6 = f"  6. Mode Join Server (VIP Server):   {join_status_lbl}"
-        for sl in [line_s1, line_s2, line_s3, line_s4, line_s5, line_s6]:
-            print(f"{CYAN_NEON}│{RESET}{fit_ansi(sl, 86)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}├──────────────────────────────────────────────────────────────────────────────────────┤{RESET}")
+        W = get_terminal_width()
+        inner_w = W - 2
+
+        set_title = " ⚙️ CÀI ĐẶT HỆ THỐNG "
+        dashes_set = max(2, inner_w - visible_len(set_title) - 1)
+        print(f"{CYAN_NEON}╭─{set_title}{'─' * dashes_set}╮{RESET}")
         
-        opt_v2_tag = f"{GREEN_MINT}[ĐANG BẬT]{RESET}" if AUTO_SOLVE_CAPTCHA_V2 == "Enable" else f"{R}[ĐANG TẮT]{RESET}"
-        opt_join_tag = f"{PURPLE_NEON}[ĐANG BẬT]{RESET}" if JOIN_SERVER_MODE == "Enable" else f"{GRAY_LIGHT}[ĐANG TẮT]{RESET}"
+        line_s1 = f"  1. Place ID (Game ID):       {GOLD_NEON}{cur_pid}{RESET}"
+        line_s2 = f"  2. Script Auto Inject:       {cur_script_name}"
+        line_s3 = f"  3. Auto Restart:             {Y}{cur_restart}{RESET}"
+        line_s4 = f"  4. Chu Kỳ Re-Check Acc Kẹt:  {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}"
+        line_s5 = f"  5. Auto Solve Captcha V2:    {v2_status_lbl}"
+        line_s6 = f"  6. Mode Join Server (VIP):   {join_status_lbl}"
+        line_s7 = f"  7. Thư Mục Lưu Trữ:          {GOLD_NEON}{get_primary_download_dir()}{RESET}"
+        for sl in [line_s1, line_s2, line_s3, line_s4, line_s5, line_s6, line_s7]:
+            print(f"{CYAN_NEON}│{RESET}{fit_ansi(sl, inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}├{'─' * inner_w}┤{RESET}")
+        
+        opt_v2_tag = f"{GREEN_MINT}[BẬT]{RESET}" if AUTO_SOLVE_CAPTCHA_V2 == "Enable" else f"{R}[TẮT]{RESET}"
+        opt_join_tag = f"{PURPLE_NEON}[BẬT]{RESET}" if JOIN_SERVER_MODE == "Enable" else f"{GRAY_LIGHT}[TẮT]{RESET}"
         
         m_opts = [
             f"  {BOLD}{C}[1]{RESET} Đổi Place ID (Game ID)",
-            f"  {BOLD}{C}[2]{RESET} Chọn Script Auto Inject (1: Fin_Tail, 2: Tear, 3: King, 4: Custom)",
+            f"  {BOLD}{C}[2]{RESET} Chọn Script Auto Inject (Fin_Tail, Tear, King, Custom)",
             f"  {BOLD}{C}[3]{RESET} Cài Đặt Thời Gian Auto Restart (phút)",
             f"  {BOLD}{C}[4]{RESET} Cài Đặt Chu Kỳ Re-check Acc Dính Captcha",
-            f"  {BOLD}{C}[5]{RESET} Bật / Tắt Auto Solve Captcha V2 (Nhấn & Giữ)      {opt_v2_tag}",
-            f"  {BOLD}{C}[6]{RESET} Cài Đặt Mode Join Server (Bật/Tắt & Link Server VIP)  {opt_join_tag}",
+            f"  {BOLD}{C}[5]{RESET} Bật / Tắt Auto Solve Captcha V2         {opt_v2_tag}",
+            f"  {BOLD}{C}[6]{RESET} Cài Đặt Mode Join Server (VIP / Private)   {opt_join_tag}",
             f"  {BOLD}{C}[7]{RESET} Cấu Hình Nhanh Tất Cả (Wizard Setup)",
             f"  {BOLD}{R}[8]{RESET} ↩Quay Lại Menu Chính"
         ]
         for mo in m_opts:
-            print(f"{CYAN_NEON}│{RESET}{fit_ansi(mo, 86)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
+            print(f"{CYAN_NEON}│{RESET}{fit_ansi(mo, inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
         
         fix_tty()
         c = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy Settings{RESET} {PINK_NEON}❯{RESET} ").strip()
@@ -639,16 +889,35 @@ def settings_menu():
             time.sleep(1.5)
         elif c == '6':
             fix_tty()
+            svv_link_found, svv_file_found = load_svv_link_from_file()
             print(f"{CYAN_NEON}╭───────────────── CÀI ĐẶT MODE JOIN SERVER ─────────────────╮{RESET}")
-            print(f"{CYAN_NEON}│{RESET} {Y}Hỗ trợ:{RESET}")
+            print(f"{CYAN_NEON}│{RESET} {Y}Hỗ trợ link / deeplink / mã link code và file svv.txt:{RESET}")
             print(f"{CYAN_NEON}│{RESET}   {G}• Link Private Server{RESET}: https://www.roblox.com/games/...?privateServerLinkCode=...")
             print(f"{CYAN_NEON}│{RESET}   {G}• Share Link{RESET}         : https://roblox.com/share?code=...&type=Server")
             print(f"{CYAN_NEON}│{RESET}   {G}• Deeplink{RESET}           : roblox://experiences/start?placeId=...&linkCode=...")
-            print(f"{CYAN_NEON}│{RESET}   {G}• Hoặc mã Link Code trực tiếp{RESET}")
+            print(f"{CYAN_NEON}│{RESET}   {G}• File svv trong Download{RESET}: {GOLD_NEON}{get_download_save_path('svv.txt')}{RESET}")
             print(f"{CYAN_NEON}╰─────────────────────────────────────────────────────────────╯{RESET}")
             cur_txt = JOIN_SERVER_LINK if JOIN_SERVER_LINK else "Chưa có"
             print(f"Trạng thái hiện tại: {PURPLE_NEON}{JOIN_SERVER_MODE}{RESET} | Link: {G}{cur_txt}{RESET}")
-            link_input = safe_input(f"\n{M}Nhập Link Server mới (Nhập '0' hoặc 'off' để TẮT, Enter giữ nguyên): {RESET}").strip()
+            
+            if svv_link_found and svv_file_found:
+                disp_f = svv_link_found[:35] + "..." if len(svv_link_found) > 38 else svv_link_found
+                print(f"\n{GREEN_MINT}[✓] Đã tìm thấy file svv: {GOLD_NEON}{svv_file_found}{RESET}")
+                print(f"    Link trong file: {C}{disp_f}{RESET}")
+                print(f"  [{C}1{RESET}] {BOLD}{G}Sử dụng link từ file svv.txt{RESET} {DIM}(Nhấn Enter chọn ngay){RESET}")
+                print(f"  [{C}2{RESET}] {W}Nhập / Dán Link mới bằng tay{RESET}")
+                print(f"  [{C}0{RESET}] {R}Tắt Mode Join Server (Vào server thường){RESET}")
+                fix_tty()
+                sub_c = safe_input(f"\n{M}Chọn [1/2/0, mặc định 1]: {RESET}").strip()
+                if sub_c in ['', '1']:
+                    link_input = svv_link_found
+                elif sub_c in ['0', 'off', 'tat', 'tắt']:
+                    link_input = '0'
+                else:
+                    link_input = safe_input(f"{M}Nhập Link Server mới: {RESET}").strip()
+            else:
+                link_input = safe_input(f"\n{M}Nhập Link Server mới (Nhập '0' hoặc 'off' để TẮT, Enter giữ nguyên): {RESET}").strip()
+
             if link_input.lower() in ['0', 'off', 'tat', 'tắt']:
                 JOIN_SERVER_MODE = "Disable"
                 print(f"\n{Y}[*] Đã TẮT Mode Join Server (Chuyển sang join thường theo Place ID).{RESET}")
@@ -660,7 +929,10 @@ def settings_menu():
                 if pid_extracted and pid_extracted != target_place_id:
                     target_place_id = pid_extracted
                     print(f"{G}[+] Đã tự động đồng bộ Place ID từ link: {target_place_id}{RESET}")
-                print(f"{G}[✓] Đã BẬT Mode Join Server và lưu Link thành công!{RESET}")
+                saved_f = save_svv_link_to_file(link_input)
+                if saved_f:
+                    print(f"{G}[✓] Đã lưu link vào file: {GOLD_NEON}{saved_f}{RESET}")
+                print(f"{G}[✓] Đã BẬT Mode Join Server và lưu cấu hình thành công!{RESET}")
                 save_settings()
             else:
                 if JOIN_SERVER_LINK:
@@ -1306,64 +1578,61 @@ def _kill_pkg(pkg):
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(1)
 
-def boot_pkg_with_verify(pkg, max_retries=4):
-    """Boot pkg với tối đa 4 lần thử. Mỗi lần: force-stop sạch → am start → poll 30s.
-    Dùng -p {pkg} để tránh hộp thoại 'Mở bằng...' (app chooser)."""
+def boot_pkg_with_verify(pkg, max_retries=3):
+    """Boot pkg với tối đa 3 lần thử mượt mà, chống xung đột process và chống văng app."""
     for attempt in range(1, max_retries + 1):
         # A) Dọn process cũ hoàn toàn
         safe_root(f"su -c 'am force-stop {pkg}'")
-        time.sleep(2)
+        time.sleep(1.5)
 
-        # B) Launch đúng package (hỗ trợ cả Place ID lẫn Mode Join Server VIP)
+        # B) Launch đúng package bằng cờ FLAG_ACTIVITY_NEW_TASK (0x10000000)
         launch_uri = build_roblox_launch_uri(pkg)
         if launch_uri:
             safe_root(
-                f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
+                f"su -c 'am start -p {pkg} -f 0x10000000 -a android.intent.action.VIEW "
                 f"-d \"{launch_uri}\" 2>/dev/null'"
             )
         else:
-            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
 
-        # C) Poll 6×5s = 30s
-        for _ in range(6):
-            time.sleep(5)
+        # C) Poll nhẹ nhàng: 8 lần * 2.5s = 20s
+        for _ in range(8):
+            time.sleep(2.5)
             if _is_pkg_active(pkg):
                 return True
 
         if attempt < max_retries:
-            time.sleep(3)
+            time.sleep(2)
 
     # Last resort
     safe_root(f"su -c 'am force-stop {pkg}'")
-    time.sleep(2)
-    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
+    time.sleep(1.5)
+    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
     return False
 
 def launch_roblox_to_game(pkg):
-    """Bắn thẳng package vào game hoặc VIP Server để load trải nghiệm và kích hoạt captcha/bảo mật nếu có"""
+    """Bắn package vào game hoặc VIP Server mượt mà, chống lặp lệnh và chống văng app."""
     global target_place_id
     uri = build_roblox_launch_uri(pkg)
     if not uri:
         pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
         uri = f"roblox://experiences/start?placeId={pid}"
-    if not _is_pkg_active(pkg):
-        safe_root(
-            f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-            f"-d \"{uri}\" 2>/dev/null'"
-        )
-        time.sleep(3)
-        if not _is_pkg_active(pkg):
-            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
-            time.sleep(2)
-            safe_root(
-                f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-                f"-d \"{uri}\" 2>/dev/null'"
-            )
-    else:
-        safe_root(
-            f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-            f"-d \"{uri}\" 2>/dev/null'"
-        )
+
+    # Dùng cờ chuẩn FLAG_ACTIVITY_NEW_TASK (0x10000000) thay vì MULTIPLE_TASK để tránh tạo đa task gây crash
+    cmd = f"su -c 'am start -p {pkg} -f 0x10000000 -a android.intent.action.VIEW -d \"{uri}\" 2>/dev/null'"
+    safe_root(cmd)
+
+    # Chờ app khởi tạo (poll tối đa 10s, kiểm tra mỗi 2s - không spam monkey đè lên)
+    for _ in range(5):
+        time.sleep(2)
+        if is_app_running(pkg):
+            return True
+
+    # Fallback chỉ khi sau 10s app hoàn toàn chưa chạy
+    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+    time.sleep(3)
+    safe_root(cmd)
+    return is_app_running(pkg)
 
 def _boot_worker(pkg, states):
     """Background thread: boot pkg không block monitor thread."""
@@ -2013,13 +2282,62 @@ def login_via_cookie():
     print(f"{Y}[i] Tool sẽ tự động nạp Cookie vào SQLite DB, XML và kích hoạt vào App ngay!{RESET}")
     print("-" * 65)
 
-    fix_tty()
-    raw_cookie = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}")
+    cookies_in_file, c_fpath = load_cookies_from_download()
+    raw_cookie = ""
+    multi_cookie_map = {}
+
+    if cookies_in_file and c_fpath:
+        print(f"\n{GREEN_MINT}╭──────────────── TÌM THẤY FILE COOKIE TRONG DOWNLOAD ───────────────╮{RESET}")
+        print(f"{GREEN_MINT}│{RESET} {G}[✓] File:{RESET} {GOLD_NEON}{c_fpath}{RESET}")
+        print(f"{GREEN_MINT}│{RESET} {G}[✓] Số lượng Cookie tìm thấy:{RESET} {C}{len(cookies_in_file)} cookie{RESET}")
+        print(f"{GREEN_MINT}╰─────────────────────────────────────────────────────────────────────╯{RESET}")
+        print(f"  [{C}1{RESET}] {BOLD}{G}Nạp tự động từ file cookie.txt{RESET} {DIM}(Nhấn Enter để chọn ngay){RESET}")
+        print(f"  [{C}2{RESET}] {W}Nhập / Dán Cookie thủ công bằng tay{RESET}")
+        fix_tty()
+        opt = safe_input(f"\n{M}Lựa chọn [1/2, mặc định 1]: {RESET}").strip()
+        if opt in ['', '1']:
+            if len(cookies_in_file) == 1:
+                raw_cookie = cookies_in_file[0]
+                print(f"{G}[✓] Đã chọn cookie từ file {os.path.basename(c_fpath)}{RESET}")
+            else:
+                print(f"\n{C}Danh sách {len(cookies_in_file)} cookie trong file:{RESET}")
+                for i, ck in enumerate(cookies_in_file, 1):
+                    masked = ck[:18] + "..." + ck[-10:] if len(ck) > 28 else ck
+                    print(f"  [{C}{i}{RESET}] Cookie #{i}: {W}{masked}{RESET}")
+                if len(selected_packages) > 1 and len(cookies_in_file) >= len(selected_packages):
+                    print(f"  [{C}A{RESET}] {BOLD}{G}Tự động phân bổ lần lượt từng cookie cho {len(selected_packages)} package{RESET}")
+                fix_tty()
+                c_sel = safe_input(f"\n{M}Chọn cookie [1-{len(cookies_in_file)} / Enter lấy #1]: {RESET}").strip()
+                if c_sel.upper() == 'A' and len(selected_packages) > 1:
+                    for i_p, p_item in enumerate(selected_packages):
+                        p_pkg = p_item['pkg'] if isinstance(p_item, dict) else p_item
+                        multi_cookie_map[p_pkg] = cookies_in_file[i_p % len(cookies_in_file)]
+                    raw_cookie = cookies_in_file[0]
+                elif c_sel.isdigit() and 1 <= int(c_sel) <= len(cookies_in_file):
+                    raw_cookie = cookies_in_file[int(c_sel) - 1]
+                else:
+                    raw_cookie = cookies_in_file[0]
+        else:
+            fix_tty()
+            raw_cookie = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}")
+    else:
+        fix_tty()
+        raw_cookie = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}")
+
     cookie = _normalize_roblosecurity_cookie(raw_cookie)
-    if not cookie:
+    if not cookie and not multi_cookie_map:
         print(f"{Y}[*] Đã hủy.{RESET}")
         time.sleep(1.5)
         return
+
+    # Nếu người dùng nhập thủ công (chưa có trong file), hỏi có muốn lưu vào Download/cookie.txt không
+    if not cookies_in_file and cookie:
+        fix_tty()
+        ask_save = safe_input(f"\n{M}Lưu cookie này vào Download/cookie.txt để dùng lần sau? (Y/n): {RESET}").strip().lower()
+        if ask_save in ['', 'y', 'yes', 'co', 'có']:
+            saved_c = save_cookie_to_download(cookie)
+            if saved_c:
+                print(f"{G}[✓] Đã lưu cookie vào: {GOLD_NEON}{saved_c}{RESET}")
 
     print(f"\n{Y}[*] Đang xác thực thông tin Cookie qua Roblox API...{RESET}")
     acc_info = check_roblox_account_status(cookie)
@@ -2045,6 +2363,7 @@ def login_via_cookie():
     # Tiến hành nạp Cookie và mở app
     for idx, item in enumerate(selected_packages, 1):
         pkg = item['pkg'] if isinstance(item, dict) else item
+        cur_cookie = multi_cookie_map.get(pkg, cookie)
         print(f"\n{C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}")
         print(f"{Y}[{idx}/{len(selected_packages)}] Đang nạp Cookie vào: {W}{pkg}{RESET}")
 
@@ -2059,7 +2378,7 @@ def login_via_cookie():
 
         # 3. Tiêm WebView SQLite DB
         print(f"{Y}  ├─ [*] Đang tiêm Cookie vào Chromium WebView SQLite DB...{RESET}")
-        ok_wv = inject_cookie_webview(pkg, cookie)
+        ok_wv = inject_cookie_webview(pkg, cur_cookie)
         if not ok_wv:
             # Nếu chưa có DB (app mới cài chưa từng mở), mở 3s bằng monkey rồi dừng để hệ thống tạo DB
             print(f"{Y}  ├─ [*] Chưa có SQLite DB, đang khởi tạo app 3s...{RESET}")
@@ -2067,7 +2386,7 @@ def login_via_cookie():
             time.sleep(3)
             _run_root_capture(f"am force-stop '{pkg}'", timeout=10)
             time.sleep(1)
-            ok_wv = inject_cookie_webview(pkg, cookie)
+            ok_wv = inject_cookie_webview(pkg, cur_cookie)
 
         if ok_wv:
             print(f"{G}  ├─ [✓] WebView SQLite DB: Tiêm thành công!{RESET}")
@@ -2076,7 +2395,7 @@ def login_via_cookie():
 
         # 4. Tiêm SharedPreferences XML
         print(f"{Y}  ├─ [*] Đang cập nhật SharedPreferences XML...{RESET}")
-        ok_xml = inject_cookie_safe_xml(pkg, cookie, user_name=u_name, user_id=u_id)
+        ok_xml = inject_cookie_safe_xml(pkg, cur_cookie, user_name=u_name, user_id=u_id)
         if ok_xml:
             print(f"{G}  ├─ [✓] SharedPrefs XML: Cập nhật tài khoản thành công!{RESET}")
         else:
@@ -2084,9 +2403,9 @@ def login_via_cookie():
 
         # 5. Tạo Auth Ticket từ Roblox Server
         print(f"{Y}  ├─ [*] Đang tạo Roblox Auth Ticket...{RESET}")
-        ticket, t_msg = get_auth_ticket(cookie)
+        ticket, t_msg = get_auth_ticket(cur_cookie)
 
-        # 6. Khởi chạy ứng dụng
+        # 6. Khởi chạy ứng dụng (dùng FLAG_ACTIVITY_NEW_TASK 0x10000000 chống crash EGL)
         print(f"{Y}  └─ [*] Đang khởi động ứng dụng...{RESET}")
         launched = False
         if ticket:
@@ -2095,7 +2414,7 @@ def login_via_cookie():
             if not deeplink:
                 deeplink = f"roblox://experiences/start?placeId=4520749081&authTicket={ticket}"
 
-            launch_cmd = f"am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW -d \"{deeplink}\""
+            launch_cmd = f"am start -p {pkg} -f 0x10000000 -a android.intent.action.VIEW -d \"{deeplink}\""
             code, out, _ = _run_root_capture(launch_cmd, timeout=15)
             if code == 0 and "Error:" not in out:
                 print(f"{G}     [✓] Đã gửi Auth Ticket Deeplink Intent thành công!{RESET}")
@@ -2106,7 +2425,7 @@ def login_via_cookie():
         if not launched:
             uri_launch = build_roblox_launch_uri(pkg)
             if uri_launch:
-                direct_cmd = f"am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW -d \"{uri_launch}\""
+                direct_cmd = f"am start -p {pkg} -f 0x10000000 -a android.intent.action.VIEW -d \"{uri_launch}\""
                 code, out, _ = _run_root_capture(direct_cmd, timeout=10)
                 if code == 0 and "Error:" not in out:
                     print(f"{G}     [✓] Đã khởi động App qua Intent!{RESET}")
@@ -3083,41 +3402,75 @@ def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
 def solve_captchav2_in_app(pkg, states=None):
     """
     Quy trình tự động giải Captcha V2 ('Nhấn và Giữ' / 'Press and Hold') đa ngôn ngữ:
-    1. Bật Roblox package để kích hoạt Challenge dialog.
-    2. Chờ 6s để giao diện load đầy đủ.
-    3. Quét đa ngôn ngữ và nhấn giữ 16s (tối đa 3 lần).
-    4. Trả về True nếu thành công giải quyết xong.
+    1. Khởi động app Roblox một cách mượt mà (không văng, không lặp).
+    2. Chờ 10s ban đầu cho splash screen load xong.
+    3. Polling liên tục tới 30s để chờ màn hình 'Nhấn và Giữ' (Security Challenge) hiển thị đầy đủ.
+    4. Khi màn hình xuất hiện, tự động quét tìm nút và giữ 16 giây.
+    5. Kiểm tra lại và xác nhận bằng API cookie để đảm bảo acc đã sạch 100%.
     """
     if not pkg:
         return False
-    add_log(f"[{pkg[-12:]}] {Y}[AUTO CAPTCHA V2] Khởi động app để tự giải 'Nhấn và Giữ' (Multi-Language)...{RESET}")
-    launch_roblox_to_game(pkg)
-    time.sleep(6)
 
-    for attempt in range(1, 4):
-        cap_res = detect_in_app_captcha(pkg, auto_solve_v2=True, attempt=attempt)
+    add_log(f"[{pkg[-12:]}] {Y}[AUTO CAPTCHA V2] Đang mở app và chờ màn hình 'Nhấn và Giữ' xuất hiện...{RESET}")
+    launch_roblox_to_game(pkg)
+    time.sleep(10)
+
+    # Polling tìm màn hình Captcha V2 trong tối đa 30s (10 chu kỳ * 3s)
+    v2_detected = False
+    for poll_step in range(1, 11):
+        if not is_app_running(pkg):
+            launch_roblox_to_game(pkg)
+            time.sleep(4)
+
+        cap_res = detect_in_app_captcha(pkg, auto_solve_v2=False)
         if cap_res.get("detected") and cap_res.get("type") == "CAPTCHAV2":
-            if cap_res.get("solved"):
-                add_log(f"[{pkg[-12:]}] {G}[✓ CAPTCHA V2] Tự giải thành công 'Nhấn và Giữ' lần {attempt}!{RESET}")
-                if states and pkg in states:
-                    states[pkg]['is_blocked'] = False
-                    states[pkg]['captcha_type'] = None
-                    states[pkg]['block_reason'] = ''
-                    states[pkg]['text'] = 'Đã Giải V2 -> Vào Game'
-                    states[pkg]['color'] = G
-                return True
-            else:
-                add_log(f"[{pkg[-12:]}] {Y}[!] Thử lần {attempt} chưa qua, thử lại...{RESET}")
-                time.sleep(2)
-        elif not cap_res.get("detected"):
-            add_log(f"[{pkg[-12:]}] {G}[✓ CAPTCHA V2] Màn hình Captcha V2 đã biến mất! Acc đã sạch.{RESET}")
+            v2_detected = True
+            add_log(f"[{pkg[-12:]}] {G}[CAPTCHA V2] Đã phát hiện màn hình 'Nhấn và Giữ' (sau {10 + poll_step*3}s)! Bắt đầu giải...{RESET}")
+            break
+        elif cap_res.get("detected") and cap_res.get("type") == "CAPTCHA_V1":
+            add_log(f"[{pkg[-12:]}] {R}[CAPTCHA V1] Phát hiện câu đố Arkose (không thể tự giải), tắt app chờ...{RESET}")
+            _kill_pkg(pkg)
+            return False
+            
+        time.sleep(3)
+
+    if not v2_detected:
+        cookie = extract_roblox_cookie(pkg)
+        if cookie:
+            try:
+                res = check_roblox_account_status(cookie)
+                if res.get('status') == 'OK':
+                    add_log(f"[{pkg[-12:]}] {G}[✓ CAPTCHA V2] Kiểm tra API: Acc đã sạch hoàn toàn!{RESET}")
+                    if states and pkg in states:
+                        states[pkg]['is_blocked'] = False
+                        states[pkg]['captcha_type'] = None
+                        states[pkg]['block_reason'] = ''
+                        states[pkg]['text'] = 'Acc Sạch -> Rejoin'
+                        states[pkg]['color'] = G
+                    return True
+            except:
+                pass
+        add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Hết 30s chưa thấy nút hiển thị, tạm tắt app chờ chu kỳ sau ({CHECK_ACC_TIME_BLOCKED}s)...{RESET}")
+        _kill_pkg(pkg)
+        return False
+
+    # Khi đã phát hiện màn hình Captcha V2, thử nhấn giữ 16s tối đa 3 lần
+    for attempt in range(1, 4):
+        solve_res = detect_in_app_captcha(pkg, auto_solve_v2=True, attempt=attempt)
+        if solve_res.get("solved"):
+            add_log(f"[{pkg[-12:]}] {G}[✓ CAPTCHA V2] Đã giữ nút 16s thành công lần {attempt}! Acc đã sạch.{RESET}")
             if states and pkg in states:
                 states[pkg]['is_blocked'] = False
                 states[pkg]['captcha_type'] = None
                 states[pkg]['block_reason'] = ''
+                states[pkg]['text'] = 'Đã Giải V2 -> Vào Game'
+                states[pkg]['color'] = G
             return True
-            
-    add_log(f"[{pkg[-12:]}] {R}[CAPTCHA V2] Đã thử 3 lần chưa qua. Tạm tắt app và chờ chu kỳ re-check ({CHECK_ACC_TIME_BLOCKED}s)...{RESET}")
+        else:
+            add_log(f"[{pkg[-12:]}] {Y}[!] Giữ nút lần {attempt} chưa vượt qua, đang thử lại với tọa độ mới...{RESET}")
+            time.sleep(3)
+
+    add_log(f"[{pkg[-12:]}] {R}[CAPTCHA V2] Đã thử giữ nút 3 lần chưa thành công. Tắt app chờ chu kỳ sau ({CHECK_ACC_TIME_BLOCKED}s)...{RESET}")
     _kill_pkg(pkg)
     return False
 
@@ -3367,7 +3720,29 @@ def account_captcha_check_menu():
             except: pass
         elif c == '3':
             fix_tty()
-            raw_c = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+            cookies_in_file, f_path = load_cookies_from_download()
+            raw_c = ""
+            if cookies_in_file and f_path:
+                print(f"\n{GREEN_MINT}[✓] Tìm thấy {len(cookies_in_file)} cookie trong file: {GOLD_NEON}{f_path}{RESET}")
+                print(f"  [{C}1{RESET}] {BOLD}{G}Kiểm tra TẤT CẢ ({len(cookies_in_file)}) Cookie từ file cookie.txt{RESET} {DIM}(Nhấn Enter chọn ngay){RESET}")
+                print(f"  [{C}2{RESET}] {W}Nhập / Dán Cookie thủ công bằng tay{RESET}")
+                fix_tty()
+                sub_opt = safe_input(f"\n{M}Chọn [1/2, mặc định 1]: {RESET}").strip()
+                if sub_opt in ['', '1']:
+                    print(f"\n{Y}[*] Đang gửi yêu cầu kiểm tra trạng thái {len(cookies_in_file)} Cookie tới Roblox API...{RESET}")
+                    for idx_c, ck in enumerate(cookies_in_file, 1):
+                        res = check_roblox_account_status(ck)
+                        print_account_check_result(f"Cookie #{idx_c}/{len(cookies_in_file)} từ {os.path.basename(f_path)}", ck, res)
+                    fix_tty()
+                    print(f"\n{Y}Bấm Enter để tiếp tục...{RESET}")
+                    try: input()
+                    except: pass
+                    continue
+                else:
+                    raw_c = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+            else:
+                raw_c = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}").strip()
+
             if not raw_c:
                 print(f"{Y}[*] Đã hủy.{RESET}")
                 time.sleep(1.5)
@@ -3828,6 +4203,9 @@ def load_bacon_api_key():
         BACON_API_KEY = env_k.strip()
         return BACON_API_KEY
     search_files = [
+        get_download_save_path("bacon_key.txt"),
+        "/storage/emulated/0/Download/bacon_key.txt",
+        "/sdcard/Download/bacon_key.txt",
         "bacon_key.txt",
         "/data/media/0/bacon_key.txt",
         "/sdcard/bacon_key.txt",
@@ -3850,8 +4228,10 @@ def save_bacon_api_key(key):
     global BACON_API_KEY
     BACON_API_KEY = key.strip()
     search_files = [
+        get_download_save_path("bacon_key.txt"),
+        "/storage/emulated/0/Download/bacon_key.txt",
+        "/sdcard/Download/bacon_key.txt",
         "bacon_key.txt",
-        "/data/media/0/bacon_key.txt",
         "/sdcard/bacon_key.txt"
     ]
     for p in search_files:
@@ -4730,22 +5110,27 @@ def main():
         raw_sc = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Tắt")
         sc_display = f"{GOLD_NEON}[{raw_sc}{def_tag}]{RESET}"
 
+        W = get_terminal_width()
+        inner_w = W - 2
+
+        menu_title = " ⚡ MENU ĐIỀU KHIỂN "
+        dashes_m = max(2, inner_w - visible_len(menu_title) - 1)
+        print(f"{CYAN_NEON}╭─{menu_title}{'─' * dashes_m}╮{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi('', inner_w)}{CYAN_NEON}│{RESET}")
         main_items = [
-            f"   {BOLD}{C}[1]{RESET} {W}Quét & Chọn Package Roblox{RESET}     {vip_tag}",
-            f"   {BOLD}{C}[2]{RESET} {W}Cài Đặt Hệ Thống & Script{RESET}      {sc_display}",
-            f"   {BOLD}{C}[3]{RESET} {W}Bắt Đầu Auto Rejoin{RESET}             {BLUE_ICE}(Live Dashboard){RESET}",
-            f"   {BOLD}{C}[4]{RESET} {W}Login Cookie Vào App{RESET}            {PURPLE_NEON}(Direct Inject){RESET}",
-            f"   {BOLD}{C}[5]{RESET} {W}Quản Lý Delta Key & Bypass{RESET}      {GOLD_NEON}(Bacon API){RESET}",
-            f"   {BOLD}{C}[6]{RESET} {W}Kiểm Tra License Delta{RESET}          {GRAY_LIGHT}(Test File){RESET}",
-            f"   {BOLD}{C}[7]{RESET} {W}Trạng Thái Acc / Captcha{RESET}        {PINK_NEON}(Diagnostic){RESET}",
+            f"   {BOLD}{C}[1]{RESET} {W}Quét & Chọn Package Roblox{RESET}    {vip_tag}",
+            f"   {BOLD}{C}[2]{RESET} {W}Cài Đặt Hệ Thống & Script{RESET}     {sc_display}",
+            f"   {BOLD}{C}[3]{RESET} {W}Bắt Đầu Auto Rejoin{RESET}            {BLUE_ICE}(Live Dashboard){RESET}",
+            f"   {BOLD}{C}[4]{RESET} {W}Login Cookie Vào App{RESET}           {PURPLE_NEON}(Direct Inject){RESET}",
+            f"   {BOLD}{C}[5]{RESET} {W}Quản Lý Delta Key & Bypass{RESET}     {GOLD_NEON}(Bacon API){RESET}",
+            f"   {BOLD}{C}[6]{RESET} {W}Kiểm Tra License Delta{RESET}         {GRAY_LIGHT}(Test File){RESET}",
+            f"   {BOLD}{C}[7]{RESET} {W}Trạng Thái Acc / Captcha{RESET}       {PINK_NEON}(Diagnostic){RESET}",
             f"   {BOLD}{R}[8]{RESET} {W}Thoát Chương Trình{RESET}"
         ]
-        print(f"{CYAN_NEON}╭─────────────────────────────── ⚡ MENU ĐIỀU KHIỂN ────────────────────────────────────╮{RESET}")
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi('', 86)}{CYAN_NEON}│{RESET}")
         for mi in main_items:
-            print(f"{CYAN_NEON}│{RESET}{fit_ansi(mi, 86)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi('', 86)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
+            print(f"{CYAN_NEON}│{RESET}{fit_ansi(mi, inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi('', inner_w)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
 # box printed above
         try:
             fix_tty()
