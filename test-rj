@@ -90,6 +90,23 @@ def safe_root(cmd, timeout=15):
         pass
     # KHÔNG gọi fix_tty() từ background thread - tránh corrupt terminal
 
+def _run_root_capture(command, timeout=15):
+    """Chạy một lệnh root không qua shell lồng nhau và giữ lại mã lỗi thật."""
+    try:
+        result = subprocess.run(
+            ["su", "-c", command],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout
+        )
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return -1, "", f"timeout sau {timeout}s"
+    except Exception as exc:
+        return -1, "", str(exc)
+
 
 system_logs = []
 
@@ -124,10 +141,10 @@ G = '\033[92m'        # Green sáng
 Y = '\033[93m'        # Yellow sáng
 R = '\033[91m'        # Red sáng
 M = '\033[95m'        # Magenta sáng
-W = '\033[97m'        # White sáng
+WHITE = W = '\033[97m'        # White sáng
 RESET = '\033[0m'     # Reset màu
 
-# Bảng màu mở rộng Modern Neon (256-color mượt mà trên Termux)
+# Bảng màu mở rộng Modern Cyberpunk Sunset Gradient (256-color mượt mà trên Termux)
 CYAN_NEON = '\033[38;5;51m'
 PURPLE_NEON = '\033[38;5;141m'
 PINK_NEON = '\033[38;5;205m'
@@ -136,6 +153,19 @@ GREEN_MINT = '\033[38;5;48m'
 BLUE_ICE = '\033[38;5;39m'
 GRAY_DARK = '\033[38;5;240m'
 GRAY_LIGHT = '\033[38;5;250m'
+
+# Bảng màu chuyển sắc HuDy Gradient & High-End Dashboard
+C_CYAN_GLOW   = '\033[38;5;51m'   # Electric Cyan Glow
+C_CYAN_DEEP   = '\033[38;5;45m'   # Deep Ice Blue
+C_VIOLET      = '\033[38;5;141m'  # Neon Amethyst
+C_MAGENTA     = '\033[38;5;177m'  # Orchid Magenta
+C_HOT_PINK    = '\033[38;5;206m'  # Hot Pink
+C_SUNSET_ROSE = '\033[38;5;213m'  # Sunset Rose
+C_GOLD        = '\033[38;5;220m'  # Neon Gold
+C_MINT        = '\033[38;5;48m'   # Cyber Mint
+C_ICE         = '\033[38;5;39m'   # Sky Ice
+C_GRAY_DARK   = '\033[38;5;240m'
+C_GRAY_LIGHT  = '\033[38;5;250m'
 
 # =====================================================================
 # BIẾN TOÀN CỤC
@@ -226,6 +256,10 @@ def get_download_dirs():
         dirs.append(cwd)
     return dirs
 
+def is_android_env():
+    """Kiểm tra thiết bị có phải môi trường Android / Termux không."""
+    return os.path.exists("/storage/emulated/0") or os.path.exists("/sdcard") or os.path.exists("/data/data/com.termux")
+
 def get_primary_download_dir():
     """Trả về thư mục Download chính ưu tiên /storage/emulated/0/Download."""
     for d in ["/storage/emulated/0/Download", "/sdcard/Download"]:
@@ -240,6 +274,93 @@ def get_primary_download_dir():
     if os.path.exists("/storage/emulated/0"):
         return "/storage/emulated/0/Download"
     return os.path.dirname(os.path.abspath(__file__))
+
+def write_file_safe(file_path, content):
+    """Ghi file an toàn trên Mobile Android, tự fallback qua root su + chmod 777 nếu bị giới hạn quyền."""
+    try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        try:
+            os.chmod(file_path, 0o777)
+        except:
+            pass
+        return True
+    except Exception:
+        try:
+            safe_root(f"mkdir -p \"$(dirname \"{file_path}\")\"", timeout=5)
+            b64_content = base64.b64encode(content.encode('utf-8')).decode('ascii')
+            cmd = f"echo '{b64_content}' | base64 -d > '{file_path}' && chmod 777 '{file_path}'"
+            code, _, _ = _run_root_capture(cmd, timeout=5)
+            return code == 0
+        except:
+            return False
+
+def init_download_workspace():
+    """
+    Tự động khởi tạo đầy đủ các file cần thiết trên Mobile tại /storage/emulated/0/Download:
+      1. hudy.py (bản sao script để dễ mở trong MT Manager / ZArchiver / chạy lại)
+      2. cookie.txt (file mẫu dán cookie Roblox)
+      3. svv.txt (file mẫu dán link VIP Server)
+      4. hudy_config.json (file cấu hình hệ thống)
+    """
+    if not is_android_env():
+        return
+
+    primary_dir = "/storage/emulated/0/Download"
+    try:
+        os.makedirs(primary_dir, exist_ok=True)
+    except:
+        pass
+    safe_root(f"mkdir -p '{primary_dir}' && chmod 777 '{primary_dir}'", timeout=5)
+
+    # 1. Tự sao chép hudy.py vào Download trên mobile nếu chạy từ thư mục khác
+    try:
+        cur_file = os.path.abspath(__file__)
+        target_hudy = os.path.join(primary_dir, "hudy.py")
+        if os.path.abspath(target_hudy) != cur_file:
+            try:
+                with open(cur_file, "r", encoding="utf-8", errors="ignore") as f_in:
+                    src_code = f_in.read()
+                write_file_safe(target_hudy, src_code)
+                safe_root(f"chmod 777 '{target_hudy}'", timeout=5)
+            except:
+                safe_root(f"cp '{cur_file}' '{target_hudy}' && chmod 777 '{target_hudy}'", timeout=5)
+    except:
+        pass
+
+    # 2. Tạo sẵn cookie.txt nếu chưa có
+    target_cookie = os.path.join(primary_dir, "cookie.txt")
+    if not os.path.exists(target_cookie):
+        cookie_template = (
+            "# =====================================================================\n"
+            "# DANH SACH COOKIE ROBLOX (.ROBLOSECURITY)\n"
+            "# Dan Cookie vao ben duoi (Moi account 1 dong).\n"
+            "# Tool se tu dong doc va nap vao cac app Roblox clone.\n"
+            "# =====================================================================\n"
+        )
+        write_file_safe(target_cookie, cookie_template)
+        safe_root(f"chmod 777 '{target_cookie}'", timeout=5)
+
+    # 3. Tạo sẵn svv.txt nếu chưa có
+    target_svv = os.path.join(primary_dir, "svv.txt")
+    if not os.path.exists(target_svv):
+        svv_template = (
+            "# =====================================================================\n"
+            "# LINK SERVER VIP / PRIVATE SERVER ROBLOX (SVV)\n"
+            "# Dan link server rieng hoac link share vao ben duoi:\n"
+            "# Vi du: https://www.roblox.com/games/4520749081?privateServerLinkCode=...\n"
+            "# Hoac: https://roblox.com/share?code=...&type=Server\n"
+            "# =====================================================================\n"
+        )
+        write_file_safe(target_svv, svv_template)
+        safe_root(f"chmod 777 '{target_svv}'", timeout=5)
+
+    # 4. Tạo sẵn hudy_config.json nếu chưa có
+    target_cfg = os.path.join(primary_dir, "hudy_config.json")
+    if not os.path.exists(target_cfg):
+        save_settings()
+        safe_root(f"chmod 777 '{target_cfg}'", timeout=5)
 
 def find_file_in_download(filenames):
     """Tìm file trong các đường dẫn Download (trả về path đầu tiên tìm thấy hoặc None)."""
@@ -311,10 +432,9 @@ def save_cookie_to_download(cookie, append=True):
                 existing.append(clean_c)
             else:
                 existing = [clean_c]
-        with open(save_path, "w", encoding="utf-8") as f:
-            for c in existing:
-                f.write(c + "\n")
-        return save_path
+        content = "\n".join(existing) + "\n"
+        if write_file_safe(save_path, content):
+            return save_path
     except:
         return None
 
@@ -337,12 +457,9 @@ def load_svv_link_from_file():
 def save_svv_link_to_file(link):
     """Lưu link VIP / Private Server vào file svv.txt tại Download."""
     save_path = get_download_save_path("svv.txt")
-    try:
-        with open(save_path, "w", encoding="utf-8") as f:
-            f.write(link.strip() + "\n")
+    if write_file_safe(save_path, link.strip() + "\n"):
         return save_path
-    except:
-        return None
+    return None
 
 def get_config_file_path():
     """Tìm file config trong Download hoặc thư mục script."""
@@ -404,23 +521,17 @@ def save_settings():
             "join_server_mode": JOIN_SERVER_MODE,
             "join_server_link": JOIN_SERVER_LINK,
         }
+        content = json.dumps(data, indent=4, ensure_ascii=False)
         primary_cfg = get_download_save_path("hudy_config.json")
-        try:
-            with open(primary_cfg, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-        except:
-            pass
+        write_file_safe(primary_cfg, content)
         script_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hudy_config.json")
         if script_cfg != primary_cfg:
-            try:
-                with open(script_cfg, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
-            except:
-                pass
+            write_file_safe(script_cfg, content)
     except:
         pass
 
 load_settings()
+init_download_workspace()
 
 def load_omocaptcha_key():
     global OMOCAPTCHA_KEY
@@ -557,12 +668,13 @@ def build_roblox_launch_uri(pkg=None, auth_ticket=None):
 import shutil
 
 def get_terminal_width():
-    """Tự động phát hiện độ rộng terminal (tối ưu mượt mà cho cả Màn hình Đứng và Ngang)."""
+    """Tự động phát hiện độ rộng terminal, mở rộng đầy khung hình cho cả Màn hình Đứng và Ngang."""
     try:
-        cols, _ = shutil.get_terminal_size(fallback=(68, 24))
-        return max(54, min(cols - 1, 80))
+        cols, _ = shutil.get_terminal_size(fallback=(72, 24))
+        # Cho phép mở rộng đầy đủ theo độ rộng màn hình (tối đa 160 ký tự trên màn hình ngang)
+        return max(54, min(cols - 1, 160))
     except:
-        return 66
+        return 68
 
 def visible_len(s):
     """Tính độ dài hiển thị thực tế của chuỗi, bỏ qua các mã màu ANSI."""
@@ -577,30 +689,77 @@ def fit_ansi(s, width):
     return str(s) + (" " * (width - vlen))
 
 def print_banner():
-    banner = f"""
-  {CYAN_NEON}██╗  ██╗██╗   ██╗██████╗ ██╗   ██╗{RESET}
-  {CYAN_NEON}██║  ██║██║   ██║██╔══██╗╚██╗ ██╔╝{RESET}
-  {PURPLE_NEON}███████║██║   ██║██║  ██║ ╚████╔╝ {BOLD}{GOLD_NEON}HUDY TOOL REJOIN{RESET}
-  {PURPLE_NEON}██╔══██║██║   ██║██║  ██║  ╚██╔╝  {PINK_NEON}Version: 3.5 Core High-Speed{RESET}
-  {PINK_NEON}██║  ██║╚██████╔╝██████╔╝   ██║   {GREEN_MINT}Author: HuDy | Status: Active{RESET}
-  {PINK_NEON}╚═╝  ╚═╝ ╚═════╝ ╚═════╝    ╚═╝   {GRAY_LIGHT}Anti-Hang & Auto-Bypass{RESET}
-"""
-    print(banner)
-    W = get_terminal_width()
-    inner_w = W - 2
-    if inner_w >= 68:
-        sub = f" {BOLD}{W}HuDy Automation Core{RESET} {GRAY_DARK}•{RESET} {GREEN_MINT}Anti-Hang{RESET} {GRAY_DARK}•{RESET} {GOLD_NEON}Auto-Bypass{RESET} {GRAY_DARK}•{RESET} {CYAN_NEON}Auto-Inject{RESET} {GRAY_DARK}•{RESET} {PURPLE_NEON}CaptchaV2{RESET}"
+    term_w = get_terminal_width()
+    inner_w = term_w - 2
+
+    # Logo HuDy 6 tầng chuyển sắc Cyberpunk Sunset Neon Gradient cực đẹp
+    T1 = '\033[38;5;51m'   # Tầng 1: Diamond Cyan (Xanh ngọc sáng chói)
+    T2 = '\033[38;5;45m'   # Tầng 2: Deep Ice Blue (Xanh băng sâu lắng)
+    T3 = '\033[38;5;141m'  # Tầng 3: Neon Amethyst (Tím thạch anh rực rỡ)
+    T4 = '\033[38;5;177m'  # Tầng 4: Orchid Magenta (Hồng ánh tím quý phái)
+    T5 = '\033[38;5;206m'  # Tầng 5: Hot Neon Pink (Hồng neon đậm đà)
+    T6 = '\033[38;5;220m'  # Tầng 6: Sunset Neon Gold (Vàng hoàng hôn rực rỡ)
+
+    logo_6 = [
+        f"{T1}  ██╗  ██╗  ██╗   ██╗  ██████╗   ██╗   ██╗{RESET}",
+        f"{T2}  ██║  ██║  ██║   ██║  ██╔══██╗  ╚██╗ ██╔╝{RESET}",
+        f"{T3}  ███████║  ██║   ██║  ██║  ██║   ╚████╔╝ {RESET}",
+        f"{T4}  ██╔══██║  ██║   ██║  ██║  ██║    ╚██╔╝  {RESET}",
+        f"{T5}  ██║  ██║  ╚██████╔╝  ██████╔╝     ██║   {RESET}",
+        f"{T6}  ╚═╝  ╚═╝   ╚═════╝   ╚═════╝      ╚═╝   {RESET}"
+    ]
+
+    if term_w >= 85:
+        # Chế độ xoay ngang (Landscape): Khung thẻ Cyber Card 6 tầng đối xứng 1-1 với Logo
+        inner_badge_w = min(54, term_w - 44 - 4)
+        
+        b_l1 = f" ⚡ {BOLD}{T1}HUDY REJOIN AUTOMATION{RESET}  {T5}[PRO V3.5]{RESET}"
+        b_l2 = f" 👑 {C_GRAY_LIGHT}Tác Giả:{RESET} {C_MINT}HuDy{RESET}   │ 🛡️ {C_GRAY_LIGHT}Anti-Hang:{RESET} {C_MINT}BẬT 24/7{RESET}"
+        b_l3 = f" 🚀 {C_GRAY_LIGHT}Chế Độ:{RESET}  {C_ICE}Multi-Acc{RESET} │ 🌐 {C_GRAY_LIGHT}CaptchaV2:{RESET} {T6}Đa Ngôn Ngữ{RESET}"
+
+        side_badge = [
+            f"{T2}╭" + "─" * (inner_badge_w) + f"╮{RESET}",
+            f"{T2}│{RESET}" + fit_ansi(b_l1, inner_badge_w) + f"{T2}│{RESET}",
+            f"{T3}├" + "─" * (inner_badge_w) + f"┤{RESET}",
+            f"{T4}│{RESET}" + fit_ansi(b_l2, inner_badge_w) + f"{T4}│{RESET}",
+            f"{T5}│{RESET}" + fit_ansi(b_l3, inner_badge_w) + f"{T5}│{RESET}",
+            f"{T6}╰" + "─" * (inner_badge_w) + f"╯{RESET}"
+        ]
+        print()
+        for i in range(6):
+            print(f"{logo_6[i]}    {side_badge[i]}")
     else:
-        sub = f" {BOLD}{W}HuDy Core{RESET} {GRAY_DARK}•{RESET} {GREEN_MINT}Anti-Hang{RESET} {GRAY_DARK}•{RESET} {GOLD_NEON}Bypass{RESET} {GRAY_DARK}•{RESET} {CYAN_NEON}Auto-Inject{RESET}"
-    print(f"{CYAN_NEON}╭{'─' * inner_w}╮{RESET}")
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(sub, inner_w)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
+        # Chế độ đứng (Portrait): 6 tầng nhãn thông tin xếp gọn gàng bên phải
+        badge_lines = [
+            f" {BOLD}{T1}HUDY REJOIN [V3.5]{RESET}",
+            f" {T3}Core High-Speed{RESET}",
+            f" {C_MINT}Tác Giả: HuDy ●{RESET}",
+            f" {T4}Anti-Hang: BẬT{RESET}",
+            f" {T5}Auto-Bypass: 24/7{RESET}",
+            f" {T6}Captcha V2: Đa Ngôn Ngữ{RESET}",
+        ]
+        print()
+        for i in range(6):
+            print(f"{logo_6[i]}  {badge_lines[i]}")
+
+    # Thanh Sub-bar bên dưới Logo
+    if inner_w >= 85:
+        sub = f" {BOLD}{WHITE}HuDy Automation Core{RESET} {C_GRAY_DARK}•{RESET} {C_MINT}Anti-Hang{RESET} {C_GRAY_DARK}•{RESET} {T6}Auto-Bypass{RESET} {C_GRAY_DARK}•{RESET} {T1}Auto-Inject{RESET} {C_GRAY_DARK}•{RESET} {T3}Multi-Lang CaptchaV2{RESET} {C_GRAY_DARK}•{RESET} {T5}VIP Server{RESET}"
+    elif inner_w >= 68:
+        sub = f" {BOLD}{WHITE}HuDy Automation Core{RESET} {C_GRAY_DARK}•{RESET} {C_MINT}Anti-Hang{RESET} {C_GRAY_DARK}•{RESET} {T6}Auto-Bypass{RESET} {C_GRAY_DARK}•{RESET} {T1}Auto-Inject{RESET} {C_GRAY_DARK}•{RESET} {T3}CaptchaV2{RESET}"
+    else:
+        sub = f" {BOLD}{WHITE}HuDy Core{RESET} {C_GRAY_DARK}•{RESET} {C_MINT}Anti-Hang{RESET} {C_GRAY_DARK}•{RESET} {T6}Bypass{RESET} {C_GRAY_DARK}•{RESET} {T1}Auto-Inject{RESET}"
+
+    print(f"{T2}╭{'─' * inner_w}╮{RESET}")
+    print(f"{T2}│{RESET}{fit_ansi(sub, inner_w)}{T2}│{RESET}")
+    print(f"{T2}╰{'─' * inner_w}╯{RESET}")
+
 
 def print_dashboard(states):
     clear_screen()
     print_banner()
-    W = get_terminal_width()
-    inner_w = W - 2
+    term_w = get_terminal_width()
+    inner_w = term_w - 2
 
     cpu_str = get_cpu_usage()
     ram_str = get_memory_usage()
@@ -609,46 +768,72 @@ def print_dashboard(states):
     restart_display = f"{kill_all_time}m" if kill_all_time > 0 else "Tắt"
     v2_display = "Bật" if AUTO_SOLVE_CAPTCHA_V2 == "Enable" else "Tắt"
     join_display = "Bật (VIP)" if JOIN_SERVER_MODE == "Enable" else "Tắt"
-    v2_col = GREEN_MINT if v2_display == 'Bật' else R
-    join_col = PURPLE_NEON if join_display != 'Tắt' else GRAY_LIGHT
-    
-    # 1. Khung Thông Số Hệ Thống & Cấu Hình
+    v2_col = C_MINT if v2_display == 'Bật' else R
+    join_col = C_VIOLET if join_display != 'Tắt' else C_GRAY_LIGHT
+
+    # 1. Khung Thông Số Hệ Thống & Cấu Hình (Căn lề lưới đối xứng hoàn hảo 100%)
     title_box = " ⚙️ THÔNG SỐ HỆ THỐNG & CẤU HÌNH "
     dashes_top = max(2, inner_w - visible_len(title_box) - 1)
-    print(f"{CYAN_NEON}╭─{title_box}{'─' * dashes_top}╮{RESET}")
-    
-    if inner_w >= 70:
-        info1 = f" CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ Place: {GOLD_NEON}{pid_display:<11}{RESET} │ CaptV2: {v2_col}{v2_display:<5}{RESET}"
-        info2 = f" Restart: {Y}{restart_display:<5}{RESET} │ Cookie: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}   │ JoinSv: {join_col}{join_display:<9}{RESET} │ Script: {PINK_NEON}{cur_sc_name}{RESET}"
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info1, inner_w)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info2, inner_w)}{CYAN_NEON}│{RESET}")
+    print(f"{C_CYAN_DEEP}╭─{title_box}{'─' * dashes_top}╮{RESET}")
+
+    if inner_w >= 75:
+        # Bố trí 4 cột đều nhau tuyệt đối trên màn hình ngang
+        w_c1 = (inner_w - 7) // 4
+        w_c2 = (inner_w - 7) // 4
+        w_c3 = (inner_w - 7) // 4
+        w_c4 = inner_w - 7 - (w_c1 + w_c2 + w_c3)
+
+        c1_1 = f" CPU: {C_MINT}{cpu_str}{RESET}"
+        c1_2 = f" RAM: {C_ICE}{ram_str}{RESET}"
+        c1_3 = f" Place: {C_GOLD}{pid_display}{RESET}"
+        c1_4 = f" CaptV2: {v2_col}{v2_display}{RESET}"
+
+        c2_1 = f" Restart: {Y}{restart_display}{RESET}"
+        c2_2 = f" Cookie: {C_MINT}{CHECK_ACC_TIME_BLOCKED}s{RESET}"
+        c2_3 = f" JoinSv: {join_col}{join_display}{RESET}"
+        c2_4 = f" Script: {C_HOT_PINK}{cur_sc_name}{RESET}"
+
+        row1 = f" {fit_ansi(c1_1, w_c1 - 1)}│ {fit_ansi(c1_2, w_c2 - 1)}│ {fit_ansi(c1_3, w_c3 - 1)}│ {fit_ansi(c1_4, w_c4 - 1)}"
+        row2 = f" {fit_ansi(c2_1, w_c1 - 1)}│ {fit_ansi(c2_2, w_c2 - 1)}│ {fit_ansi(c2_3, w_c3 - 1)}│ {fit_ansi(c2_4, w_c4 - 1)}"
+
+        print(f"{C_CYAN_DEEP}│{RESET}{fit_ansi(row1, inner_w)}{C_CYAN_DEEP}│{RESET}")
+        print(f"{C_CYAN_DEEP}│{RESET}{fit_ansi(row2, inner_w)}{C_CYAN_DEEP}│{RESET}")
     else:
-        info1 = f" CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ Place: {GOLD_NEON}{pid_display}{RESET}"
-        info2 = f" Restart: {Y}{restart_display:<5}{RESET} │ Cookie: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET} │ CaptV2: {v2_col}{v2_display}{RESET}"
-        info3 = f" Script: {PINK_NEON}{cur_sc_name}{RESET} │ JoinSv: {join_col}{join_display}{RESET}"
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info1, inner_w)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info2, inner_w)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(info3, inner_w)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
-    
-    # 2. Khung Tiến Trình Tài Khoản (Tính toán cột chính xác theo độ rộng màn hình)
+        # Bố trí 2 cột đều nhau trên màn hình đứng hẹp
+        w_c1 = (inner_w - 3) // 2
+        w_c2 = inner_w - 3 - w_c1
+
+        row1 = f" {fit_ansi(f'CPU: {C_MINT}{cpu_str}{RESET}', w_c1 - 1)}│ {fit_ansi(f'RAM: {C_ICE}{ram_str}{RESET}', w_c2 - 1)}"
+        row2 = f" {fit_ansi(f'Place: {C_GOLD}{pid_display}{RESET}', w_c1 - 1)}│ {fit_ansi(f'CaptV2: {v2_col}{v2_display}{RESET}', w_c2 - 1)}"
+        row3 = f" {fit_ansi(f'Restart: {Y}{restart_display}{RESET}', w_c1 - 1)}│ {fit_ansi(f'Cookie: {C_MINT}{CHECK_ACC_TIME_BLOCKED}s{RESET}', w_c2 - 1)}"
+        row4 = f" {fit_ansi(f'JoinSv: {join_col}{join_display}{RESET}', w_c1 - 1)}│ {fit_ansi(f'Script: {C_HOT_PINK}{cur_sc_name}{RESET}', w_c2 - 1)}"
+        for r in [row1, row2, row3, row4]:
+            print(f"{C_CYAN_DEEP}│{RESET}{fit_ansi(r, inner_w)}{C_CYAN_DEEP}│{RESET}")
+
+    print(f"{C_CYAN_DEEP}╰{'─' * inner_w}╯{RESET}")
+
+    # 2. Khung Tiến Trình Tài Khoản (Tính toán cột chính xác tuyệt đối theo độ rộng màn hình)
     pkg_cnt = len(selected_packages)
     acc_title = f" 🎮 TIẾN TRÌNH TÀI KHOẢN ({pkg_cnt} Package) "
     dashes_acc = max(2, inner_w - visible_len(acc_title) - 1)
-    print(f"{CYAN_NEON}╭─{acc_title}{'─' * dashes_acc}╮{RESET}")
-    
-    if inner_w >= 70:
+    print(f"{C_CYAN_DEEP}╭─{acc_title}{'─' * dashes_acc}╮{RESET}")
+
+    if inner_w >= 85:
         w_pkg = int(inner_w * 0.35)
-        w_user = int(inner_w * 0.25)
-        w_status = inner_w - w_pkg - w_user - 7
+        w_user = int(inner_w * 0.22)
+        w_status = inner_w - w_pkg - w_user - 8
+    elif inner_w >= 70:
+        w_pkg = int(inner_w * 0.35)
+        w_user = int(inner_w * 0.22)
+        w_status = inner_w - w_pkg - w_user - 8
     else:
         w_pkg = 20
         w_user = 13
-        w_status = max(14, inner_w - w_pkg - w_user - 7)
+        w_status = max(14, inner_w - w_pkg - w_user - 8)
 
     hdr_str = f" {BOLD}{'Package':<{w_pkg}} │ {'Username':<{w_user}} │ {'Trạng Thái':<{w_status}}{RESET} "
-    print(f"{CYAN_NEON}│{RESET}{fit_ansi(hdr_str, inner_w)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}├{'─' * (w_pkg + 2)}┼{'─' * (w_user + 2)}┼{'─' * (w_status + 1)}┤{RESET}")
+    print(f"{C_CYAN_DEEP}│{RESET}{fit_ansi(hdr_str, inner_w)}{C_CYAN_DEEP}│{RESET}")
+    print(f"{C_CYAN_DEEP}├{'─' * (w_pkg + 2)}┼{'─' * (w_user + 2)}┼{'─' * (w_status + 2)}┤{RESET}")
     for item in selected_packages:
         pkg = item['pkg']
         s_pkg = pkg if len(pkg) <= w_pkg else pkg[:max(1, w_pkg - 3)] + "..."
@@ -657,20 +842,20 @@ def print_dashboard(states):
         txt = states[pkg]['text']
         if len(txt) > w_status: txt = txt[:max(1, w_status - 3)] + "..."
         col = states[pkg]['color']
-        row_str = f" {s_pkg:<{w_pkg}} │ {W}{s_name:<{w_user}}{RESET} │ {col}{txt:<{w_status}}{RESET} "
-        print(f"{CYAN_NEON}│{RESET}{fit_ansi(row_str, inner_w)}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰{'─' * (w_pkg + 2)}┴{'─' * (w_user + 2)}┴{'─' * (w_status + 1)}╯{RESET}")
-    
-    print(f" {GREEN_MINT}●{RESET} {BOLD}Đang chạy Live Dashboard...{RESET} {GRAY_LIGHT}(Bấm Ctrl+C để về Menu){RESET}")
-    
+        row_str = f" {s_pkg:<{w_pkg}} │ {WHITE}{s_name:<{w_user}}{RESET} │ {col}{txt:<{w_status}}{RESET} "
+        print(f"{C_CYAN_DEEP}│{RESET}{fit_ansi(row_str, inner_w)}{C_CYAN_DEEP}│{RESET}")
+    print(f"{C_CYAN_DEEP}╰{'─' * (w_pkg + 2)}┴{'─' * (w_user + 2)}┴{'─' * (w_status + 2)}╯{RESET}")
+
+    print(f" {C_MINT}●{RESET} {BOLD}Đang chạy Live Dashboard...{RESET} {C_GRAY_LIGHT}(Bấm Ctrl+C để về Menu){RESET}")
+
     # 3. Khung Nhật Ký Hệ Thống Gần Đây
     if system_logs:
         log_title = " 📋 NHẬT KÝ HỆ THỐNG GẦN ĐÂY "
         dashes_log = max(2, inner_w - visible_len(log_title) - 1)
-        print(f"{CYAN_NEON}╭─{log_title}{'─' * dashes_log}╮{RESET}")
+        print(f"{C_CYAN_DEEP}╭─{log_title}{'─' * dashes_log}╮{RESET}")
         for log in system_logs[-8:]:
-            print(f"{CYAN_NEON}│{RESET}{fit_ansi(' ' + log, inner_w)}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}╰{'─' * inner_w}╯{RESET}")
+            print(f"{C_CYAN_DEEP}│{RESET}{fit_ansi(' ' + log, inner_w)}{C_CYAN_DEEP}│{RESET}")
+        print(f"{C_CYAN_DEEP}╰{'─' * inner_w}╯{RESET}")
 
 # =====================================================================
 # CÀI ĐẶT & AUTO INJECT SCRIPT
@@ -679,8 +864,8 @@ def select_auto_inject_script_menu():
     global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE
     clear_screen()
     print_banner()
-    W = get_terminal_width()
-    inner_w = W - 2
+    term_w = get_terminal_width()
+    inner_w = term_w - 2
 
     sc_title = " CHỌN SCRIPT AUTO INJECT "
     dashes_sc = max(2, inner_w - visible_len(sc_title) - 1)
@@ -795,8 +980,8 @@ def settings_menu():
         else:
             join_status_lbl = f"{GRAY_LIGHT}Tắt (Vào server thường qua Place ID){RESET}"
         
-        W = get_terminal_width()
-        inner_w = W - 2
+        term_w = get_terminal_width()
+        inner_w = term_w - 2
 
         set_title = " ⚙️ CÀI ĐẶT HỆ THỐNG "
         dashes_set = max(2, inner_w - visible_len(set_title) - 1)
@@ -5093,6 +5278,7 @@ def main():
     global SELECTED_SCRIPT_KEY, selected_packages
     fix_tty()
     load_settings()
+    init_download_workspace()
     # Mặc định luôn là script số 1 (Hop Fin_Tail) trừ khi người dùng đã chủ động tùy chỉnh
     if not SELECTED_SCRIPT_KEY or (SELECTED_SCRIPT_KEY not in AUTO_INJECT_SCRIPTS and SELECTED_SCRIPT_KEY not in ["custom", "0"]):
         SELECTED_SCRIPT_KEY = "1"
@@ -5110,22 +5296,22 @@ def main():
         raw_sc = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Tắt")
         sc_display = f"{GOLD_NEON}[{raw_sc}{def_tag}]{RESET}"
 
-        W = get_terminal_width()
-        inner_w = W - 2
+        term_w = get_terminal_width()
+        inner_w = term_w - 2
 
         menu_title = " ⚡ MENU ĐIỀU KHIỂN "
         dashes_m = max(2, inner_w - visible_len(menu_title) - 1)
         print(f"{CYAN_NEON}╭─{menu_title}{'─' * dashes_m}╮{RESET}")
         print(f"{CYAN_NEON}│{RESET}{fit_ansi('', inner_w)}{CYAN_NEON}│{RESET}")
         main_items = [
-            f"   {BOLD}{C}[1]{RESET} {W}Quét & Chọn Package Roblox{RESET}    {vip_tag}",
-            f"   {BOLD}{C}[2]{RESET} {W}Cài Đặt Hệ Thống & Script{RESET}     {sc_display}",
-            f"   {BOLD}{C}[3]{RESET} {W}Bắt Đầu Auto Rejoin{RESET}            {BLUE_ICE}(Live Dashboard){RESET}",
-            f"   {BOLD}{C}[4]{RESET} {W}Login Cookie Vào App{RESET}           {PURPLE_NEON}(Direct Inject){RESET}",
-            f"   {BOLD}{C}[5]{RESET} {W}Quản Lý Delta Key & Bypass{RESET}     {GOLD_NEON}(Bacon API){RESET}",
-            f"   {BOLD}{C}[6]{RESET} {W}Kiểm Tra License Delta{RESET}         {GRAY_LIGHT}(Test File){RESET}",
-            f"   {BOLD}{C}[7]{RESET} {W}Trạng Thái Acc / Captcha{RESET}       {PINK_NEON}(Diagnostic){RESET}",
-            f"   {BOLD}{R}[8]{RESET} {W}Thoát Chương Trình{RESET}"
+            f"   {BOLD}{C}[1]{RESET} {WHITE}Quét & Chọn Package Roblox{RESET}    {vip_tag}",
+            f"   {BOLD}{C}[2]{RESET} {WHITE}Cài Đặt Hệ Thống & Script{RESET}     {sc_display}",
+            f"   {BOLD}{C}[3]{RESET} {WHITE}Bắt Đầu Auto Rejoin{RESET}            {BLUE_ICE}(Live Dashboard){RESET}",
+            f"   {BOLD}{C}[4]{RESET} {WHITE}Login Cookie Vào App{RESET}           {PURPLE_NEON}(Direct Inject){RESET}",
+            f"   {BOLD}{C}[5]{RESET} {WHITE}Quản Lý Delta Key & Bypass{RESET}     {GOLD_NEON}(Bacon API){RESET}",
+            f"   {BOLD}{C}[6]{RESET} {WHITE}Kiểm Tra License Delta{RESET}         {GRAY_LIGHT}(Test File){RESET}",
+            f"   {BOLD}{C}[7]{RESET} {WHITE}Trạng Thái Acc / Captcha{RESET}       {PINK_NEON}(Diagnostic){RESET}",
+            f"   {BOLD}{R}[8]{RESET} {WHITE}Thoát Chương Trình{RESET}"
         ]
         for mi in main_items:
             print(f"{CYAN_NEON}│{RESET}{fit_ansi(mi, inner_w)}{CYAN_NEON}│{RESET}")
