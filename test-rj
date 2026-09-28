@@ -172,7 +172,7 @@ C_GRAY_LIGHT  = '\033[38;5;250m'
 # =====================================================================
 selected_packages = []
 target_place_id = "4520749081"
-COOKIE_LOGIN_REVISION = "2026-09-21 (Direct Cookie Injector)"
+COOKIE_LOGIN_REVISION = "2026-09-28 (Ultra Robust Dual-Engine Cookie Injector)"
 COOKIE_LOGIN_APP_LOAD_WAIT = 6
 kill_all_time = 0
 json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
@@ -1931,24 +1931,24 @@ def get_auth_ticket(cookie):
     if not cookie:
         return None, "Cookie rỗng"
 
-    headers = {
+    base_headers = {
         "Cookie": f".ROBLOSECURITY={cookie}",
         "Content-Type": "application/json",
         "Referer": "https://www.roblox.com/",
         "Origin": "https://www.roblox.com",
-        "User-Agent": "Roblox/WinInet",
-        # Header bắt buộc của endpoint authentication-ticket.
-        "RBXAuthenticationNegotiation": "1"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*"
     }
 
-    # B1: Lấy X-CSRF-TOKEN với fallback đa endpoint
+    # B1: Lấy X-CSRF-TOKEN từ auth.roblox.com (hoặc các endpoint auth chính)
     csrf_token = None
-    csrf_endpoints = [
-        ("https://apis.roblox.com/auth-token-service/v1/login/enterCode", {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}),
-        ("https://auth.roblox.com/v1/authentication-ticket/", headers),
-        ("https://auth.roblox.com/v1/logout", headers)
+    csrf_candidates = [
+        ("https://auth.roblox.com/v1/authentication-ticket/", base_headers),
+        ("https://auth.roblox.com/v2/login", base_headers),
+        ("https://auth.roblox.com/v1/logout", base_headers),
+        ("https://apis.roblox.com/auth-token-service/v1/login/enterCode", {"Content-Type": "application/json", "User-Agent": base_headers["User-Agent"]})
     ]
-    for url, hdrs in csrf_endpoints:
+    for url, hdrs in csrf_candidates:
         try:
             req_c = urllib.request.Request(url, data=b"{}", headers=hdrs, method="POST")
             with urllib.request.urlopen(req_c, timeout=6) as resp_c:
@@ -1963,51 +1963,94 @@ def get_auth_ticket(cookie):
     if not csrf_token:
         return None, "Không lấy được X-CSRF-Token từ server Roblox"
 
-    # B2: Tạo Auth Ticket
-    headers["x-csrf-token"] = csrf_token
-    headers["X-CSRF-TOKEN"] = csrf_token
-    req2 = urllib.request.Request("https://auth.roblox.com/v1/authentication-ticket/", data=b"{}", headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req2, timeout=8) as resp2:
-            ticket = resp2.headers.get("rbx-authentication-ticket") or resp2.headers.get("RBX-Authentication-Ticket")
+    # B2: Gửi request sinh Auth Ticket (thử qua 3 bộ headers: Browser chuẩn, Client native, Negotiation flag)
+    req_configs = [
+        # Kiểu 1: Trình duyệt chuẩn (Chrome / Android WebView)
+        dict(base_headers, **{"x-csrf-token": csrf_token}),
+        # Kiểu 2: Roblox native client
+        {
+            "Cookie": f".ROBLOSECURITY={cookie}",
+            "Content-Type": "application/json",
+            "Referer": "https://www.roblox.com/",
+            "Origin": "https://www.roblox.com",
+            "User-Agent": "Roblox/WinInet",
+            "x-csrf-token": csrf_token
+        },
+        # Kiểu 3: Có kèm negotiation flag
+        {
+            "Cookie": f".ROBLOSECURITY={cookie}",
+            "Content-Type": "application/json",
+            "Referer": "https://www.roblox.com/",
+            "Origin": "https://www.roblox.com",
+            "User-Agent": "Roblox/WinInet",
+            "RBXAuthenticationNegotiation": "1",
+            "x-csrf-token": csrf_token
+        }
+    ]
+
+    last_err = "Không tạo được Auth Ticket"
+    for hdrs in req_configs:
+        try:
+            req2 = urllib.request.Request("https://auth.roblox.com/v1/authentication-ticket/", data=b"{}", headers=hdrs, method="POST")
+            with urllib.request.urlopen(req2, timeout=8) as resp2:
+                ticket = resp2.headers.get("rbx-authentication-ticket") or resp2.headers.get("RBX-Authentication-Ticket")
+                if ticket:
+                    return ticket, "Thành công"
+                try:
+                    data = json.loads(resp2.read().decode('utf-8'))
+                    t = data.get("authTicket")
+                    if t: return t, "Thành công"
+                except:
+                    pass
+        except urllib.error.HTTPError as e:
+            ticket = e.headers.get("rbx-authentication-ticket") or e.headers.get("RBX-Authentication-Ticket")
             if ticket:
                 return ticket, "Thành công"
-            try:
-                data = json.loads(resp2.read().decode('utf-8'))
-                t = data.get("authTicket")
-                if t: return t, "Thành công"
-            except:
-                pass
-    except urllib.error.HTTPError as e:
-        ticket = e.headers.get("rbx-authentication-ticket") or e.headers.get("RBX-Authentication-Ticket")
-        if ticket:
-            return ticket, "Thành công"
-        return None, f"Lỗi HTTP {e.code}"
-    except Exception as e:
-        return None, str(e)
-    return None, "Không tạo được Auth Ticket"
+            last_err = f"HTTP {e.code}"
+        except Exception as e:
+            last_err = str(e)
+
+    return None, last_err
 
 def inject_cookie_webview(pkg, cookie):
     """
     Tiêm Cookie vào tất cả các file SQLite Cookies của WebView theo chuẩn Chromium:
-    - Sử dụng Chromium Epoch 1601 UTC microseconds (chống tự xóa do hết hạn).
+    - top_frame_site_key = '' cho unpartitioned first-party cookies (chuẩn Chromium CHIPS).
+    - top_frame_site_key = 'https://roblox.com' bản copy partitioned để tương thích mọi phiên bản.
+    - samesite = 0 (UNSPECIFIED) tránh lỗi enum âm bị Chromium drop row.
+    - Phủ rộng các domain (.roblox.com, roblox.com, www.roblox.com, api.roblox.com, auth.roblox.com, web.roblox.com).
+    - Bổ sung cả tên '.ROBLOSECURITY' và 'ROBLOSECURITY'.
+    - Đồng bộ sang cả app_webview/Default/Cookies và app_webview/Default/Network/Cookies.
     - Xóa sạch file WAL/SHM/journal tránh xung đột ghi đè.
-    - Phân quyền chính xác UID:GID và chmod 660 để app không bị từ chối truy cập.
+    - Phân quyền chính xác UID:GID, chmod 660 và chcon/restorecon SELinux.
     """
     cookie = _normalize_roblosecurity_cookie(cookie)
+    if not cookie:
+        return False
+
+    uid, gid = get_pkg_uid_gid(pkg)
+
+    # Đảm bảo các thư mục webview cơ bản tồn tại
+    for d in [
+        f"/data/data/{pkg}/app_webview/Default/Network",
+        f"/data/data/{pkg}/app_webview/Default",
+        f"/data/data/{pkg}/app_webview",
+        f"/data/data/{pkg}/databases"
+    ]:
+        _run_root_capture(f"mkdir -p '{d}' && chown {uid}:{gid} '{d}' && chmod 771 '{d}' 2>/dev/null", timeout=3)
 
     # Tìm tất cả cơ sở dữ liệu cookies trong package
     dbs = []
     default_paths = [
+        f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
+        f"/data/data/{pkg}/app_webview/Default/Cookies",
+        f"/data/data/{pkg}/app_webview/Cookies",
+        f"/data/data/{pkg}/databases/webviewCookiesChromium.db",
+        f"/data/data/{pkg}/databases/webview.db",
+        f"/data/data/{pkg}/databases/Cookies",
         f"/data/data/{pkg}/app_chrome/Default/Network/Cookies",
         f"/data/data/{pkg}/app_chrome/Default/Cookies",
-        f"/data/data/{pkg}/app_chrome/Cookies",
-        f"/data/data/{pkg}/app_webview/Default/Cookies",
-        f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
-        f"/data/data/{pkg}/app_webview/Cookies",
-        f"/data/data/{pkg}/databases/webview.db",
-        f"/data/data/{pkg}/databases/webviewCookiesChromium.db",
-        f"/data/data/{pkg}/databases/Cookies"
+        f"/data/data/{pkg}/app_chrome/Cookies"
     ]
     for p in default_paths:
         if p not in dbs:
@@ -2019,9 +2062,8 @@ def inject_cookie_webview(pkg, cookie):
                 pass
 
     try:
-        # Dùng find chuẩn toybox không dùng -iname tránh lỗi unknown option
         code, out, _ = _run_root_capture(
-            f"find '/data/data/{pkg}/' -type f \\( -name 'Cookies' -o -name '*cookie*' \\) 2>/dev/null",
+            f"find '/data/data/{pkg}/' -type f \( -name 'Cookies' -o -name '*cookie*' \) 2>/dev/null",
             timeout=5
         )
         if code == 0 and out:
@@ -2032,24 +2074,75 @@ def inject_cookie_webview(pkg, cookie):
     except:
         pass
 
-    if not dbs:
-        return False
-
-    uid, gid = get_pkg_uid_gid(pkg)
     tmp_dir = os.path.join(tempfile.gettempdir(), 'hudy_cookie_tmp')
     try: os.makedirs(tmp_dir, exist_ok=True)
     except: tmp_dir = tempfile.gettempdir()
     os.makedirs(tmp_dir, exist_ok=True)
 
+    # Nếu hoàn toàn chưa có file DB nào (app mới cài chưa mở lần nào), tự khởi tạo DB SQLite chuẩn
+    if not dbs:
+        fallback_db = f"/data/data/{pkg}/app_webview/Default/Network/Cookies"
+        local_init = os.path.join(tmp_dir, "init_cookies.db")
+        if os.path.exists(local_init):
+            try: os.remove(local_init)
+            except: pass
+        try:
+            init_conn = sqlite3.connect(local_init)
+            init_c = init_conn.cursor()
+            init_c.execute('''
+                CREATE TABLE IF NOT EXISTS cookies(
+                    creation_utc INTEGER NOT NULL,
+                    host_key TEXT NOT NULL,
+                    top_frame_site_key TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    encrypted_value BLOB NOT NULL,
+                    path TEXT NOT NULL,
+                    expires_utc INTEGER NOT NULL,
+                    is_secure INTEGER NOT NULL,
+                    is_httponly INTEGER NOT NULL,
+                    last_access_utc INTEGER NOT NULL,
+                    has_expires INTEGER NOT NULL,
+                    is_persistent INTEGER NOT NULL,
+                    priority INTEGER NOT NULL,
+                    samesite INTEGER NOT NULL,
+                    source_scheme INTEGER NOT NULL,
+                    source_port INTEGER NOT NULL,
+                    is_same_party INTEGER NOT NULL,
+                    last_update_utc INTEGER NOT NULL,
+                    source_type INTEGER NOT NULL,
+                    has_cross_site_ancestor INTEGER NOT NULL,
+                    PRIMARY KEY (host_key, top_frame_site_key, name, path, source_scheme, source_port)
+                )
+            ''')
+            init_c.execute('''CREATE TABLE IF NOT EXISTS meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR)''')
+            init_c.execute("INSERT OR REPLACE INTO meta VALUES('version', '21')")
+            init_c.execute("INSERT OR REPLACE INTO meta VALUES('last_compatible_version', '18')")
+            init_conn.commit()
+            init_conn.close()
+
+            _run_root_capture(f"cp '{local_init}' '{fallback_db}' && chown {uid}:{gid} '{fallback_db}' && chmod 660 '{fallback_db}'", timeout=5)
+            dbs.append(fallback_db)
+            try: os.remove(local_init)
+            except: pass
+        except Exception:
+            pass
+
+    if not dbs:
+        return False
+
     # Tính toán Chromium Epoch 1601 UTC (Microseconds kể từ 1601-01-01)
     epoch_offset = 11644473600
-    now_1601 = (time.time_ns() // 1000) + (epoch_offset * 1000000)
-    exp_1601 = now_1601 + (10 * 365 * 86400 * 1000000)
+    now_1601 = (int(time.time()) + epoch_offset) * 1000000
+    exp_1601 = (int(time.time()) + 10 * 365 * 86400 + epoch_offset) * 1000000
 
-    # .roblox.com là domain-cookie chuẩn và tự áp dụng cho mọi subdomain Roblox.
-    hosts = ['.roblox.com', 'www.roblox.com', 'roblox.com', '.www.roblox.com']
+    hosts = ['.roblox.com', 'roblox.com', 'www.roblox.com', '.www.roblox.com', 'api.roblox.com', '.api.roblox.com', 'auth.roblox.com', '.auth.roblox.com', 'web.roblox.com', '.web.roblox.com']
+    cookie_names = ['.ROBLOSECURITY', 'ROBLOSECURITY']
+    site_keys = ['', 'https://roblox.com']
 
     success_count = 0
+    primary_synced_db = None
+
     for idx, webview_db in enumerate(dbs, 1):
         local_db = os.path.join(tmp_dir, f"inj_db_{idx}.db")
         copy_code, _, _ = _run_root_capture(
@@ -2072,80 +2165,192 @@ def inject_cookie_webview(pkg, cookie):
             column_info = c.fetchall()
             columns = [col[1] for col in column_info]
 
-            for row_index, hk in enumerate(hosts):
-                # creation_utc thường là UNIQUE/PRIMARY KEY trong Chromium.
-                # Mỗi row phải có timestamp riêng, nếu không cả transaction rollback.
-                row_time = now_1601 + row_index
-                data = {
-                        'creation_utc': row_time,
-                        'top_frame_site_key': 'https://roblox.com',
-                        'host_key': hk,
-                        'name': '.ROBLOSECURITY',
-                        'value': cookie,
-                        'encrypted_value': b'',
-                        'path': '/',
-                        'expires_utc': exp_1601,
-                        'is_secure': 1,
-                        'is_httponly': 1,
-                        'last_access_utc': row_time,
-                        'last_update_utc': row_time,
-                        'has_expires': 1,
-                        'is_persistent': 1,
-                        'priority': 1,
-                        'samesite': -1,
-                        'source_scheme': 2,
-                        'source_port': 443,
-                        'source_type': 0,
-                        'has_cross_site_ancestor': 0,
-                        'is_same_party': 0
-                }
+            # Xóa các cookie Roblox cũ để tránh xung đột key
+            c.execute("DELETE FROM cookies WHERE name IN ('.ROBLOSECURITY', 'ROBLOSECURITY', 'RobloxSecurityToken')")
 
-                # Chromium/WebView bổ sung cột theo phiên bản. Điền giá trị trung
-                # tính cho cột NOT NULL mới không có DEFAULT để INSERT không vỡ.
-                for _, col_name, col_type, not_null, default_value, _ in column_info:
-                    if col_name in data or not not_null or default_value is not None:
-                        continue
-                    type_upper = (col_type or '').upper()
-                    if 'BLOB' in type_upper:
-                        data[col_name] = b''
-                    elif any(t in type_upper for t in ('INT', 'REAL', 'NUM')):
-                        data[col_name] = 0
-                    else:
-                        data[col_name] = ''
+            counter = 0
+            for hk in hosts:
+                for cname in cookie_names:
+                    for sk in site_keys:
+                        counter += 1
+                        row_time = now_1601 + counter
+                        data = {
+                            'creation_utc': row_time,
+                            'top_frame_site_key': sk,
+                            'host_key': hk,
+                            'name': cname,
+                            'value': cookie,
+                            'encrypted_value': b'',
+                            'path': '/',
+                            'expires_utc': exp_1601,
+                            'is_secure': 1,
+                            'is_httponly': 1,
+                            'last_access_utc': row_time,
+                            'last_update_utc': row_time,
+                            'has_expires': 1,
+                            'is_persistent': 1,
+                            'priority': 1,
+                            'samesite': 0,
+                            'source_scheme': 2,
+                            'source_port': 443,
+                            'source_type': 0,
+                            'has_cross_site_ancestor': 0,
+                            'is_same_party': 0
+                        }
 
-                valid_cols = [k for k in data if k in columns]
-                vals = [data[k] for k in valid_cols]
-                placeholders = ','.join(['?' for _ in valid_cols])
+                        # Bổ sung giá trị trung tính cho cột NOT NULL không có DEFAULT
+                        for _, col_name, col_type, not_null, default_value, _ in column_info:
+                            if col_name in data or not not_null or default_value is not None:
+                                continue
+                            type_upper = (col_type or '').upper()
+                            if 'BLOB' in type_upper:
+                                data[col_name] = b''
+                            elif any(t in type_upper for t in ('INT', 'REAL', 'NUM')):
+                                data[col_name] = 0
+                            else:
+                                data[col_name] = ''
 
-                c.execute(
-                    "DELETE FROM cookies WHERE name=? AND "
-                    "(host_key=? OR host_key=? OR host_key=?)",
-                    ('.ROBLOSECURITY', hk, hk.lstrip('.'), '.' + hk.lstrip('.'))
-                )
-                sql = f"INSERT INTO cookies ({','.join(valid_cols)}) VALUES ({placeholders})"
-                c.execute(sql, vals)
+                        valid_cols = [k for k in data if k in columns]
+                        vals = [data[k] for k in valid_cols]
+                        placeholders = ','.join(['?' for _ in valid_cols])
+
+                        sql = f"INSERT INTO cookies ({','.join(valid_cols)}) VALUES ({placeholders})"
+                        c.execute(sql, vals)
 
             conn.commit()
             conn.close()
 
-            # Ghi đè vào app + dọn sạch file WAL journal + gán quyền uid:gid chuẩn
+            # Ghi đè vào app + dọn sạch file WAL/journal + gán quyền uid:gid chuẩn & SELinux context
             fix_cmd = (
                 f"cp \"{local_db}\" \"{webview_db}\" && "
                 f"rm -f \"{webview_db}-wal\" \"{webview_db}-shm\" \"{webview_db}-journal\" 2>/dev/null && "
                 f"chown {uid}:{gid} \"{webview_db}\" && "
                 f"chmod 660 \"{webview_db}\" && "
-                f"(restorecon \"{webview_db}\" 2>/dev/null || true)"
+                f"(chcon -R --reference='/data/data/{pkg}' \"{webview_db}\" 2>/dev/null || restorecon -F \"{webview_db}\" 2>/dev/null || true)"
             )
             write_code, _, _ = _run_root_capture(fix_cmd)
-            try: os.remove(local_db)
-            except: pass
             if write_code == 0:
                 success_count += 1
+                if not primary_synced_db:
+                    primary_synced_db = local_db
+            if primary_synced_db != local_db:
+                try: os.remove(local_db)
+                except: pass
         except Exception as e:
             try: conn.close()
             except: pass
             try: os.remove(local_db)
             except: pass
+
+    # Đồng bộ hóa chéo sang cả các đường dẫn Chromium WebView khác (Default/Cookies và Network/Cookies)
+    if primary_synced_db and os.path.exists(primary_synced_db):
+        sync_targets = [
+            f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
+            f"/data/data/{pkg}/app_webview/Default/Cookies",
+            f"/data/data/{pkg}/app_webview/Cookies"
+        ]
+        for st in sync_targets:
+            parent = os.path.dirname(st)
+            _run_root_capture(
+                f"mkdir -p '{parent}' && chown {uid}:{gid} '{parent}' && "
+                f"cp \"{primary_synced_db}\" \"{st}\" && "
+                f"rm -f \"{st}-wal\" \"{st}-shm\" \"{st}-journal\" 2>/dev/null && "
+                f"chown {uid}:{gid} \"{st}\" && chmod 660 \"{st}\" && "
+                f"(chcon -R --reference='/data/data/{pkg}' \"{st}\" 2>/dev/null || restorecon -F \"{st}\" 2>/dev/null || true)",
+                timeout=5
+            )
+        try: os.remove(primary_synced_db)
+        except: pass
+
+    return success_count > 0
+
+def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
+    """Cập nhật các SharedPrefs liên quan mà không làm mất node bool/int/set."""
+    cookie = _normalize_roblosecurity_cookie(cookie)
+    if not cookie:
+        return False
+
+    shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
+    uid, gid = get_pkg_uid_gid(pkg)
+
+    # Đảm bảo thư mục shared_prefs tồn tại
+    _run_root_capture(f"mkdir -p '{shared_prefs_dir}' && chown {uid}:{gid} '{shared_prefs_dir}' && chmod 771 '{shared_prefs_dir}' 2>/dev/null", timeout=3)
+
+    code, files_str, _ = _run_root_capture(f"ls '{shared_prefs_dir}'/*.xml 2>/dev/null", timeout=5)
+    xml_files = []
+    if code == 0 and files_str:
+        xml_files = [f.strip() for f in files_str.splitlines() if f.strip() and f.strip().endswith('.xml')]
+
+    # Các file SharedPreferences mục tiêu
+    essential_files = [
+        f"{shared_prefs_dir}/{pkg}_preferences.xml",
+        f"{shared_prefs_dir}/com.roblox.client_preferences.xml",
+        f"{shared_prefs_dir}/AppPreferences.xml"
+    ]
+    for ef in essential_files:
+        if ef not in xml_files:
+            xml_files.append(ef)
+
+    tmp_dir = os.path.join(tempfile.gettempdir(), 'hudy_cookie_tmp')
+    try: os.makedirs(tmp_dir, exist_ok=True)
+    except: tmp_dir = tempfile.gettempdir()
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    updates = {
+        'ROBLOSECURITY': cookie,
+        '.ROBLOSECURITY': cookie,
+        'RobloxSecurityToken': cookie
+    }
+    if user_name:
+        updates.update({
+            'Username': str(user_name),
+            'RobloxUsername': str(user_name),
+            'RBX_USERNAME': str(user_name)
+        })
+    if user_id:
+        updates.update({
+            'UserId': str(user_id),
+            'RobloxUserId': str(user_id),
+            'RBX_USER_ID': str(user_id)
+        })
+
+    success_count = 0
+    for xml_path in xml_files:
+        read_code, raw, _ = _run_root_capture(f"cat '{xml_path}' 2>/dev/null", timeout=4)
+        root_el = None
+        if read_code == 0 and raw and '<map>' in raw:
+            try:
+                root_el = ET.fromstring(raw)
+            except:
+                root_el = None
+
+        if root_el is None:
+            root_el = ET.Element('map')
+
+        # Cập nhật key string
+        for key, value in updates.items():
+            old_nodes = [node for node in list(root_el) if node.get('name') == key]
+            for node in old_nodes:
+                root_el.remove(node)
+            el = ET.SubElement(root_el, 'string', name=key)
+            el.text = value
+
+        xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(root_el, encoding='unicode')
+        fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(xml_output)
+
+        fix_xml_cmd = (
+            f"cp '{temp_file}' '{xml_path}' && "
+            f"chown {uid}:{gid} '{xml_path}' && "
+            f"chmod 660 '{xml_path}' && "
+            f"(chcon -R --reference='/data/data/{pkg}' \"{xml_path}\" 2>/dev/null || restorecon -F \"{xml_path}\" 2>/dev/null || true)"
+        )
+        write_code, _, _ = _run_root_capture(fix_xml_cmd)
+        try: os.remove(temp_file)
+        except: pass
+        if write_code == 0:
+            success_count += 1
 
     return success_count > 0
 
@@ -2590,39 +2795,49 @@ def login_via_cookie():
         print(f"{Y}  ├─ [*] Đang tạo Roblox Auth Ticket...{RESET}")
         ticket, t_msg = get_auth_ticket(cur_cookie)
 
-        # 6. Khởi chạy ứng dụng (dùng FLAG_ACTIVITY_NEW_TASK 0x10000000 chống crash EGL)
+        # 6. Khởi chạy ứng dụng (dùng FLAG_ACTIVITY_NEW_TASK 0x10000000 hoặc 0x14000000 chống crash EGL)
         print(f"{Y}  └─ [*] Đang khởi động ứng dụng...{RESET}")
         launched = False
         if ticket:
             print(f"{G}     [✓] Tạo Auth Ticket thành công: {ticket[:18]}...{RESET}")
-            deeplink = build_roblox_launch_uri(pkg, auth_ticket=ticket)
-            if not deeplink:
-                deeplink = f"roblox://experiences/start?placeId=4520749081&authTicket={ticket}"
-
-            launch_cmd = f"am start -p {pkg} -f 0x10000000 -a android.intent.action.VIEW -d \"{deeplink}\""
-            code, out, _ = _run_root_capture(launch_cmd, timeout=15)
+            # Kích hoạt Intent đăng nhập chính thức bằng roblox://navigation (vào Home đã đăng nhập)
+            nav_deeplink = f"roblox://navigation?authTicket={ticket}"
+            code, out, _ = _run_root_capture(f"am start -p {pkg} -f 0x14000000 -a android.intent.action.VIEW -d \"{nav_deeplink}\"", timeout=10)
             if code == 0 and "Error:" not in out:
-                print(f"{G}     [✓] Đã gửi Auth Ticket Deeplink Intent thành công!{RESET}")
+                print(f"{G}     [✓] Đã kích hoạt Đăng Nhập qua Auth Ticket Deeplink (roblox://navigation)!{RESET}")
                 launched = True
             else:
-                print(f"{Y}     [!] Deeplink không phản hồi, chuyển sang mở trực tiếp...{RESET}")
+                # Thử các variant intent khác cho bản clone/mod
+                alt_intents = [
+                    f"am start -p {pkg} -f 0x14000000 -a android.intent.action.VIEW -d \"roblox://navigation/home?authTicket={ticket}\"",
+                    f"am start -n {pkg}/com.roblox.client.Activity.WebLoginActivity -f 0x14000000 --es authTicket \"{ticket}\"",
+                    f"am start -p {pkg} -f 0x14000000 -a android.intent.action.VIEW -d \"robloxmobile://navigation?authTicket={ticket}\""
+                ]
+                for alt_cmd in alt_intents:
+                    c_alt, out_alt, _ = _run_root_capture(alt_cmd, timeout=8)
+                    if c_alt == 0 and "Error:" not in out_alt:
+                        print(f"{G}     [✓] Đã gửi Auth Ticket qua Intent thay thế!{RESET}")
+                        launched = True
+                        break
+        else:
+            print(f"{Y}     [!] Không tạo được Auth Ticket ({t_msg}). Khởi chạy bằng Launcher với Cookie đã nạp...{RESET}")
 
         if not launched:
-            uri_launch = build_roblox_launch_uri(pkg)
-            if uri_launch:
-                direct_cmd = f"am start -p {pkg} -f 0x10000000 -a android.intent.action.VIEW -d \"{uri_launch}\""
-                code, out, _ = _run_root_capture(direct_cmd, timeout=10)
+            # Mở App qua Launcher tiêu chuẩn để WebView tự nạp SQLite DB Cookie
+            launcher_cmds = [
+                f"am start -n {pkg}/com.roblox.client.Activity.SplashActivity -f 0x10000000",
+                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000",
+                f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1"
+            ]
+            for l_cmd in launcher_cmds:
+                code, out, _ = _run_root_capture(l_cmd, timeout=10)
                 if code == 0 and "Error:" not in out:
-                    print(f"{G}     [✓] Đã khởi động App qua Intent!{RESET}")
+                    print(f"{G}     [✓] Đã khởi động App qua Launcher thành công!{RESET}")
                     launched = True
+                    break
 
             if not launched:
-                fb_cmd = f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1"
-                code, _, _ = _run_root_capture(fb_cmd, timeout=10)
-                if code == 0:
-                    print(f"{G}     [✓] Đã mở App với phiên WebView đã nạp!{RESET}")
-                else:
-                    print(f"{R}     [✗] Không thể mở app: {pkg}{RESET}")
+                print(f"{R}     [✗] Không thể mở app: {pkg}{RESET}")
 
         print(f"{Y}     [*] Chờ {COOKIE_LOGIN_APP_LOAD_WAIT}s để app tải xong...{RESET}")
         time.sleep(COOKIE_LOGIN_APP_LOAD_WAIT)
