@@ -99,7 +99,7 @@ def add_log(msg):
     t_str = time.strftime("%H:%M:%S")
     formatted = f"[{t_str}] {msg}"
     system_logs.append(formatted)
-    if len(system_logs) > 8:
+    if len(system_logs) > 50:
         system_logs.pop(0)
 
 def clear_screen():
@@ -186,10 +186,14 @@ AUTO_INJECT_SCRIPTS = {
 SELECTED_SCRIPT_KEY = "1"  # Mặc định chọn script số 1: Hop Fin_Tail
 CUSTOM_SCRIPT_URL = ""  # URL hoặc code Lua tùy chỉnh
 CUSTOM_SCRIPT_IS_CODE = False  # True nếu CUSTOM_SCRIPT_URL là code Lua trực tiếp
+AUTO_SOLVE_CAPTCHA_V2 = "Enable"  # Mặc định BẬT auto solve captchav2
+JOIN_SERVER_MODE = "Disable"      # Mặc định TẮT mode join server
+JOIN_SERVER_LINK = ""             # Link Private / VIP server tùy chỉnh
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hudy_config.json")
 
 def load_settings():
     global target_place_id, kill_all_time, CHECK_ACC_TIME_BLOCKED, SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE
+    global AUTO_SOLVE_CAPTCHA_V2, JOIN_SERVER_MODE, JOIN_SERVER_LINK
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -202,10 +206,22 @@ def load_settings():
                     SELECTED_SCRIPT_KEY = "1"
                 CUSTOM_SCRIPT_URL = str(data.get("custom_script_url", CUSTOM_SCRIPT_URL))
                 CUSTOM_SCRIPT_IS_CODE = bool(data.get("custom_script_is_code", False))
+                AUTO_SOLVE_CAPTCHA_V2 = str(data.get("auto_solve_captcha_v2", "Enable"))
+                if AUTO_SOLVE_CAPTCHA_V2 not in ["Enable", "Disable"]:
+                    AUTO_SOLVE_CAPTCHA_V2 = "Enable"
+                JOIN_SERVER_MODE = str(data.get("join_server_mode", "Disable"))
+                if JOIN_SERVER_MODE not in ["Enable", "Disable"]:
+                    JOIN_SERVER_MODE = "Disable"
+                JOIN_SERVER_LINK = str(data.get("join_server_link", ""))
         else:
             SELECTED_SCRIPT_KEY = "1"
+            AUTO_SOLVE_CAPTCHA_V2 = "Enable"
+            JOIN_SERVER_MODE = "Disable"
+            JOIN_SERVER_LINK = ""
     except:
         SELECTED_SCRIPT_KEY = "1"
+        AUTO_SOLVE_CAPTCHA_V2 = "Enable"
+        JOIN_SERVER_MODE = "Disable"
 
 def save_settings():
     try:
@@ -216,6 +232,9 @@ def save_settings():
             "selected_script_key": SELECTED_SCRIPT_KEY,
             "custom_script_url": CUSTOM_SCRIPT_URL,
             "custom_script_is_code": CUSTOM_SCRIPT_IS_CODE,
+            "auto_solve_captcha_v2": AUTO_SOLVE_CAPTCHA_V2,
+            "join_server_mode": JOIN_SERVER_MODE,
+            "join_server_link": JOIN_SERVER_LINK,
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
@@ -303,6 +322,57 @@ def get_memory_usage():
 # =====================================================================
 # GIAO DIỆN BANNER & DASHBOARD LIVE
 # =====================================================================
+def parse_server_link(link, fallback_place_id="4520749081"):
+    """Phân tích link Roblox Private Server / VIP Server / Share Link."""
+    link = link.strip()
+    if not link:
+        return fallback_place_id, ""
+    if link.startswith("roblox://"):
+        return None, link
+    m_pid = re.search(r'/games/(\d+)', link) or re.search(r'placeId=(\d+)', link)
+    pid = m_pid.group(1) if m_pid else (fallback_place_id or "4520749081")
+    m_code = re.search(r'privateServerLinkCode=([a-zA-Z0-9_\-]+)', link) or re.search(r'linkCode=([a-zA-Z0-9_\-]+)', link)
+    if m_code:
+        code = m_code.group(1)
+        deeplink = f"roblox://experiences/start?placeId={pid}&linkCode={code}"
+        return pid, deeplink
+    m_share = re.search(r'code=([a-zA-Z0-9_\-]+)', link)
+    if "share" in link and m_share:
+        return pid, link
+    if re.match(r'^[a-zA-Z0-9_\-]{20,}$', link):
+        deeplink = f"roblox://experiences/start?placeId={pid}&linkCode={link}"
+        return pid, deeplink
+    return pid, link
+
+def build_roblox_launch_uri(pkg=None, auth_ticket=None):
+    """Tạo URI/Deeplink để khởi chạy Roblox vào game thường hoặc Private/VIP server."""
+    global JOIN_SERVER_MODE, JOIN_SERVER_LINK, target_place_id
+    if JOIN_SERVER_MODE == "Enable" and JOIN_SERVER_LINK.strip():
+        pid, uri = parse_server_link(JOIN_SERVER_LINK.strip(), target_place_id)
+        if auth_ticket:
+            if "roblox://" in uri:
+                sep = "&" if "?" in uri else "?"
+                uri = f"{uri}{sep}authTicket={auth_ticket}"
+        return uri
+    elif target_place_id:
+        uri = f"roblox://experiences/start?placeId={target_place_id}"
+        if auth_ticket:
+            uri += f"&authTicket={auth_ticket}"
+        return uri
+    return ""
+
+def visible_len(s):
+    """Tính độ dài hiển thị thực tế của chuỗi, bỏ qua các mã màu ANSI."""
+    return len(re.sub(r'\033\[[0-9;]*[a-zA-Z]', '', str(s)))
+
+def fit_ansi(s, width):
+    """Căn lề chuỗi có chứa mã màu ANSI với độ rộng width chính xác tuyệt đối."""
+    vlen = visible_len(s)
+    if vlen > width:
+        clean = re.sub(r'\033\[[0-9;]*[a-zA-Z]', '', str(s))
+        return clean[:max(0, width - 3)] + "..."
+    return str(s) + (" " * (width - vlen))
+
 def print_banner():
     banner = f"""
   {CYAN_NEON}██╗  ██╗██╗   ██╗██████╗ ██╗   ██╗{RESET}
@@ -313,48 +383,56 @@ def print_banner():
   {PINK_NEON}╚═╝  ╚═╝ ╚═════╝ ╚═════╝    ╚═╝   {GRAY_LIGHT}Anti-Hang & Auto-Bypass{RESET}
 """
     print(banner)
-    print(f"{CYAN_NEON}╭─────────────────────────────────────────────────────────────╮{RESET}")
-    print(f"{CYAN_NEON}│{RESET} {BOLD}{W}HuDy Automation Core{RESET} {GRAY_DARK}•{RESET} {GREEN_MINT}Anti-Hang{RESET} {GRAY_DARK}•{RESET} {GOLD_NEON}Auto-Bypass{RESET} {GRAY_DARK}•{RESET} {CYAN_NEON}Auto-Inject{RESET}    {CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰─────────────────────────────────────────────────────────────╯{RESET}")
+    sub = f" {BOLD}{W}HuDy Automation Core{RESET} {GRAY_DARK}•{RESET} {GREEN_MINT}Anti-Hang{RESET} {GRAY_DARK}•{RESET} {GOLD_NEON}Auto-Bypass{RESET} {GRAY_DARK}•{RESET} {CYAN_NEON}Auto-Inject{RESET} {GRAY_DARK}•{RESET} {PURPLE_NEON}Multi-Lang CaptchaV2{RESET}"
+    print(f"{CYAN_NEON}╭──────────────────────────────────────────────────────────────────────────────────────╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(sub, 86)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
 
 def print_dashboard(states):
     clear_screen()
     print_banner()
     cpu_str = get_cpu_usage()
     ram_str = get_memory_usage()
-    cur_sc_name = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Disabled")
+    cur_sc_name = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Tắt")
     pid_display = target_place_id if target_place_id else "Sảnh (0)"
     restart_display = f"{kill_all_time}m" if kill_all_time > 0 else "Tắt"
+    v2_display = "Bật" if AUTO_SOLVE_CAPTCHA_V2 == "Enable" else "Tắt"
+    join_display = "Bật (VIP)" if JOIN_SERVER_MODE == "Enable" else "Tắt"
     
-    print(f"{CYAN_NEON}╭─ THÔNG SỐ HỆ THỐNG & CẤU HÌNH ─────────────────────────╮{RESET}")
-    print(f"{CYAN_NEON}│{RESET} CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ Place: {GOLD_NEON}{pid_display:<11}{RESET}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}│{RESET} Restart: {Y}{restart_display:<5}{RESET}│ Cookie: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}    │ Script: {PINK_NEON}{cur_sc_name:<10}{RESET} {CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────╯{RESET}")
+    print(f"{CYAN_NEON}╭─ ⚙️ THÔNG SỐ HỆ THỐNG & CẤU HÌNH ───────────────────────────────────────────────────╮{RESET}")
+    v2_col = GREEN_MINT if v2_display == 'Bật' else R
+    join_col = PURPLE_NEON if join_display != 'Tắt' else GRAY_LIGHT
+    info_line1 = f" CPU: {GREEN_MINT}{cpu_str:<7}{RESET} │ RAM: {BLUE_ICE}{ram_str:<7}{RESET} │ Place: {GOLD_NEON}{pid_display:<11}{RESET} │ CaptV2: {v2_col}{v2_display:<5}{RESET} │ JoinSv: {join_col}{join_display:<9}{RESET}"
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(info_line1, 86)}{CYAN_NEON}│{RESET}")
+    info_line2 = f" Restart: {Y}{restart_display:<6}{RESET}│ Cookie Re-check: {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}     │ Script: {PINK_NEON}{cur_sc_name}{RESET}"
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(info_line2, 86)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
     
     p_header = "Package"
     u_header = "Username"
     s_header = "Trạng Thái"
     pkg_cnt = len(selected_packages)
-    print(f"{CYAN_NEON}╭─ 🎮 TIẾN TRÌNH TÀI KHOẢN ({pkg_cnt} Package) ─────────────────────╮{RESET}")
-    print(f"{CYAN_NEON}│{RESET} {BOLD}{p_header:<20} │ {u_header:<15} │ {s_header:<18}{RESET} {CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}├──────────────────────┼─────────────────┼────────────────────┤{RESET}")
+    print(f"{CYAN_NEON}╭─ 🎮 TIẾN TRÌNH TÀI KHOẢN ({pkg_cnt} Package) ────────────────────────────────────────────────╮{RESET}")
+    hdr_line = f" {BOLD}{p_header:<28} │ {u_header:<22} │ {s_header:<30}{RESET}"
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(hdr_line, 86)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}├──────────────────────────────┼────────────────────────┼──────────────────────────────┤{RESET}")
     for item in selected_packages:
         pkg = item['pkg']
-        s_pkg = pkg if len(pkg) <= 20 else pkg[:17] + "..."
+        s_pkg = pkg if len(pkg) <= 28 else pkg[:25] + "..."
         s_name = states[pkg]['display_name']
-        if len(s_name) > 15: s_name = s_name[:12] + "..."
+        if len(s_name) > 22: s_name = s_name[:19] + "..."
         txt = states[pkg]['text']
-        if len(txt) > 18: txt = txt[:15] + "..."
+        if len(txt) > 30: txt = txt[:27] + "..."
         col = states[pkg]['color']
-        print(f"{CYAN_NEON}│{RESET} {s_pkg:<20} │ {W}{s_name:<15}{RESET} │ {col}{txt:<18}{RESET} {CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}╰──────────────────────┴─────────────────┴────────────────────╯{RESET}")
+        row_str = f" {s_pkg:<28} │ {W}{s_name:<22}{RESET} │ {col}{txt:<30}{RESET}"
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(row_str, 86)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰──────────────────────────────┴────────────────────────┴──────────────────────────────╯{RESET}")
     print(f" {GREEN_MINT}●{RESET} {BOLD}Đang chạy Live Dashboard...{RESET} {GRAY_LIGHT}(Bấm Ctrl+C để dừng và về Menu){RESET}")
     if system_logs:
-        print(f"{CYAN_NEON}╭─ NHẬT KÝ HỆ THỐNG GẦN ĐÂY ─────────────────────────────╮{RESET}")
-        for log in system_logs[-6:]:
-            l_str = log if len(log) <= 57 else log[:54] + "..."
-            print(f"{CYAN_NEON}│{RESET} {l_str:<57} {CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────╯{RESET}")
+        print(f"{CYAN_NEON}╭─ 📋 NHẬT KÝ HỆ THỐNG GẦN ĐÂY ────────────────────────────────────────────────────────╮{RESET}")
+        for log in system_logs[-10:]:
+            print(f"{CYAN_NEON}│{RESET}{fit_ansi(' ' + log, 86)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
 
 # =====================================================================
 # CÀI ĐẶT & AUTO INJECT SCRIPT
@@ -363,26 +441,31 @@ def select_auto_inject_script_menu():
     global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE
     clear_screen()
     print_banner()
-    print(f"{CYAN_NEON}╭────────────────── CHỌN SCRIPT AUTO INJECT ─────────────────╮{RESET}")
-    print(f"{CYAN_NEON}│{RESET} {GRAY_LIGHT}Script sẽ tự động nạp vào thư mục autoexec của executor      {RESET}{CYAN_NEON}│{RESET}")
-    print(f"{CYAN_NEON}├─────────────────────────────────────────────────────────────┤{RESET}")
+    print(f"{CYAN_NEON}╭─────────────────────────────── CHỌN SCRIPT AUTO INJECT ─────────────────────────────╮{RESET}")
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi('   ' + GRAY_LIGHT + 'Script sẽ tự động nạp vào thư mục autoexec của executor (Delta/Fluxus...)' + RESET, 86)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}├──────────────────────────────────────────────────────────────────────────────────────┤{RESET}")
     
     for key, info in AUTO_INJECT_SCRIPTS.items():
         def_lbl = " / Mặc định" if key == "1" else ""
         is_cur = f" {GREEN_MINT}[✓ Đang chọn{def_lbl}]{RESET}" if SELECTED_SCRIPT_KEY == key else ""
-        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[{key}]{RESET} {GOLD_NEON}{info['name']:<18}{RESET}{is_cur}")
-        print(f"{CYAN_NEON}│{RESET}      {GRAY_LIGHT}↳ {info['url'][:43]}...{RESET}")
+        l1 = f"  {BOLD}{C}[{key}]{RESET} {GOLD_NEON}{info['name']:<18}{RESET}{is_cur}"
+        l2 = f"      {GRAY_LIGHT}↳ {info['url'][:55]}...{RESET}"
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(l1, 86)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi(l2, 86)}{CYAN_NEON}│{RESET}")
     
     # Hiển thị trạng thái custom
     custom_cur = ""
     if SELECTED_SCRIPT_KEY == "custom":
         custom_type = "[Code Lua]" if CUSTOM_SCRIPT_IS_CODE else "[URL]"
         custom_cur = f" {GREEN_MINT}[✓ Đang chọn {custom_type}]{RESET}"
-    print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[4]{RESET} {PURPLE_NEON}Tự Nhập Script/URL Tùy Chỉnh (Custom){RESET}{custom_cur}")
-    print(f"{CYAN_NEON}│{RESET}      {GRAY_LIGHT}↳ Nhập raw URL hoặc dán thẳng code Lua{RESET}")
+    l_c1 = f"  {BOLD}{C}[4]{RESET} {PURPLE_NEON}Tự Nhập Script/URL Tùy Chỉnh (Custom){RESET}{custom_cur}"
+    l_c2 = f"      {GRAY_LIGHT}↳ Nhập raw URL hoặc dán thẳng code Lua{RESET}"
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_c1, 86)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_c2, 86)}{CYAN_NEON}│{RESET}")
     disabled_cur = f" {R}[✓ Đang tắt]{RESET}" if SELECTED_SCRIPT_KEY == "0" else ""
-    print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[0]{RESET} {R}Tắt Auto Inject Script Thêm{RESET}{disabled_cur}")
-    print(f"{CYAN_NEON}╰─────────────────────────────────────────────────────────────╯{RESET}")
+    l_d1 = f"  {BOLD}{C}[0]{RESET} {R}Tắt Auto Inject Script Thêm{RESET}{disabled_cur}"
+    print(f"{CYAN_NEON}│{RESET}{fit_ansi(l_d1, 86)}{CYAN_NEON}│{RESET}")
+    print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
     
     fix_tty()
     sel = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy Script{RESET} {PINK_NEON}❯{RESET} Chọn [0-4] (Enter giữ nguyên): ").strip()
@@ -444,7 +527,7 @@ def select_auto_inject_script_menu():
         time.sleep(1.5)
 
 def settings_menu():
-    global target_place_id, kill_all_time, CHECK_ACC_TIME_BLOCKED
+    global target_place_id, kill_all_time, CHECK_ACC_TIME_BLOCKED, AUTO_SOLVE_CAPTCHA_V2, JOIN_SERVER_MODE, JOIN_SERVER_LINK
     while True:
         clear_screen()
         print_banner()
@@ -462,20 +545,40 @@ def settings_menu():
             
         cur_pid = target_place_id if target_place_id else "Vào sảnh chính (0)"
         cur_restart = f"{kill_all_time} phút" if kill_all_time > 0 else "Tắt (0)"
+        v2_status_lbl = f"{GREEN_MINT}Bật (Mặc định tự giải Nhấn & Giữ đa ngôn ngữ){RESET}" if AUTO_SOLVE_CAPTCHA_V2 == "Enable" else f"{R}Tắt (Không tự động giải){RESET}"
+        if JOIN_SERVER_MODE == "Enable" and JOIN_SERVER_LINK:
+            join_link_disp = JOIN_SERVER_LINK[:32] + "..." if len(JOIN_SERVER_LINK) > 35 else JOIN_SERVER_LINK
+            join_status_lbl = f"{PURPLE_NEON}Bật (Link: {join_link_disp}){RESET}"
+        else:
+            join_status_lbl = f"{GRAY_LIGHT}Tắt (Vào server thường qua Place ID){RESET}"
         
-        print(f"{CYAN_NEON}╭──────────────────── ⚙️ CÀI ĐẶT HỆ THỐNG ──────────────────────╮{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  1. Place ID (Game ID):             {GOLD_NEON}{cur_pid:<22}{RESET}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  2. Script Auto Inject:             {cur_script_name:<30}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  3. Thời Gian Auto Restart:         {Y}{cur_restart:<22}{RESET}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  4. Chu Kỳ Re-Check Acc Kẹt:        {G}{CHECK_ACC_TIME_BLOCKED}s{'':<20}{RESET}{CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}├───────────────────────────────────────────────────────────────┤{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[1]{RESET} Đổi Place ID (Game ID)                                   {CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[2]{RESET} Chọn Script Auto Inject (1: Fin_Tail, 2: Tear, 3: King)  {CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[3]{RESET} Cài Đặt Thời Gian Auto Restart (phút)                    {CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[4]{RESET} Cài Đặt Chu Kỳ Re-check Acc Dính Captcha                 {CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  {BOLD}{C}[5]{RESET} Cấu Hình Nhanh Tất Cả (Wizard Setup)                  {CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}│{RESET}  {BOLD}{R}[6]{RESET} ↩Quay Lại Menu Chính                                   {CYAN_NEON}│{RESET}")
-        print(f"{CYAN_NEON}╰───────────────────────────────────────────────────────────────╯{RESET}")
+        print(f"{CYAN_NEON}╭────────────────────────────── ⚙️ CÀI ĐẶT HỆ THỐNG ────────────────────────────────────╮{RESET}")
+        line_s1 = f"  1. Place ID (Game ID):              {GOLD_NEON}{cur_pid}{RESET}"
+        line_s2 = f"  2. Script Auto Inject:              {cur_script_name}"
+        line_s3 = f"  3. Thời Gian Auto Restart:          {Y}{cur_restart}{RESET}"
+        line_s4 = f"  4. Chu Kỳ Re-Check Acc Kẹt:         {G}{CHECK_ACC_TIME_BLOCKED}s{RESET}"
+        line_s5 = f"  5. Auto Solve Captcha V2:           {v2_status_lbl}"
+        line_s6 = f"  6. Mode Join Server (VIP Server):   {join_status_lbl}"
+        for sl in [line_s1, line_s2, line_s3, line_s4, line_s5, line_s6]:
+            print(f"{CYAN_NEON}│{RESET}{fit_ansi(sl, 86)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}├──────────────────────────────────────────────────────────────────────────────────────┤{RESET}")
+        
+        opt_v2_tag = f"{GREEN_MINT}[ĐANG BẬT]{RESET}" if AUTO_SOLVE_CAPTCHA_V2 == "Enable" else f"{R}[ĐANG TẮT]{RESET}"
+        opt_join_tag = f"{PURPLE_NEON}[ĐANG BẬT]{RESET}" if JOIN_SERVER_MODE == "Enable" else f"{GRAY_LIGHT}[ĐANG TẮT]{RESET}"
+        
+        m_opts = [
+            f"  {BOLD}{C}[1]{RESET} Đổi Place ID (Game ID)",
+            f"  {BOLD}{C}[2]{RESET} Chọn Script Auto Inject (1: Fin_Tail, 2: Tear, 3: King, 4: Custom)",
+            f"  {BOLD}{C}[3]{RESET} Cài Đặt Thời Gian Auto Restart (phút)",
+            f"  {BOLD}{C}[4]{RESET} Cài Đặt Chu Kỳ Re-check Acc Dính Captcha",
+            f"  {BOLD}{C}[5]{RESET} Bật / Tắt Auto Solve Captcha V2 (Nhấn & Giữ)      {opt_v2_tag}",
+            f"  {BOLD}{C}[6]{RESET} Cài Đặt Mode Join Server (Bật/Tắt & Link Server VIP)  {opt_join_tag}",
+            f"  {BOLD}{C}[7]{RESET} Cấu Hình Nhanh Tất Cả (Wizard Setup)",
+            f"  {BOLD}{R}[8]{RESET} ↩Quay Lại Menu Chính"
+        ]
+        for mo in m_opts:
+            print(f"{CYAN_NEON}│{RESET}{fit_ansi(mo, 86)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
         
         fix_tty()
         c = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy Settings{RESET} {PINK_NEON}❯{RESET} ").strip()
@@ -526,6 +629,47 @@ def settings_menu():
             time.sleep(1.5)
         elif c == '5':
             fix_tty()
+            if AUTO_SOLVE_CAPTCHA_V2 == "Enable":
+                AUTO_SOLVE_CAPTCHA_V2 = "Disable"
+                print(f"\n{Y}[*] Đã TẮT tính năng Auto Solve Captcha V2.{RESET}")
+            else:
+                AUTO_SOLVE_CAPTCHA_V2 = "Enable"
+                print(f"\n{G}[✓] Đã BẬT Auto Solve Captcha V2 (Tự động nhận diện và nhấn giữ đa ngôn ngữ)!{RESET}")
+            save_settings()
+            time.sleep(1.5)
+        elif c == '6':
+            fix_tty()
+            print(f"{CYAN_NEON}╭───────────────── CÀI ĐẶT MODE JOIN SERVER ─────────────────╮{RESET}")
+            print(f"{CYAN_NEON}│{RESET} {Y}Hỗ trợ:{RESET}")
+            print(f"{CYAN_NEON}│{RESET}   {G}• Link Private Server{RESET}: https://www.roblox.com/games/...?privateServerLinkCode=...")
+            print(f"{CYAN_NEON}│{RESET}   {G}• Share Link{RESET}         : https://roblox.com/share?code=...&type=Server")
+            print(f"{CYAN_NEON}│{RESET}   {G}• Deeplink{RESET}           : roblox://experiences/start?placeId=...&linkCode=...")
+            print(f"{CYAN_NEON}│{RESET}   {G}• Hoặc mã Link Code trực tiếp{RESET}")
+            print(f"{CYAN_NEON}╰─────────────────────────────────────────────────────────────╯{RESET}")
+            cur_txt = JOIN_SERVER_LINK if JOIN_SERVER_LINK else "Chưa có"
+            print(f"Trạng thái hiện tại: {PURPLE_NEON}{JOIN_SERVER_MODE}{RESET} | Link: {G}{cur_txt}{RESET}")
+            link_input = safe_input(f"\n{M}Nhập Link Server mới (Nhập '0' hoặc 'off' để TẮT, Enter giữ nguyên): {RESET}").strip()
+            if link_input.lower() in ['0', 'off', 'tat', 'tắt']:
+                JOIN_SERVER_MODE = "Disable"
+                print(f"\n{Y}[*] Đã TẮT Mode Join Server (Chuyển sang join thường theo Place ID).{RESET}")
+                save_settings()
+            elif link_input:
+                JOIN_SERVER_LINK = link_input
+                JOIN_SERVER_MODE = "Enable"
+                pid_extracted, _ = parse_server_link(link_input, target_place_id)
+                if pid_extracted and pid_extracted != target_place_id:
+                    target_place_id = pid_extracted
+                    print(f"{G}[+] Đã tự động đồng bộ Place ID từ link: {target_place_id}{RESET}")
+                print(f"{G}[✓] Đã BẬT Mode Join Server và lưu Link thành công!{RESET}")
+                save_settings()
+            else:
+                if JOIN_SERVER_LINK:
+                    JOIN_SERVER_MODE = "Enable" if JOIN_SERVER_MODE == "Disable" else JOIN_SERVER_MODE
+                    print(f"{G}[✓] Giữ nguyên link cũ. Trạng thái: {JOIN_SERVER_MODE}{RESET}")
+                    save_settings()
+            time.sleep(1.8)
+        elif c == '7':
+            fix_tty()
             p_id_raw = safe_input(f"{M}1. Nhập Place ID (Enter giữ {target_place_id}): {RESET}").strip()
             if p_id_raw == "0":
                 target_place_id = ""
@@ -547,10 +691,27 @@ def settings_menu():
                 nums = re.findall(r'\d+', k_acc_raw)
                 if nums and int(nums[0]) >= 10: CHECK_ACC_TIME_BLOCKED = int(nums[0])
                 
+            fix_tty()
+            v2_in = safe_input(f"{M}5. Bật Auto Solve Captcha V2? (Y/n, Enter giữ {AUTO_SOLVE_CAPTCHA_V2}): {RESET}").strip().lower()
+            if v2_in in ['n', 'no', '0', 'tat']:
+                AUTO_SOLVE_CAPTCHA_V2 = "Disable"
+            elif v2_in in ['y', 'yes', '1', 'bat']:
+                AUTO_SOLVE_CAPTCHA_V2 = "Enable"
+                
+            fix_tty()
+            js_in = safe_input(f"{M}6. Link VIP Server (Enter để giữ {JOIN_SERVER_LINK or 'Trống/Tắt'}, gõ 'off' để tắt): {RESET}").strip()
+            if js_in.lower() in ['off', '0', 'tat']:
+                JOIN_SERVER_MODE = "Disable"
+            elif js_in:
+                JOIN_SERVER_LINK = js_in
+                JOIN_SERVER_MODE = "Enable"
+                pid_extracted, _ = parse_server_link(js_in, target_place_id)
+                if pid_extracted: target_place_id = pid_extracted
+
             save_settings()
-            print(f"\n{G}[✓] Đã lưu toàn bộ cài đặt!{RESET}")
+            print(f"\n{G}[✓] Đã lưu cấu hình cài đặt thành công!{RESET}")
             time.sleep(1.5)
-        elif c == '6':
+        elif c == '8':
             break
 
 def scan_packages():
@@ -1153,13 +1314,12 @@ def boot_pkg_with_verify(pkg, max_retries=4):
         safe_root(f"su -c 'am force-stop {pkg}'")
         time.sleep(2)
 
-        # B) Launch đúng package, tránh dialog chọn app
-        if target_place_id:
-            # -p {pkg}: buộc intent vào đúng package này, không hỏi
-            # -f 0x10008000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK tránh tắt tab khác
+        # B) Launch đúng package (hỗ trợ cả Place ID lẫn Mode Join Server VIP)
+        launch_uri = build_roblox_launch_uri(pkg)
+        if launch_uri:
             safe_root(
                 f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-                f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
+                f"-d \"{launch_uri}\" 2>/dev/null'"
             )
         else:
             safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1'")
@@ -1180,13 +1340,16 @@ def boot_pkg_with_verify(pkg, max_retries=4):
     return False
 
 def launch_roblox_to_game(pkg):
-    """Bắn thẳng package vào game target_place_id để load trải nghiệm và kích hoạt captcha/bảo mật nếu có"""
+    """Bắn thẳng package vào game hoặc VIP Server để load trải nghiệm và kích hoạt captcha/bảo mật nếu có"""
     global target_place_id
-    pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
+    uri = build_roblox_launch_uri(pkg)
+    if not uri:
+        pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
+        uri = f"roblox://experiences/start?placeId={pid}"
     if not _is_pkg_active(pkg):
         safe_root(
             f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-            f"-d \"roblox://experiences/start?placeId={pid}\" 2>/dev/null'"
+            f"-d \"{uri}\" 2>/dev/null'"
         )
         time.sleep(3)
         if not _is_pkg_active(pkg):
@@ -1194,12 +1357,12 @@ def launch_roblox_to_game(pkg):
             time.sleep(2)
             safe_root(
                 f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-                f"-d \"roblox://experiences/start?placeId={pid}\" 2>/dev/null'"
+                f"-d \"{uri}\" 2>/dev/null'"
             )
     else:
         safe_root(
             f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-            f"-d \"roblox://experiences/start?placeId={pid}\" 2>/dev/null'"
+            f"-d \"{uri}\" 2>/dev/null'"
         )
 
 def _boot_worker(pkg, states):
@@ -1928,9 +2091,8 @@ def login_via_cookie():
         launched = False
         if ticket:
             print(f"{G}     [✓] Tạo Auth Ticket thành công: {ticket[:18]}...{RESET}")
-            if target_place_id:
-                deeplink = f"roblox://experiences/start?placeId={target_place_id}&authTicket={ticket}"
-            else:
+            deeplink = build_roblox_launch_uri(pkg, auth_ticket=ticket)
+            if not deeplink:
                 deeplink = f"roblox://experiences/start?placeId=4520749081&authTicket={ticket}"
 
             launch_cmd = f"am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW -d \"{deeplink}\""
@@ -1942,11 +2104,12 @@ def login_via_cookie():
                 print(f"{Y}     [!] Deeplink không phản hồi, chuyển sang mở trực tiếp...{RESET}")
 
         if not launched:
-            if target_place_id:
-                direct_cmd = f"am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={target_place_id}\""
+            uri_launch = build_roblox_launch_uri(pkg)
+            if uri_launch:
+                direct_cmd = f"am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW -d \"{uri_launch}\""
                 code, out, _ = _run_root_capture(direct_cmd, timeout=10)
                 if code == 0 and "Error:" not in out:
-                    print(f"{G}     [✓] Đã khởi động App qua Place ID Intent!{RESET}")
+                    print(f"{G}     [✓] Đã khởi động App qua Intent!{RESET}")
                     launched = True
 
             if not launched:
@@ -2664,11 +2827,84 @@ def safe_uiautomator_dump(timeout=5):
         return True, xml_str
     return False, ""
 
+# Danh sách từ khóa Đa Ngôn Ngữ cho Captcha V2 (Nhấn và Giữ / Press and Hold / Security Challenge)
+V2_HOLD_KEYWORDS = [
+    # Tiếng Việt
+    "nhấn và giữ", "nhấn giữ nút", "nhấn giữ", "chạm và giữ", "giữ nút",
+    # Tiếng Anh
+    "press and hold", "press & hold", "touch and hold", "tap and hold", "hold button",
+    # Tiếng Tây Ban Nha (Spanish)
+    "mantén presionado", "mantener presionado", "presione y mantenga", "toca y mantén",
+    # Tiếng Bồ Đào Nha (Portuguese)
+    "pressione e segure", "toque e segure", "mantenha pressionado",
+    # Tiếng Pháp (French)
+    "appuyez et maintenez", "maintenez enfoncé", "touchez et maintenez",
+    # Tiếng Đức (German)
+    "gedrückt halten", "drücken und halten", "berühren und halten",
+    # Tiếng Nga (Russian)
+    "нажмите и удерживайте", "нажмите и держите", "удерживайте",
+    # Tiếng Indonesia / Malaysia
+    "tekan dan tahan", "sentuh dan tahan",
+    # Tiếng Thổ Nhĩ Kỳ (Turkish)
+    "basılı tutun", "dokunun ve basılı tutun",
+    # Tiếng Ý (Italian)
+    "tieni premuto", "premi e tieni premuto",
+    # Tiếng Ba Lan (Polish)
+    "naciśnij i przytrzymaj", "dotknij i przytrzymaj",
+    # Tiếng Nhật (Japanese)
+    "長押し", "長押しして確認",
+    # Tiếng Hàn (Korean)
+    "길게 누르기", "길게 눌러", "길게 눌러 확인",
+    # Tiếng Trung (Giản thể & Phồn thể)
+    "按住", "按住以确认", "按住以確認", "长按", "長按",
+    # Tiếng Thái (Thai)
+    "กดค้างไว้", "แตะค้างไว้",
+    # Tiếng Ả Rập (Arabic)
+    "اضغط مع الاستمرار",
+    # Tiếng Hindi
+    "दबाकर रखें"
+]
+
+V2_CHALLENGE_HEADERS = [
+    # Tiếng Việt
+    "xác nhận bạn là người thật", "chứng minh bạn là người thật", "bảo mật", "thử thách bảo mật",
+    # Tiếng Anh
+    "security challenge", "confirm you are human", "confirm that you are human", "prove you are human",
+    # Tiếng Tây Ban Nha
+    "desafío de seguridad", "confirma que eres humano", "confirmar que eres humano",
+    # Tiếng Bồ Đào Nha
+    "desafio de segurança", "confirme que você é humano", "confirme que é humano",
+    # Tiếng Pháp
+    "défi de sécurité", "confirmez que vous êtes un humain",
+    # Tiếng Đức
+    "sicherheitsüberprüfung", "bestätigen sie, dass sie ein mensch sind",
+    # Tiếng Nga
+    "проверка безопасности", "подтвердите, что вы человек",
+    # Tiếng Indonesia
+    "tantangan keamanan", "konfirmasi bahwa anda là manusia", "konfirmasi bahwa anda adalah manusia",
+    # Tiếng Thổ Nhĩ Kỳ
+    "güvenlik sorgusu", "güvenlik doğrulaması", "insan olduğunuzu doğrulayın",
+    # Tiếng Ý
+    "sfida di sicurezza", "conferma che sei umano",
+    # Tiếng Ba Lan
+    "weryfikacja zabezpieczeń", "potwierdź, że jesteś człowiekiem",
+    # Tiếng Nhật
+    "セキュリティ認証", "人間であることを確認",
+    # Tiếng Hàn
+    "보안 챌린지", "사람임을 확인",
+    # Tiếng Trung
+    "安全验证", "安全驗證", "确认你是真人", "確認你是真人",
+    # Tiếng Thái
+    "การทดสอบความปลอดภัย", "ยืนยันว่าคุณเป็นมนุษย์",
+    # Tiếng Ả Rập
+    "تحدي الأمان", "تأكيد أنك إنسان"
+]
+
 def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
     """
-    Quét màn hình Android (bằng uiautomator dump an toàn, chống treo máy):
+    Quét màn hình Android hỗ trợ ĐA NGÔN NGỮ (bằng uiautomator dump an toàn, chống treo máy):
     - Nhận diện Captcha V1 (Arkose FunCaptcha, vòng xoay, ghép hình, challenge dialog/webview)
-    - Nhận diện Captcha V2 ('Nhấn và Giữ' / 'Bảo Mật' / 'Security Challenge')
+    - Nhận diện Captcha V2 ('Nhấn và Giữ' / 'Security Challenge') với MỌI ngôn ngữ (Anh, Việt, TBN, BĐN, Pháp, Đức, Nga, Nhật, Hàn, Trung, Thái...)
     
     Trả về dict:
       detected: bool
@@ -2696,23 +2932,41 @@ def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
         ]
         is_v1 = any(k in xml_lower for k in keywords_v1)
 
-        # 2. KIỂM TRA CAPTCHA V2 (Nhấn và Giữ / Security Challenge)
-        keywords_vn_v2 = ["nhấn giữ nút", "xác nhận bạn là người thật", "nhấn và giữ", "nhấn giữ"]
-        keywords_en_v2 = ["press and hold to confirm", "confirm you are human", "press and hold", "press & hold", "confirm that you are human", "touch and hold"]
-        has_vn_v2 = any(k in xml_lower for k in keywords_vn_v2)
-        has_en_v2 = any(k in xml_lower for k in keywords_en_v2)
-        has_sec_v2 = ("bảo mật" in xml_lower or "security" in xml_lower) and ("người thật" in xml_lower or "human" in xml_lower or "id tham chiếu" in xml_lower or "reference id" in xml_lower)
+        # 2. KIỂM TRA CAPTCHA V2 ĐA NGÔN NGỮ (Nhấn và Giữ / Press and Hold / Security Challenge)
+        has_hold_action = any(k in xml_lower for k in V2_HOLD_KEYWORDS)
+        has_challenge_hdr = any(k in xml_lower for k in V2_CHALLENGE_HEADERS)
+        
+        # Nhận diện Reference ID (Đa ngôn ngữ & UUID chuẩn)
+        ref_patterns = [
+            r'(?:id tham chiếu|reference id|id de referencia|id de référence|referenz-id|id di riferimento|referans kimliği|id referensi|참조 id|参照 id|参考 id|參考 id|รหัสอ้างอิง|ref id)[:\s]*([a-f0-9\-]+)',
+            r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+        ]
+        ref_id = "N/A"
+        for pat in ref_patterns:
+            ref_m = re.search(pat, xml_str, re.I)
+            if ref_m:
+                ref_id = ref_m.group(1)
+                break
 
-        is_v2 = (has_vn_v2 or has_en_v2 or has_sec_v2)
-
-        ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', xml_str, re.I)
-        ref_id = ref_m.group(1) if ref_m else "N/A"
+        has_ref_id = (ref_id != "N/A")
+        
+        # Điều kiện phát hiện V2:
+        # - Hoặc có từ khóa hành động Nhấn Giữ (bất kỳ ngôn ngữ nào)
+        # - Hoặc có tiêu đề bảo mật + (có ref_id HOẶC từ khóa người thật)
+        # - Hoặc có ref_id + (challenge / security / arkose)
+        is_v2 = (
+            has_hold_action or
+            (has_challenge_hdr and (has_ref_id or "human" in xml_lower or "người thật" in xml_lower or "humano" in xml_lower)) or
+            (has_ref_id and any(k in xml_lower for k in ["challenge", "bảo mật", "security", "arkose", "roblox"]))
+        )
 
         if is_v2:
             btn_coords = None
             try:
                 root = ET.fromstring(xml_str)
                 candidates = []
+                w_scr, h_scr = get_screen_resolution()
+                
                 for node in root.iter('node'):
                     text = (node.get('text') or '').strip()
                     desc = (node.get('content-desc') or '').strip()
@@ -2724,22 +2978,33 @@ def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
                     x1, y1, x2, y2 = map(int, m_b.groups())
                     cx = (x1 + x2) // 2
                     cy = (y1 + y2) // 2
-                    w = x2 - x1
-                    h = y2 - y1
-                    combined = (text or desc).lower()
+                    bw = x2 - x1
+                    bh = y2 - y1
+                    combined = f"{text} {desc}".lower().strip()
 
-                    if any(k in combined for k in ["để xác nhận", "xác nhận bạn", "người thật", "human", "nút để", "tham chiếu", "reference", "bảo mật", "security"]):
+                    # Bỏ qua các text mô tả hướng dẫn/tiêu đề dài (> 40 chars)
+                    if len(combined) > 40 and any(k in combined for k in ["xác nhận", "confirm", "human", "người thật", "tham chiếu", "reference"]):
                         continue
 
-                    if combined in ["nhấn và giữ", "press and hold", "press & hold"]:
-                        candidates.append((100, cx, cy))
-                    elif "nhấn và giữ" in combined or "press and hold" in combined or "press & hold" in combined:
-                        score = 50
+                    score = 0
+                    # 1. Khớp chính xác từ khóa Nhấn Giữ đa ngôn ngữ:
+                    if any(k in combined for k in V2_HOLD_KEYWORDS):
+                        score += 100
                         if "button" in cls.lower() or node.get('clickable') == 'true':
                             score += 30
+                    # 2. Clickable Button nằm ở vùng trung tâm (khu vực nút bấm chuẩn)
+                    elif ("button" in cls.lower() or node.get('clickable') == 'true') and bh >= 35 and bw >= 80:
+                        y_ratio = cy / max(1, h_scr)
+                        x_ratio = cx / max(1, w_scr)
+                        if 0.35 <= y_ratio <= 0.75 and 0.25 <= x_ratio <= 0.75:
+                            score += 60
+                            if 100 <= bw <= 700 and 40 <= bh <= 200:
+                                score += 20
+                        else:
+                            score += 15
+
+                    if score > 0:
                         candidates.append((score, cx, cy))
-                    elif "button" in cls.lower() and node.get('clickable') == 'true' and h >= 30 and w >= 80:
-                        candidates.append((20, cx, cy))
 
                 if candidates:
                     candidates.sort(key=lambda c: c[0], reverse=True)
@@ -2747,26 +3012,26 @@ def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
             except Exception:
                 pass
 
+            # Fallback 1: Regex quét bounds trực tiếp từ từ khóa đa ngôn ngữ
             if not btn_coords:
-                btn_patterns = [
-                    r'text="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-                    r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"',
-                    r'content-desc="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
-                    r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*content-desc="(?:\s*Nhấn và Giữ\s*|\s*Press and Hold\s*|\s*Press & Hold\s*)"'
-                ]
-                for pat in btn_patterns:
-                    m = re.search(pat, xml_str, re.I)
+                for kw in ["nhấn và giữ", "nhấn giữ", "press and hold", "press & hold", "touch and hold", "mantén presionado", "pressione e segure", "appuyez et maintenez", "gedrückt halten", "нажмите и удерживайте", "tekan dan tahan", "basılı tutun", "長押し", "길게 누르기", "按住", "กดค้างไว้"]:
+                    kw_esc = re.escape(kw)
+                    pat1 = rf'(?:text|content-desc)="[^"]*{kw_esc}[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+                    m = re.search(pat1, xml_str, re.I)
+                    if not m:
+                        pat2 = rf'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*(?:text|content-desc)="[^"]*{kw_esc}[^"]*"'
+                        m = re.search(pat2, xml_str, re.I)
                     if m:
                         x1, y1, x2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
                         btn_coords = ((x1 + x2) // 2, (y1 + y2) // 2)
                         break
 
+            # Fallback 2: Tính toán tọa độ theo tỷ lệ màn hình (tối ưu cho cả ngang và dọc)
             if not btn_coords or attempt > 1:
                 w, h = get_screen_resolution()
                 is_landscape = (w >= h)
                 if attempt == 1:
-                    if not btn_coords:
-                        btn_coords = (w // 2, int(h * 0.52)) if is_landscape else (w // 2, int(h * 0.45))
+                    btn_coords = (w // 2, int(h * 0.52)) if is_landscape else (w // 2, int(h * 0.45))
                 elif attempt == 2:
                     btn_coords = (w // 2, int(h * 0.62)) if is_landscape else (w // 2, int(h * 0.55))
                 else:
@@ -2775,7 +3040,7 @@ def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
             solved = False
             if auto_solve_v2 and btn_coords:
                 cx, cy = btn_coords
-                add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {Y}Phát hiện 'Nhấn và Giữ' (ID: {ref_id[:8]}.., Lần {attempt})! Đang giữ nút ({cx}, {cy}) 16s...{RESET}")
+                add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {Y}Phát hiện 'Nhấn và Giữ' (Ref: {ref_id[:8]}.., Lần {attempt})! Đang giữ nút ({cx}, {cy}) 16s...{RESET}")
                 safe_root(f"su -c 'input tap {cx} {cy}'", timeout=3)
                 time.sleep(0.3)
                 safe_root(f"su -c 'input swipe {cx} {cy} {cx} {cy} 16000'", timeout=20)
@@ -2784,10 +3049,14 @@ def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
                 ok_chk, chk_xml = safe_uiautomator_dump(timeout=5)
                 if ok_chk and chk_xml:
                     chk_lower = chk_xml.lower()
-                    still_has = any(k in chk_lower for k in keywords_vn_v2 + keywords_en_v2)
+                    still_has = any(k in chk_lower for k in V2_HOLD_KEYWORDS) or any(k in chk_lower for k in V2_CHALLENGE_HEADERS)
                     if not still_has:
                         solved = True
                         add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {G}[✓] Đã giữ 16s thành công vượt qua màn hình 'Nhấn và Giữ'!{RESET}")
+                else:
+                    # Màn hình UI đã đóng/chuyển tab -> Giải thành công
+                    solved = True
+                    add_log(f"[{pkg[-12:] if pkg else 'BẢO MẬT'}] {G}[✓] Màn hình bảo mật đã tắt!{RESET}")
 
             return {
                 "detected": True,
@@ -2810,6 +3079,47 @@ def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
         return {"detected": False, "type": None}
     except Exception:
         return {"detected": False, "type": None}
+
+def solve_captchav2_in_app(pkg, states=None):
+    """
+    Quy trình tự động giải Captcha V2 ('Nhấn và Giữ' / 'Press and Hold') đa ngôn ngữ:
+    1. Bật Roblox package để kích hoạt Challenge dialog.
+    2. Chờ 6s để giao diện load đầy đủ.
+    3. Quét đa ngôn ngữ và nhấn giữ 16s (tối đa 3 lần).
+    4. Trả về True nếu thành công giải quyết xong.
+    """
+    if not pkg:
+        return False
+    add_log(f"[{pkg[-12:]}] {Y}[AUTO CAPTCHA V2] Khởi động app để tự giải 'Nhấn và Giữ' (Multi-Language)...{RESET}")
+    launch_roblox_to_game(pkg)
+    time.sleep(6)
+
+    for attempt in range(1, 4):
+        cap_res = detect_in_app_captcha(pkg, auto_solve_v2=True, attempt=attempt)
+        if cap_res.get("detected") and cap_res.get("type") == "CAPTCHAV2":
+            if cap_res.get("solved"):
+                add_log(f"[{pkg[-12:]}] {G}[✓ CAPTCHA V2] Tự giải thành công 'Nhấn và Giữ' lần {attempt}!{RESET}")
+                if states and pkg in states:
+                    states[pkg]['is_blocked'] = False
+                    states[pkg]['captcha_type'] = None
+                    states[pkg]['block_reason'] = ''
+                    states[pkg]['text'] = 'Đã Giải V2 -> Vào Game'
+                    states[pkg]['color'] = G
+                return True
+            else:
+                add_log(f"[{pkg[-12:]}] {Y}[!] Thử lần {attempt} chưa qua, thử lại...{RESET}")
+                time.sleep(2)
+        elif not cap_res.get("detected"):
+            add_log(f"[{pkg[-12:]}] {G}[✓ CAPTCHA V2] Màn hình Captcha V2 đã biến mất! Acc đã sạch.{RESET}")
+            if states and pkg in states:
+                states[pkg]['is_blocked'] = False
+                states[pkg]['captcha_type'] = None
+                states[pkg]['block_reason'] = ''
+            return True
+            
+    add_log(f"[{pkg[-12:]}] {R}[CAPTCHA V2] Đã thử 3 lần chưa qua. Tạm tắt app và chờ chu kỳ re-check ({CHECK_ACC_TIME_BLOCKED}s)...{RESET}")
+    _kill_pkg(pkg)
+    return False
 
 # Giữ tương thích ngược với code cũ gọi detect_press_and_hold_screen
 detect_press_and_hold_screen = detect_in_app_captcha
@@ -2969,14 +3279,32 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
             state['color'] = Y
             add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
             add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V1] Không vào game! Đã tắt app, chờ đến khi Cookie sạch lại sẽ tự Rejoin...{RESET}")
+            return True
         else:
             state['captcha_type'] = 'CAPTCHAV2'
-            state['text'] = "Dính Captcha V2 (Chờ)"
-            state['color'] = Y
             add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
-            add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Tạm dừng vào game, chờ kiểm tra lại...{RESET}")
-
-        return True
+            if AUTO_SOLVE_CAPTCHA_V2 == "Enable":
+                state['text'] = "Tự Giải Captcha V2..."
+                state['color'] = Y
+                add_log(f"[{pkg[-12:]}] {G}[CAPTCHA V2] Đang tự động giải Captcha V2 (Nhấn và Giữ đa ngôn ngữ)...{RESET}")
+                ok_v2 = solve_captchav2_in_app(pkg, states)
+                if ok_v2:
+                    state['is_blocked'] = False
+                    state['block_reason'] = ''
+                    state['text'] = "Đã Giải V2 -> Rejoin"
+                    state['color'] = G
+                    return False  # Đã giải xong, cho phép tiếp tục vào game!
+                else:
+                    state['is_blocked'] = True
+                    state['text'] = "Dính Captcha V2 (Chờ)"
+                    state['color'] = Y
+                    return True
+            else:
+                state['is_blocked'] = True
+                state['text'] = "Dính Captcha V2 (Chờ)"
+                state['color'] = Y
+                add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Auto Solve đang Tắt, tạm dừng chờ kiểm tra lại...{RESET}")
+                return True
     elif status == 'OK':
         if state.get('is_blocked'):
             state['is_blocked'] = False
@@ -3161,6 +3489,17 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
                 # Đến chu kỳ kiểm tra lại xem acc đã sạch chưa
                 if time_passed >= recheck_interval:
+                    # Nếu dính Captcha V2 và Auto Solve đang BẬT: tự động thử giải lại trong app
+                    if state.get('captcha_type') == 'CAPTCHAV2' and AUTO_SOLVE_CAPTCHA_V2 == "Enable":
+                        add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Đến chu kỳ re-check, đang tự động giải lại Captcha V2...{RESET}")
+                        ok_solved = solve_captchav2_in_app(pkg, states)
+                        state['last_acc_check'] = current_time
+                        if ok_solved:
+                            state['is_blocked'] = False
+                            state['block_reason'] = ''
+                            state['warmup_until'] = current_time + 45
+                            continue
+
                     cookie = extract_roblox_cookie(pkg) or state.get('cached_cookie')
                     state['last_acc_check'] = current_time
                     if cookie:
@@ -3217,7 +3556,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 last_scr_chk = state.get('last_screen_security_check', 0)
                 if current_time - last_scr_chk >= 8:
                     state['last_screen_security_check'] = current_time
-                    cap_res = detect_in_app_captcha(pkg, auto_solve_v2=False)
+                    cap_res = detect_in_app_captcha(pkg, auto_solve_v2=(AUTO_SOLVE_CAPTCHA_V2 == "Enable"))
                     if cap_res.get("detected"):
                         c_type = cap_res.get("type")
                         if c_type == "CAPTCHA_V1":
@@ -3831,14 +4170,16 @@ def launch_roblox_and_join_game(pkg):
 
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(2)
-    if target_place_id:
+    uri_k = build_roblox_launch_uri(pkg)
+    if uri_k:
         safe_root(
             f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-            f"-d \"roblox://experiences/start?placeId={target_place_id}\" 2>/dev/null'"
+            f"-d \"{uri_k}\" 2>/dev/null'"
         )
     else:
         safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
-    add_log(f"[Key] Bắn {pkg[-14:]} vào game (Place: {target_place_id or 'Sảnh'})")
+    target_lbl = "VIP Server" if (JOIN_SERVER_MODE == "Enable" and JOIN_SERVER_LINK) else f"Place: {target_place_id or 'Sảnh'}"
+    add_log(f"[Key] Bắn {pkg[-14:]} vào game ({target_lbl})")
 
 
 def obtain_delta_getkey_url(pkg, stop_event, max_wait_secs=120):
@@ -4389,19 +4730,23 @@ def main():
         raw_sc = AUTO_INJECT_SCRIPTS.get(SELECTED_SCRIPT_KEY, {}).get("name", "Custom" if SELECTED_SCRIPT_KEY == "custom" else "Tắt")
         sc_display = f"{GOLD_NEON}[{raw_sc}{def_tag}]{RESET}"
 
-        box = f"""{CYAN_NEON}╭─────────────────────── ⚡ MENU ĐIỀU KHIỂN ─────────────────────╮{RESET}
-{CYAN_NEON}│{RESET}                                                               {CYAN_NEON}│{RESET}
-{CYAN_NEON}│{RESET}   {BOLD}{C}[1]{RESET} {W}Quét & Chọn Package Roblox{RESET}     {vip_tag}
-{CYAN_NEON}│{RESET}   {BOLD}{C}[2]{RESET} {W}Cài Đặt Game ID & Script{RESET}       {sc_display}
-{CYAN_NEON}│{RESET}   {BOLD}{C}[3]{RESET} {W}Bắt Đầu Auto Rejoin{RESET}             {BLUE_ICE}(Live Dashboard){RESET}      {CYAN_NEON}│{RESET}
-{CYAN_NEON}│{RESET}   {BOLD}{C}[4]{RESET} {W}Login Cookie Vào App{RESET}            {PURPLE_NEON}(Direct Inject){RESET}       {CYAN_NEON}│{RESET}
-{CYAN_NEON}│{RESET}   {BOLD}{C}[5]{RESET} {W}Quản Lý Delta Key & Bypass{RESET}      {GOLD_NEON}(Bacon API){RESET}           {CYAN_NEON}│{RESET}
-{CYAN_NEON}│{RESET}   {BOLD}{C}[6]{RESET} {W}Kiểm Tra License Delta{RESET}          {GRAY_LIGHT}(Test File){RESET}           {CYAN_NEON}│{RESET}
-{CYAN_NEON}│{RESET}   {BOLD}{C}[7]{RESET} {W}Trạng Thái Acc / Captcha{RESET}        {PINK_NEON}(Diagnostic){RESET}          {CYAN_NEON}│{RESET}
-{CYAN_NEON}│{RESET}   {BOLD}{R}[8]{RESET} {W}Thoát Chương Trình{RESET}                                          {CYAN_NEON}│{RESET}
-{CYAN_NEON}│{RESET}                                                               {CYAN_NEON}│{RESET}
-{CYAN_NEON}╰───────────────────────────────────────────────────────────────╯{RESET}"""
-        print(box)
+        main_items = [
+            f"   {BOLD}{C}[1]{RESET} {W}Quét & Chọn Package Roblox{RESET}     {vip_tag}",
+            f"   {BOLD}{C}[2]{RESET} {W}Cài Đặt Hệ Thống & Script{RESET}      {sc_display}",
+            f"   {BOLD}{C}[3]{RESET} {W}Bắt Đầu Auto Rejoin{RESET}             {BLUE_ICE}(Live Dashboard){RESET}",
+            f"   {BOLD}{C}[4]{RESET} {W}Login Cookie Vào App{RESET}            {PURPLE_NEON}(Direct Inject){RESET}",
+            f"   {BOLD}{C}[5]{RESET} {W}Quản Lý Delta Key & Bypass{RESET}      {GOLD_NEON}(Bacon API){RESET}",
+            f"   {BOLD}{C}[6]{RESET} {W}Kiểm Tra License Delta{RESET}          {GRAY_LIGHT}(Test File){RESET}",
+            f"   {BOLD}{C}[7]{RESET} {W}Trạng Thái Acc / Captcha{RESET}        {PINK_NEON}(Diagnostic){RESET}",
+            f"   {BOLD}{R}[8]{RESET} {W}Thoát Chương Trình{RESET}"
+        ]
+        print(f"{CYAN_NEON}╭─────────────────────────────── ⚡ MENU ĐIỀU KHIỂN ────────────────────────────────────╮{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi('', 86)}{CYAN_NEON}│{RESET}")
+        for mi in main_items:
+            print(f"{CYAN_NEON}│{RESET}{fit_ansi(mi, 86)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}│{RESET}{fit_ansi('', 86)}{CYAN_NEON}│{RESET}")
+        print(f"{CYAN_NEON}╰──────────────────────────────────────────────────────────────────────────────────────╯{RESET}")
+# box printed above
         try:
             fix_tty()
             choice = safe_input(f"\n{BOLD}{CYAN_NEON}HuDy{RESET} {PINK_NEON}❯{RESET} ").strip()
