@@ -2265,7 +2265,15 @@ def inject_cookie_webview(pkg, cookie):
     return success_count > 0
 
 def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
-    """Cập nhật các SharedPrefs liên quan mà không làm mất node bool/int/set."""
+    """
+    Tiêm trực tiếp Cookie vào SharedPreferences của Roblox và Delta Lite:
+    1. Cốt lõi kiến trúc: Ghi trực tiếp vào 'WebViewCookieHandlerNativeStorage.xml'
+       (Hệ thống NativeCookieStorage fl.e của Roblox đọc file này và tự động
+        đồng bộ Cookie sang WebView CookieManager và OkHttp Engine khi mở App).
+    2. Ghi đè flag '__migrated_from_webview_v3__' = true để kích hoạt chế độ nạp trực tiếp.
+    3. Cập nhật 'webView_backup.xml', '{pkg}_preferences.xml', 'com.roblox.client_preferences.xml'.
+    4. Cập nhật tất cả các file XML khác có thẻ <map> trong shared_prefs.
+    """
     cookie = _normalize_roblosecurity_cookie(cookie)
     if not cookie:
         return False
@@ -2281,8 +2289,10 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
     if code == 0 and files_str:
         xml_files = [f.strip() for f in files_str.splitlines() if f.strip() and f.strip().endswith('.xml')]
 
-    # Các file SharedPreferences mục tiêu
+    # Các file SharedPreferences thiết yếu theo phân tích mã nguồn Roblox NativeCookieStorage (fl.e & ni.s)
     essential_files = [
+        f"{shared_prefs_dir}/WebViewCookieHandlerNativeStorage.xml",
+        f"{shared_prefs_dir}/webView_backup.xml",
         f"{shared_prefs_dir}/{pkg}_preferences.xml",
         f"{shared_prefs_dir}/com.roblox.client_preferences.xml",
         f"{shared_prefs_dir}/AppPreferences.xml"
@@ -2327,13 +2337,37 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
         if root_el is None:
             root_el = ET.Element('map')
 
-        # Cập nhật key string
-        for key, value in updates.items():
-            old_nodes = [node for node in list(root_el) if node.get('name') == key]
-            for node in old_nodes:
-                root_el.remove(node)
-            el = ET.SubElement(root_el, 'string', name=key)
-            el.text = value
+        fname = os.path.basename(xml_path)
+
+        # 1. WebViewCookieHandlerNativeStorage.xml - Hệ thống lưu trữ Native Cookie của Roblox (fl.e)
+        if fname == "WebViewCookieHandlerNativeStorage.xml":
+            # Đảm bảo flag __migrated_from_webview_v3__ = true
+            for n in [x for x in list(root_el) if x.get('name') == '__migrated_from_webview_v3__']:
+                root_el.remove(n)
+            ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v3__', value='true')
+
+            # Gán trực tiếp .ROBLOSECURITY và ROBLOSECURITY
+            for k in ['.ROBLOSECURITY', 'ROBLOSECURITY']:
+                for n in [x for x in list(root_el) if x.get('name') == k]:
+                    root_el.remove(n)
+                el = ET.SubElement(root_el, 'string', name=k)
+                el.text = cookie
+
+        # 2. webView_backup.xml - ShellCookieHandler backup (ni.s)
+        elif fname == "webView_backup.xml":
+            for k in ['roblox.com', 'roblox.com-2']:
+                for n in [x for x in list(root_el) if x.get('name') == k]:
+                    root_el.remove(n)
+                el = ET.SubElement(root_el, 'string', name=k)
+                el.text = cookie
+
+        # 3. Các file Preferences thông thường
+        else:
+            for key, value in updates.items():
+                for n in [x for x in list(root_el) if x.get('name') == key]:
+                    root_el.remove(n)
+                el = ET.SubElement(root_el, 'string', name=key)
+                el.text = value
 
         xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(root_el, encoding='unicode')
         fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
@@ -2345,94 +2379,6 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
             f"chown {uid}:{gid} '{xml_path}' && "
             f"chmod 660 '{xml_path}' && "
             f"(chcon -R --reference='/data/data/{pkg}' \"{xml_path}\" 2>/dev/null || restorecon -F \"{xml_path}\" 2>/dev/null || true)"
-        )
-        write_code, _, _ = _run_root_capture(fix_xml_cmd)
-        try: os.remove(temp_file)
-        except: pass
-        if write_code == 0:
-            success_count += 1
-
-    return success_count > 0
-
-def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
-    """Cập nhật các SharedPrefs liên quan mà không làm mất node bool/int/set."""
-    cookie = _normalize_roblosecurity_cookie(cookie)
-
-    shared_prefs_dir = f"/data/data/{pkg}/shared_prefs"
-    code, files_str, _ = _run_root_capture(f"ls '{shared_prefs_dir}'/*.xml 2>/dev/null", timeout=5)
-    if code != 0:
-        return False
-    if not files_str:
-        return False
-
-    uid, gid = get_pkg_uid_gid(pkg)
-    xml_files = files_str.splitlines()
-    tmp_dir = os.path.join(tempfile.gettempdir(), 'hudy_cookie_tmp')
-    try: os.makedirs(tmp_dir, exist_ok=True)
-    except: tmp_dir = tempfile.gettempdir()
-    os.makedirs(tmp_dir, exist_ok=True)
-
-    success_count = 0
-    for xml_path in xml_files:
-        xml_path = xml_path.strip()
-        if not xml_path:
-            continue
-        read_code, raw, _ = _run_root_capture(f"cat '{xml_path}' 2>/dev/null", timeout=4)
-        if read_code != 0:
-            continue
-        if '<map>' not in raw:
-            continue
-
-        xml_name = os.path.basename(xml_path).lower()
-        is_target_xml = (
-            'preferences' in xml_name or
-            any(key in xml_name for key in ('roblox', 'auth', 'user', 'session', 'token')) or
-            'ROBLOSECURITY' in raw or 'RobloxSecurityToken' in raw
-        )
-        if not is_target_xml:
-            continue
-
-        try:
-            root_el = ET.fromstring(raw)
-        except:
-            continue
-
-        updates = {
-            'ROBLOSECURITY': cookie,
-            '.ROBLOSECURITY': cookie,
-            'RobloxSecurityToken': cookie
-        }
-        if user_name:
-            updates.update({
-                'Username': str(user_name),
-                'RobloxUsername': str(user_name),
-                'RBX_USERNAME': str(user_name)
-            })
-        if user_id:
-            updates.update({
-                'UserId': str(user_id),
-                'RobloxUserId': str(user_id),
-                'RBX_USER_ID': str(user_id)
-            })
-
-        # Chỉ thay đúng key string cần thiết; giữ nguyên mọi node khác.
-        for key, value in updates.items():
-            old_nodes = [node for node in list(root_el) if node.get('name') == key]
-            for node in old_nodes:
-                root_el.remove(node)
-            el = ET.SubElement(root_el, 'string', name=key)
-            el.text = value
-
-        xml_output = '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n' + ET.tostring(root_el, encoding='unicode')
-        fd, temp_file = tempfile.mkstemp(suffix='.xml', prefix='cookie_', dir=tmp_dir)
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            f.write(xml_output)
-
-        fix_xml_cmd = (
-            f"cp '{temp_file}' '{xml_path}' && "
-            f"chown {uid}:{gid} '{xml_path}' && "
-            f"chmod 660 '{xml_path}' && "
-            f"(restorecon '{xml_path}' 2>/dev/null || true)"
         )
         write_code, _, _ = _run_root_capture(fix_xml_cmd)
         try: os.remove(temp_file)
@@ -2795,23 +2741,24 @@ def login_via_cookie():
         print(f"{Y}  ├─ [*] Đang tạo Roblox Auth Ticket...{RESET}")
         ticket, t_msg = get_auth_ticket(cur_cookie)
 
-        # 6. Khởi chạy ứng dụng (dùng FLAG_ACTIVITY_NEW_TASK 0x10000000 hoặc 0x14000000 chống crash EGL)
+        # 6. Khởi chạy ứng dụng (dùng FLAG_ACTIVITY_NEW_TASK 0x14000000)
         print(f"{Y}  └─ [*] Đang khởi động ứng dụng...{RESET}")
         launched = False
         if ticket:
             print(f"{G}     [✓] Tạo Auth Ticket thành công: {ticket[:18]}...{RESET}")
-            # Kích hoạt Intent đăng nhập chính thức bằng roblox://navigation (vào Home đã đăng nhập)
+            # Kích hoạt Intent đăng nhập chính thức bằng roblox://navigation
             nav_deeplink = f"roblox://navigation?authTicket={ticket}"
             code, out, _ = _run_root_capture(f"am start -p {pkg} -f 0x14000000 -a android.intent.action.VIEW -d \"{nav_deeplink}\"", timeout=10)
             if code == 0 and "Error:" not in out:
                 print(f"{G}     [✓] Đã kích hoạt Đăng Nhập qua Auth Ticket Deeplink (roblox://navigation)!{RESET}")
                 launched = True
             else:
-                # Thử các variant intent khác cho bản clone/mod
+                # Thử các scheme & activity chính thức từ APK (roblox, robloxmobile, robloxglobal)
                 alt_intents = [
                     f"am start -p {pkg} -f 0x14000000 -a android.intent.action.VIEW -d \"roblox://navigation/home?authTicket={ticket}\"",
-                    f"am start -n {pkg}/com.roblox.client.Activity.WebLoginActivity -f 0x14000000 --es authTicket \"{ticket}\"",
-                    f"am start -p {pkg} -f 0x14000000 -a android.intent.action.VIEW -d \"robloxmobile://navigation?authTicket={ticket}\""
+                    f"am start -p {pkg} -f 0x14000000 -a android.intent.action.VIEW -d \"robloxmobile://navigation?authTicket={ticket}\"",
+                    f"am start -p {pkg} -f 0x14000000 -a android.intent.action.VIEW -d \"robloxglobal://navigation?authTicket={ticket}\"",
+                    f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x14000000 --es authTicket \"{ticket}\""
                 ]
                 for alt_cmd in alt_intents:
                     c_alt, out_alt, _ = _run_root_capture(alt_cmd, timeout=8)
@@ -2823,10 +2770,12 @@ def login_via_cookie():
             print(f"{Y}     [!] Không tạo được Auth Ticket ({t_msg}). Khởi chạy bằng Launcher với Cookie đã nạp...{RESET}")
 
         if not launched:
-            # Mở App qua Launcher tiêu chuẩn để WebView tự nạp SQLite DB Cookie
+            # Mở App qua Launcher chính thức của APK (com.roblox.client.startup.ActivitySplash / LauncherAliasMain)
             launcher_cmds = [
-                f"am start -n {pkg}/com.roblox.client.Activity.SplashActivity -f 0x10000000",
-                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000",
+                f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x14000000",
+                f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -f 0x14000000",
+                f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -f 0x14000000",
+                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x14000000",
                 f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1"
             ]
             for l_cmd in launcher_cmds:
