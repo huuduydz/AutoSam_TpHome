@@ -8,6 +8,6 @@ _G.boss = {"Sea King", "Hydra","Ghost Ship"}
 _G.tool = {"Sword", "Fruit","Melee"} 
 _G.skill = {"M1", "Z", "X", "C","V","B","E"}
 _G.BossEarlyJoinSec = 60
-_G.HopSpeed = 0.5
+_G.HopSpeed = 0.25
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/kaitun",true))()
