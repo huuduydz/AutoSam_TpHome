@@ -12,7 +12,7 @@ _G.AutoRedeemCodes =  true
 _G.buso =true
 _G.ken = true
 _G.tool =  {"Melee", "Sword", "Fruit"}
-_G.FarmDistance = 8
+_G.FarmDistance = 10
 _G.SetSailDistance = 10
 _G.LowGfx =  true
 
