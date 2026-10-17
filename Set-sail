@@ -1,1 +1,92 @@
 print(123)
+-- =============================================================================
+-- HUDY HUB SECURITY SHIELD - LOADER HANDSHAKE & ANTI-BACKUP PROTECTION
+-- =============================================================================
+local _SHA256 = (function()
+    local b_and  = bit32.band
+    local b_or   = bit32.bor
+    local b_xor  = bit32.bxor
+    local b_not  = bit32.bnot
+    local b_rsh  = bit32.rshift
+    local b_lsh  = bit32.lshift
+    local s_char = string.char
+    local s_byte = string.byte
+    local s_sub  = string.sub
+    local s_fmt  = string.format
+    local s_gsub = string.gsub
+    local m_floor = math.floor
+    local K = {
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    }
+    local function rotr(n,b) return b_or(b_rsh(n,b),b_lsh(n,32-b)) end
+    local function pad(msg)
+        local bHi = m_floor(#msg*8/2^32); local bLo = (#msg*8)%2^32
+        msg = msg .. s_char(128)
+        while #msg%64 ~= 56 do msg = msg .. s_char(0) end
+        return msg .. s_char(m_floor(bHi/16777216)%256,m_floor(bHi/65536)%256,m_floor(bHi/256)%256,bHi%256,
+                             m_floor(bLo/16777216)%256,m_floor(bLo/65536)%256,m_floor(bLo/256)%256,bLo%256)
+    end
+    local function digest(msg)
+        msg = pad(msg)
+        local h0,h1,h2,h3,h4,h5,h6,h7 = 0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19
+        for blk=1,#msg,64 do
+            local c = s_sub(msg, blk, blk+63); local w = {}
+            for i=1,16 do local o=(i-1)*4; w[i]=b_or(b_lsh(s_byte(c,o+1),24),b_lsh(s_byte(c,o+2),16),b_lsh(s_byte(c,o+3),8),s_byte(c,o+4)) end
+            for i=17,64 do w[i]=b_and(w[i-16]+b_xor(rotr(w[i-15],7),rotr(w[i-15],18),b_rsh(w[i-15],3))+w[i-7]+b_xor(rotr(w[i-2],17),rotr(w[i-2],19),b_rsh(w[i-2],10)),0xffffffff) end
+            local a,b,c2,d,e,f,g,h = h0,h1,h2,h3,h4,h5,h6,h7
+            for i=1,64 do
+                local t1=b_and(h+b_xor(rotr(e,6),rotr(e,11),rotr(e,25))+b_xor(b_and(e,f),b_and(b_not(e),g))+K[i]+w[i],0xffffffff)
+                local t2=b_and(b_xor(rotr(a,2),rotr(a,13),rotr(a,22))+b_xor(b_and(a,b),b_and(a,c2),b_and(b,c2)),0xffffffff)
+                h=g;g=f;f=e;e=b_and(d+t1,0xffffffff);d=c2;c2=b;b=a;a=b_and(t1+t2,0xffffffff)
+            end
+            h0=b_and(h0+a,0xffffffff);h1=b_and(h1+b,0xffffffff);h2=b_and(h2+c2,0xffffffff);h3=b_and(h3+d,0xffffffff)
+            h4=b_and(h4+e,0xffffffff);h5=b_and(h5+f,0xffffffff);h6=b_and(h6+g,0xffffffff);h7=b_and(h7+h,0xffffffff)
+        end
+        return s_fmt('%08x%08x%08x%08x%08x%08x%08x%08x',h0,h1,h2,h3,h4,h5,h6,h7)
+    end
+    local function hexToBin(hex) return s_gsub(hex, '%x%x', function(h) return s_char(tonumber(h,16)) end) end
+    return { digest = digest, hexToBin = hexToBin }
+end)()
+
+(function(payload)
+    local _LOADER_SECRET = "HuDyKaitunSea3_SecureLoader_2026_xK9mQr7a"
+    local function _Validate(p)
+        if type(p) ~= "table" then
+            return false, "Không tìm thấy session handshake từ Loader!"
+        end
+        local lp = game:GetService("Players").LocalPlayer
+        local uid = lp and lp.UserId or 0
+        if p.UserId ~= uid then
+            return false, "UserId phiên chơi không khớp với Loader!"
+        end
+        local now = os.time()
+        if not p.Timestamp or math.abs(now - p.Timestamp) > 30 then
+            return false, "Phiên khởi chạy đã hết hạn (Chống chạy version backup cũ)!"
+        end
+        local rawMsg = tostring(uid) .. ":" .. tostring(p.Timestamp) .. ":" .. _LOADER_SECRET
+        local expected = _SHA256.digest(rawMsg)
+        if p.Token ~= expected then
+            return false, "Chữ ký xác thực phiên không hợp lệ!"
+        end
+        return true
+    end
+
+    local isValid, errReason = _Validate(payload)
+    if not isValid then
+        warn("[HuDy Hub Security] ❌ Từ chối khởi chạy: " .. tostring(errReason))
+        pcall(function()
+            local lp = game:GetService("Players").LocalPlayer
+            if lp then
+                lp:Kick("\n\n[HuDy Hub Security Shield]\n⚠️ Phiên bản không hợp lệ hoặc bị sao chép trái phép!\nVui lòng khởi chạy thông qua Loader chính thức (loader_kaitun_sea3.lua).\n")
+            end
+        end)
+        error("[HuDy Security] Invalid launch session. Vui lòng chạy qua loader_kaitun_sea3.lua!", 0)
+    end
+end)(...)
