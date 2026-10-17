@@ -1,0 +1,17 @@
+_G.tool =  {"Melee", "Sword", "Fruit"}
+_G.FarmDistance = 8
+_G.SetSailDistance = 10
+_G.LowGfx =  true
+_G.BossFarm = {
+    ["Abyssal Tyrant"] = false,
+    ["Chaos Kraken"] = true,
+    ["Drakenfyr"] = true,
+    ["Deepsea Crusher"] = true,
+    ["Sea Serpent"] = true,
+}
+_G.BossEarlyJoinSec = 60
+_G.CraftRod = true
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/NTTTTTTTT/upload/refs/heads/main/content/56b0748fb6fb4607b14634fee0131034_obf.lua",true))()
+
+
