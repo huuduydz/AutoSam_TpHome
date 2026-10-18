@@ -1536,7 +1536,8 @@ def inject_user_script():
         is_direct_code = CUSTOM_SCRIPT_IS_CODE
 
     if not script_content_raw or SELECTED_SCRIPT_KEY == "0":
-        print(f"{Y}[*] Không inject user script (Tắt hoặc chưa có nội dung).{RESET}")
+        safe_root("su -c 'find /sdcard/ -maxdepth 5 -type f -name \"*user_autoinject.lua\" -delete 2>/dev/null'")
+        print(f"{Y}[*] Đã xóa sạch user_autoinject.lua trong autoexec (Chế độ: Tắt).{RESET}")
         return
 
     print(f"{G}[+] Đang inject: {C}{script_name}{RESET}...")
@@ -5254,6 +5255,18 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             state['heartbeat_misses'] = 0
             diff = current_time - last_ping
             if diff <= 120:
+                # Kiểm tra app có còn chạy thực tế hay đã bị văng (crashed)
+                if not is_app_running(pkg):
+                    state['in_game'] = False
+                    state['text'] = "App Văng -> Rejoin..."
+                    state['color'] = R
+                    add_log(f"[{pkg[-12:]}] {R}[VĂNG APP] Phát hiện app đã bị văng (crashed) ra màn hình chính! Đang tự động mở lại...{RESET}")
+                    with pkg_restart_locks[pkg]:
+                        force_restart_app(pkg, states, current_time, "App Văng (Crash)!", R)
+                    last_ok_ping[pkg] = current_time
+                    stop_event.wait(5)
+                    continue
+
                 state['text'] = f"Đang Farm ({int(diff)}s)"
                 state['color'] = G
                 state['in_game'] = True
