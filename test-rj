@@ -212,9 +212,9 @@ AUTO_INJECT_SCRIPTS = {
         "desc": "Script Hop Server Fin_Tail"
     },
     "2": {
-        "name": "Hop_Tear",
-        "url": "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/Tear",  # <-- [2] THAY LINK SCRIPT HOP_TEAR TẠI ĐÂY
-        "desc": "Script Hop Server Tear"
+        "name": "Hop_Setsail",
+        "url": "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hehe",  # <-- [2] THAY LINK SCRIPT HOP_TEAR TẠI ĐÂY
+        "desc": "Script Hop Server Setsail"
     },
     "3": {
         "name": "Main_KingLegacy",
