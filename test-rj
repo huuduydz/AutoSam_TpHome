@@ -172,12 +172,14 @@ C_GRAY_LIGHT  = '\033[38;5;250m'
 # =====================================================================
 selected_packages = []
 target_place_id = "4520749081"
-COOKIE_LOGIN_REVISION = "2026-10-08 (Direct Clean Overwrite & Deep Stale Purge Specialist)"
+COOKIE_LOGIN_REVISION = "2026-10-18 (Auto Stale Cookie Purge & Auto-Replace Dead Acc)"
 COOKIE_LOGIN_APP_LOAD_WAIT = 6
 kill_all_time = 0
 json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
 heartbeat_last_check = {}     # {pkg: {acc_name: last_check_time}}
 CLAIMED_NAMES = set()
+states = {}                   # Lưu trạng thái runtime của các package
+DEAD_COOKIES = set()          # Danh sách đen lưu các Cookie đã hết hạn (401 EXPIRED)
 
 # Tùy chọn giao diện
 CHECK_EXECUTOR_METHOD = "Disable"
@@ -210,8 +212,8 @@ AUTO_INJECT_SCRIPTS = {
         "desc": "Script Hop Server Fin_Tail"
     },
     "2": {
-        "name": "setsails",
-        "url": "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/hehe",  # <-- [2] THAY LINK SCRIPT HOP_TEAR TẠI ĐÂY
+        "name": "Hop_Tear",
+        "url": "https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/Tear",  # <-- [2] THAY LINK SCRIPT HOP_TEAR TẠI ĐÂY
         "desc": "Script Hop Server Tear"
     },
     "3": {
@@ -555,8 +557,8 @@ def _normalize_roblosecurity_cookie(cookie):
         cookie = match.group(1).strip().strip('\'"')
     return cookie
 
-def load_cookies_from_download():
-    """Đọc danh sách cookie Roblox từ file cookie.txt / cookies.txt trong Download."""
+def load_cookies_from_download(include_dead=False):
+    """Đọc danh sách cookie Roblox từ file cookie.txt / cookies.txt trong Download (mặc định lọc bỏ cookie chết)."""
     candidates = ["cookie.txt", "cookies.txt", "cookie", "cookies"]
     fpath = find_file_in_download(candidates)
     if not fpath:
@@ -570,13 +572,44 @@ def load_cookies_from_download():
                     continue
                 clean_c = _normalize_roblosecurity_cookie(line)
                 if clean_c and clean_c not in cookies:
-                    cookies.append(clean_c)
+                    if include_dead or clean_c not in DEAD_COOKIES:
+                        cookies.append(clean_c)
     except:
         pass
     return cookies, fpath
 
+def remove_dead_cookie_from_download(dead_cookie):
+    """Xóa cookie đã hết hạn (401) khỏi file cookie.txt trong Download để không đọc lại cookie cũ."""
+    global DEAD_COOKIES
+    clean_dead = _normalize_roblosecurity_cookie(dead_cookie)
+    if not clean_dead:
+        return
+    DEAD_COOKIES.add(clean_dead)
+    candidates = ["cookie.txt", "cookies.txt", "cookie", "cookies"]
+    fpath = find_file_in_download(candidates)
+    if not fpath or not os.path.exists(fpath):
+        return
+    try:
+        new_lines = []
+        changed = False
+        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                clean_l = _normalize_roblosecurity_cookie(stripped)
+                if clean_l == clean_dead or (clean_l and clean_l in DEAD_COOKIES):
+                    changed = True
+                    continue
+                new_lines.append(stripped)
+        if changed:
+            content = "\n".join(new_lines) + ("\n" if new_lines else "")
+            write_file_safe(fpath, content)
+    except:
+        pass
+
 def save_cookie_to_download(cookie, append=True):
-    """Lưu cookie vào /storage/emulated/0/Download/cookie.txt."""
+    """Lưu cookie vào /storage/emulated/0/Download/cookie.txt (tự động loại bỏ cookie chết)."""
     clean_c = _normalize_roblosecurity_cookie(cookie)
     if not clean_c:
         return None
@@ -588,7 +621,9 @@ def save_cookie_to_download(cookie, append=True):
                 for line in f:
                     l = line.strip()
                     if l and not l.startswith(('#', '//', '--')):
-                        existing.append(l)
+                        norm_l = _normalize_roblosecurity_cookie(l)
+                        if norm_l and norm_l not in DEAD_COOKIES:
+                            existing.append(l)
         if clean_c not in existing:
             if append:
                 existing.append(clean_c)
@@ -1954,11 +1989,15 @@ def boot_pkg_with_verify(pkg, max_retries=3):
         launch_uri = build_roblox_launch_uri(pkg)
         if launch_uri:
             safe_root(
-                f"su -c 'am start -p {pkg} -f 0x10000000 -a android.intent.action.VIEW "
-                f"-d \"{launch_uri}\" 2>/dev/null'"
+                f"su -c 'am start -a android.intent.action.VIEW "
+                f"-d \"{launch_uri}\" -p {pkg} -f 0x10000000 2>/dev/null'"
             )
         else:
-            safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+            safe_root(
+                f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
+                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
+                f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
+            )
 
         # C) Poll nhẹ nhàng: 8 lần * 2.5s = 20s
         for _ in range(8):
@@ -1972,7 +2011,11 @@ def boot_pkg_with_verify(pkg, max_retries=3):
     # Last resort
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(1.5)
-    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+    safe_root(
+        f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
+        f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
+        f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
+    )
     return False
 
 def launch_roblox_to_game(pkg):
@@ -1983,8 +2026,8 @@ def launch_roblox_to_game(pkg):
         pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
         uri = f"roblox://experiences/start?placeId={pid}"
 
-    # Dùng cờ chuẩn FLAG_ACTIVITY_NEW_TASK (0x10000000) thay vì MULTIPLE_TASK để tránh tạo đa task gây crash
-    cmd = f"su -c 'am start -p {pkg} -f 0x10000000 -a android.intent.action.VIEW -d \"{uri}\" 2>/dev/null'"
+    # Dùng cờ chuẩn FLAG_ACTIVITY_NEW_TASK (0x10000000)
+    cmd = f"su -c 'am start -a android.intent.action.VIEW -d \"{uri}\" -p {pkg} -f 0x10000000 2>/dev/null'"
     safe_root(cmd)
 
     # Chờ app khởi tạo (poll tối đa 10s, kiểm tra mỗi 2s - không spam monkey đè lên)
@@ -1994,7 +2037,10 @@ def launch_roblox_to_game(pkg):
             return True
 
     # Fallback chỉ khi sau 10s app hoàn toàn chưa chạy
-    safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+    safe_root(
+        f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
+        f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
+    )
     time.sleep(3)
     safe_root(cmd)
     return is_app_running(pkg)
@@ -2050,6 +2096,9 @@ def force_restart_app(pkg, states, current_time, reason, color):
     states[pkg]['bound_name'] = None
     states[pkg]['display_name'] = 'Chờ Auto-Bind...'
     states[pkg]['heartbeat_misses'] = 0
+    states[pkg]['in_game'] = False
+    states[pkg]['last_mandatory_cookie_check'] = current_time
+    states[pkg]['last_screen_security_check'] = current_time
 
     # ── B2: Boot trong background thread — monitor thread không bị block ────
     existing = _boot_threads.get(pkg)
@@ -3093,20 +3142,23 @@ def login_via_cookie():
                 print(f"\n{C}Danh sách {len(cookies_in_file)} cookie trong file:{RESET}")
                 for i, ck in enumerate(cookies_in_file, 1):
                     masked = ck[:18] + "..." + ck[-10:] if len(ck) > 28 else ck
-                    print(f"  [{C}{i}{RESET}] Cookie #{i}: {W}{masked}{RESET}")
+                    tag = f" {R}[ĐÃ CHẾT 401]{RESET}" if ck in DEAD_COOKIES else (f" {G}[MỚI NHẤT]{RESET}" if i == len(cookies_in_file) else "")
+                    print(f"  [{C}{i}{RESET}] Cookie #{i}: {W}{masked}{RESET}{tag}")
                 if len(selected_packages) > 1 and len(cookies_in_file) >= len(selected_packages):
                     print(f"  [{C}A{RESET}] {BOLD}{G}Tự động phân bổ lần lượt từng cookie cho {len(selected_packages)} package{RESET}")
                 fix_tty()
-                c_sel = safe_input(f"\n{M}Chọn cookie [1-{len(cookies_in_file)} / Enter lấy #1]: {RESET}").strip()
+                c_sel = safe_input(f"\n{M}Chọn cookie [1-{len(cookies_in_file)} / Enter lấy cookie mới nhất #{len(cookies_in_file)}]: {RESET}").strip()
                 if c_sel.upper() == 'A' and len(selected_packages) > 1:
+                    cand_c = [c for c in cookies_in_file if c not in DEAD_COOKIES] or cookies_in_file
                     for i_p, p_item in enumerate(selected_packages):
                         p_pkg = p_item['pkg'] if isinstance(p_item, dict) else p_item
-                        multi_cookie_map[p_pkg] = cookies_in_file[i_p % len(cookies_in_file)]
-                    raw_cookie = cookies_in_file[0]
+                        multi_cookie_map[p_pkg] = cand_c[i_p % len(cand_c)]
+                    raw_cookie = cand_c[-1]
                 elif c_sel.isdigit() and 1 <= int(c_sel) <= len(cookies_in_file):
                     raw_cookie = cookies_in_file[int(c_sel) - 1]
                 else:
-                    raw_cookie = cookies_in_file[0]
+                    cand_alive = [c for c in cookies_in_file if c not in DEAD_COOKIES]
+                    raw_cookie = cand_alive[-1] if cand_alive else cookies_in_file[-1]
         else:
             fix_tty()
             raw_cookie = safe_input(f"\n{M}Nhập Cookie Roblox (_|WARNING...): {RESET}")
@@ -3132,6 +3184,21 @@ def login_via_cookie():
     print(f"\n{Y}[*] Đang xác thực thông tin Cookie qua Roblox API...{RESET}")
     acc_info = check_roblox_account_status(cookie)
     status = acc_info.get('status')
+
+    # Nếu cookie này đã hết hạn nhưng trong file còn cookie khác, tự động thử cookie mới nhất còn lại
+    if status == 'EXPIRED' and cookies_in_file:
+        DEAD_COOKIES.add(cookie)
+        remove_dead_cookie_from_download(cookie)
+        remain_c = [c for c in cookies_in_file if c != cookie and c not in DEAD_COOKIES]
+        if remain_c:
+            alt_c = remain_c[-1]
+            print(f"{R}[!] Cookie đã chọn bị HẾT HẠN (401)! Đã tự động chuyển sang kiểm tra cookie mới trong file...{RESET}")
+            alt_info = check_roblox_account_status(alt_c)
+            if alt_info.get('status') != 'EXPIRED':
+                cookie = alt_c
+                acc_info = alt_info
+                status = alt_info.get('status')
+
     u_name = acc_info.get('username') or "Player"
     u_id = acc_info.get('user_id')
 
@@ -3210,11 +3277,11 @@ def login_via_cookie():
         if ticket:
             print(f"{G}     [✓] Tạo Auth Ticket thành công: {ticket[:18]}...{RESET}")
             proto_cmds = [
-                f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -f 0x14000000",
-                f"am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg} -f 0x14000000",
-                f"am start -a android.intent.action.VIEW -d \"robloxmobile://navigation?authTicket={ticket}\" -p {pkg} -f 0x14000000",
-                f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"roblox://navigation/home?authTicket={ticket}\" -f 0x14000000",
-                f"am start -a android.intent.action.VIEW -d \"robloxglobal://navigation?authTicket={ticket}\" -p {pkg} -f 0x14000000"
+                f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -f 0x10000000",
+                f"am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg} -f 0x10000000",
+                f"am start -a android.intent.action.VIEW -d \"robloxmobile://navigation?authTicket={ticket}\" -p {pkg} -f 0x10000000",
+                f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"roblox://navigation/home?authTicket={ticket}\" -f 0x10000000",
+                f"am start -a android.intent.action.VIEW -d \"robloxglobal://navigation?authTicket={ticket}\" -p {pkg} -f 0x10000000"
             ]
             for p_cmd in proto_cmds:
                 code_p, out_p, _ = _run_root_capture(p_cmd, timeout=8)
@@ -3230,10 +3297,10 @@ def login_via_cookie():
                 print(f"{Y}     [!] Không dùng Auth Ticket ({t_msg}). Khởi chạy qua Launcher với Cookie & Session đã nạp...{RESET}")
 
             launcher_cmds = [
-                f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x14000000",
-                f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -f 0x14000000",
-                f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -f 0x14000000",
-                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x14000000",
+                f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000",
+                f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -f 0x10000000",
+                f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -f 0x10000000",
+                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000",
                 f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1"
             ]
             for l_cmd in launcher_cmds:
@@ -3284,13 +3351,13 @@ def extract_roblox_cookie_with_source(pkg):
     1. ƯU TIÊN 1 (CHÍNH THỨC): /data/data/{pkg}/shared_prefs/WebViewCookieHandlerNativeStorage.xml
        - Đây là file lưu trữ Native Storage của Roblox (fl.e). Bất kể khi nào App đăng nhập,
          Roblox lưu Cookie phiên hiện tại vào file này.
+       - Tự động bỏ qua nếu cookie này đã chết (trong DEAD_COOKIES).
        - Nếu file này có __migrated_from_webview_v3__=true nhưng không có .ROBLOSECURITY:
          -> Người dùng đã ĐĂNG XUẤT khỏi app. Trả về (None, "Đã Đăng Xuất (NativeStorage)")
-            để KHÔNG bị kẹt/bới lại cookie cũ từ SQLite!
     2. ƯU TIÊN 2: Chromium SQLite Databases (Default/Network/Cookies, Default/Cookies, ...)
-       - Quét tất cả file DB, sắp xếp theo thời gian sửa đổi file mtime DESC (file mới nhất kiểm tra trước).
-       - Trích xuất hàng có last_access_utc DESC, creation_utc DESC.
-    3. ƯU TIÊN 3: Quét fallback các XML SharedPreferences khác theo mtime DESC.
+       - Quét tất cả file DB, sắp xếp theo thời gian sửa đổi file mtime DESC.
+       - Bỏ qua các hàng cookie nằm trong DEAD_COOKIES.
+    3. ƯU TIÊN 3: Quét fallback các XML SharedPreferences khác theo mtime DESC (bỏ qua .bak & cookie chết).
     """
     if not pkg:
         return None, "Không có package"
@@ -3299,22 +3366,20 @@ def extract_roblox_cookie_with_source(pkg):
     native_xml = f"/data/data/{pkg}/shared_prefs/WebViewCookieHandlerNativeStorage.xml"
     code_n, xml_content, _ = _run_root_capture(f"cat '{native_xml}' 2>/dev/null", timeout=4)
     if code_n == 0 and xml_content and '<map>' in xml_content:
-        # Kiểm tra .ROBLOSECURITY
         m = re.search(r'<string\s+name="\.ROBLOSECURITY"\s*>([^<]+)</string>', xml_content)
         if not m:
             m = re.search(r'<string\s+name="ROBLOSECURITY"\s*>([^<]+)</string>', xml_content)
         if m:
             val = m.group(1).strip()
             if val.startswith("_|WARNING"):
-                return val, "NativeStorage XML (fl.e - Phiên hiện tại)"
+                norm_val = _normalize_roblosecurity_cookie(val)
+                if norm_val not in DEAD_COOKIES:
+                    return val, "NativeStorage XML (fl.e - Phiên hiện tại)"
 
-        # Nếu đã migrated sang WebView v3 nhưng KHÔNG có .ROBLOSECURITY:
-        # App đã đăng xuất rõ ràng! Không bới lại SQLite để tránh kẹt cookie cũ!
         if '__migrated_from_webview_v3__' in xml_content:
             return None, "Đã Đăng Xuất trên App (NativeStorage rỗng)"
 
     # 2. ƯU TIÊN 2: Chromium SQLite Cookies
-    # Quét tất cả các DB, sắp xếp theo thời gian sửa đổi file mtime DESC (file mới nhất kiểm tra trước)
     db_candidates = [
         f"/data/data/{pkg}/app_webview/Default/Network/Cookies",
         f"/data/data/{pkg}/app_webview/Default/Cookies",
@@ -3324,7 +3389,7 @@ def extract_roblox_cookie_with_source(pkg):
     ]
     try:
         f_code, f_out, _ = _run_root_capture(
-            f"find '/data/data/{pkg}/' \\( -name 'Cookies' -o -iname '*cookie*.db' \\) -type f 2>/dev/null",
+            f"find '/data/data/{pkg}/' \( -name 'Cookies' -o -iname '*cookie*.db' \) -type f 2>/dev/null",
             timeout=3
         )
         if f_code == 0 and f_out:
@@ -3383,8 +3448,11 @@ def extract_roblox_cookie_with_source(pkg):
                             if os.path.exists(f_del): os.remove(f_del)
                         except: pass
                     if row and row[0] and str(row[0]).startswith("_|WARNING"):
-                        db_rel = db_path.replace(f"/data/data/{pkg}/", "")
-                        return row[0].strip(), f"Chromium SQLite ({db_rel})"
+                        val_str = str(row[0]).strip()
+                        norm_val = _normalize_roblosecurity_cookie(val_str)
+                        if norm_val not in DEAD_COOKIES:
+                            db_rel = db_path.replace(f"/data/data/{pkg}/", "")
+                            return val_str, f"Chromium SQLite ({db_rel})"
                 else:
                     conn.close()
             except:
@@ -3394,7 +3462,7 @@ def extract_roblox_cookie_with_source(pkg):
                     if os.path.exists(f_del): os.remove(f_del)
                 except: pass
 
-    # 3. ƯU TIÊN 3: Quét fallback từ các file XML khác trong shared_prefs theo mtime DESC
+    # 3. ƯU TIÊN 3: Quét fallback từ các file XML khác trong shared_prefs theo mtime DESC (bỏ qua .bak & cookie chết)
     try:
         code_xml, xml_list, _ = _run_root_capture(
             f"ls -t \"/data/data/{pkg}/shared_prefs/\"*.xml 2>/dev/null",
@@ -3403,7 +3471,7 @@ def extract_roblox_cookie_with_source(pkg):
         if code_xml == 0 and xml_list:
             for xf in xml_list.splitlines():
                 xf = xf.strip()
-                if not xf or "webView_backup.xml" in xf:
+                if not xf or "webView_backup.xml" in xf or ".bak" in xf.lower():
                     continue
                 code_m, m_out, _ = _run_root_capture(
                     f"grep -hoE \"_\\|WARNING:[^<\"]+\" \"{xf}\" 2>/dev/null",
@@ -3411,12 +3479,15 @@ def extract_roblox_cookie_with_source(pkg):
                 )
                 if code_m == 0 and m_out:
                     for line in m_out.splitlines():
-                        if line.startswith("_|WARNING"):
-                            return line.strip(), f"SharedPrefs XML ({os.path.basename(xf)})"
+                        cand = line.strip()
+                        if cand.startswith("_|WARNING"):
+                            norm_c = _normalize_roblosecurity_cookie(cand)
+                            if norm_c not in DEAD_COOKIES:
+                                return cand, f"SharedPrefs XML ({os.path.basename(xf)})"
     except:
         pass
 
-    return None, "Không tìm thấy cookie trong App"
+    return None, "Không tìm thấy cookie sống trong App"
 
 def extract_roblox_cookie(pkg):
     """Alias trả về cookie chuỗi (giữ tính tương thích 100% với các hàm khác)."""
@@ -3437,6 +3508,17 @@ def check_roblox_account_status(cookie):
             "badge": "Không Có Cookie",
             "color": R,
             "message": "Không tìm thấy cookie trong app hoặc chưa đăng nhập."
+        }
+
+    norm_chk = _normalize_roblosecurity_cookie(cookie)
+    if norm_chk and norm_chk in DEAD_COOKIES:
+        return {
+            "status": "EXPIRED",
+            "badge": "Cookie Hết Hạn / Die (401)",
+            "color": R,
+            "user_id": None,
+            "username": None,
+            "message": "Cookie đã được xác nhận hết hạn (401), đã đưa vào danh sách đen."
         }
 
     cookie = cookie.strip()
@@ -3464,6 +3546,10 @@ def check_roblox_account_status(cookie):
     except urllib.error.HTTPError as e:
         err_body = e.read().decode('utf-8', errors='ignore').lower()
         if e.code == 401:
+            clean_dead = _normalize_roblosecurity_cookie(cookie)
+            if clean_dead:
+                DEAD_COOKIES.add(clean_dead)
+                remove_dead_cookie_from_download(clean_dead)
             return {
                 "status": "EXPIRED",
                 "badge": "Cookie Hết Hạn / Die (401)",
@@ -4123,7 +4209,7 @@ def detect_in_app_captcha(pkg=None, auto_solve_v2=False, attempt=1):
         is_v2 = (
             has_hold_action or
             (has_challenge_hdr and (has_ref_id or "human" in xml_lower or "người thật" in xml_lower or "humano" in xml_lower)) or
-            (has_ref_id and any(k in xml_lower for k in ["challenge", "bảo mật", "security", "arkose", "roblox"]))
+            (has_ref_id and any(k in xml_lower for k in ["challenge", "bảo mật", "security", "arkose", "checkpoint", "xác minh"]))
         )
 
         if is_v2:
@@ -4377,14 +4463,133 @@ def handle_not_approved_in_app(pkg=None):
         pass
     return False
 
+def try_auto_replace_expired_cookie(pkg, states_dict=None, current_time=None):
+    """
+    Tự động tìm và thay thế Cookie mới từ cookie.txt khi acc cũ bị chết (401 EXPIRED):
+    1. Đưa cookie cũ vào DEAD_COOKIES & xóa sạch khỏi cookie.txt.
+    2. Dọn dẹp triệt để disk & SQLite của pkg (purge_stale_roblox_cookies).
+    3. Quét cookie.txt trong Download:
+       - Bỏ qua các cookie trong DEAD_COOKIES.
+       - Bỏ qua các cookie đang được package khác sử dụng (tránh đè acc giữa các tab).
+       - Duyệt từ cookie mới nhất (cuối file lên đầu) vì người dùng thường thêm acc mới vào cuối file.
+    4. Kiểm tra tính hợp lệ qua Roblox API:
+       - Nếu 401 EXPIRED: thêm vào DEAD_COOKIES, xóa khỏi file, tiếp tục thử.
+       - Nếu OK: Tiêm ngay vào SQLite & XML, cập nhật state và sẵn sàng Rejoin!
+    Trả về True nếu thay acc thành công, False nếu không tìm thấy cookie mới khả dụng.
+    """
+    global DEAD_COOKIES, selected_packages
+    if not pkg:
+        return False
+    current_time = current_time or time.time()
+
+    st = states_dict.get(pkg) if (states_dict and isinstance(states_dict, dict)) else None
+
+    # 1. Thu thập cookie chết hiện tại nếu có để đưa vào blacklist & xóa khỏi file
+    dead_cookie = st.get('cached_cookie') if st else None
+    if not dead_cookie:
+        dead_cookie = extract_roblox_cookie(pkg)
+    if dead_cookie:
+        clean_dead = _normalize_roblosecurity_cookie(dead_cookie)
+        if clean_dead:
+            DEAD_COOKIES.add(clean_dead)
+            remove_dead_cookie_from_download(clean_dead)
+
+    # 2. Xóa triệt để mọi tàn dư cookie cũ trên máy để app không bao giờ đọc lại cookie chết
+    purge_stale_roblox_cookies(pkg)
+    if st:
+        st['cached_cookie'] = None
+
+    # 3. Lấy danh sách cookie đang được các tab / package khác sử dụng
+    used_cookies = set()
+    if states_dict and isinstance(states_dict, dict):
+        for p_name, p_st in states_dict.items():
+            if p_name != pkg and isinstance(p_st, dict):
+                c = p_st.get('cached_cookie')
+                if c:
+                    used_cookies.add(_normalize_roblosecurity_cookie(c))
+
+    for item in selected_packages:
+        p_name = item['pkg'] if isinstance(item, dict) else item
+        if p_name != pkg:
+            if not states_dict or p_name not in states_dict or not states_dict[p_name].get('cached_cookie'):
+                try:
+                    c_ext = extract_roblox_cookie(p_name)
+                    if c_ext and c_ext not in DEAD_COOKIES:
+                        used_cookies.add(_normalize_roblosecurity_cookie(c_ext))
+                except:
+                    pass
+
+    # 4. Đọc cookie.txt từ Download
+    cookies_in_file, fpath = load_cookies_from_download()
+    if not cookies_in_file:
+        return False
+
+    # 5. Lọc danh sách ứng viên (Duyệt ngược từ mới nhất -> cũ hơn)
+    candidates = []
+    for c in reversed(cookies_in_file):
+        norm_c = _normalize_roblosecurity_cookie(c)
+        if norm_c and norm_c not in DEAD_COOKIES and norm_c not in used_cookies:
+            if norm_c not in candidates:
+                candidates.append(norm_c)
+
+    if not candidates:
+        return False
+
+    # 6. Kiểm tra từng ứng viên qua API
+    valid_cookie = None
+    acc_info = None
+    for cand in candidates:
+        try:
+            res = check_roblox_account_status(cand)
+        except Exception:
+            continue
+
+        cand_status = res.get('status')
+        if cand_status == 'EXPIRED':
+            DEAD_COOKIES.add(cand)
+            remove_dead_cookie_from_download(cand)
+            continue
+        elif cand_status == 'OK':
+            valid_cookie = cand
+            acc_info = res
+            break
+        elif cand_status in ['NOT_APPROVED', 'CAPTCHA_CHECKPOINT']:
+            if not valid_cookie:
+                valid_cookie = cand
+                acc_info = res
+
+    if not valid_cookie or not acc_info:
+        return False
+
+    # 7. Tiêm cookie mới vào WebView SQLite DB và SharedPreferences XML
+    u_name = acc_info.get('username') or "Player"
+    u_id = acc_info.get('user_id')
+    ok_wv = inject_cookie_webview(pkg, valid_cookie)
+    ok_xml = inject_cookie_safe_xml(pkg, valid_cookie, user_name=u_name, user_id=u_id)
+
+    # 8. Cập nhật state hệ thống
+    if st:
+        st['cached_cookie'] = valid_cookie
+        st['is_blocked'] = False
+        st['block_reason'] = ''
+        st['account_status'] = acc_info.get('status', 'OK')
+        st['bound_name'] = u_name
+        st['display_name'] = u_name
+        st['warmup_until'] = current_time + 45
+        st['text'] = "Đã Thay Acc Mới -> Rejoin"
+        st['color'] = G
+
+    add_log(f"[{pkg[-12:]}] {G}[✓ TỰ ĐỘNG THAY ACC] Acc cũ đã die. Đã nạp thành công Cookie mới của '{u_name}' từ cookie.txt! Sẵn sàng Rejoin...{RESET}")
+    return True
+
 def check_and_handle_account_health(pkg, states, current_time, force=False):
     """
     Kiểm tra trạng thái tài khoản qua Cookie trong app Roblox:
     - Nếu acc bị dính lỗi (NOT_APPROVED, CAPTCHA_CHECKPOINT, EXPIRED):
         + Cập nhật state: is_blocked=True, text, color, block_reason
-        + Ghi add_log chi tiết cảnh báo
-        + Dừng process app để không tốn tài nguyên và tuyệt đối KHÔNG vào game
-        + Trả về True (bị block)
+        + Nếu EXPIRED: tự động tìm acc mới từ cookie.txt và nạp đè vào app!
+        + Dừng process app để không tốn tài nguyên
+        + Trả về True nếu bị block, False nếu acc OK hoặc đã tự thay thế thành công
     - Nếu acc bình thường (OK hoặc không tìm thấy cookie / lỗi mạng tạm thời):
         + Cập nhật state: is_blocked=False
         + Trả về False (cho phép chạy / vào game bình thường)
@@ -4395,6 +4600,10 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
 
     state = states.get(pkg)
     if not state:
+        return False
+
+    # BẢO VỆ TUYỆT ĐỐI TRONG THỜI GIAN WARMUP:
+    if current_time < state.get('warmup_until', 0):
         return False
 
     # BẢO VỆ (chỉ áp dụng khi KHÔNG force):
@@ -4409,8 +4618,14 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
                 return False
 
     cookie = extract_roblox_cookie(pkg)
+    if cookie and cookie in DEAD_COOKIES:
+        cookie = None
     if not cookie:
-        cookie = state.get('cached_cookie')
+        cached = state.get('cached_cookie')
+        if cached and cached not in DEAD_COOKIES:
+            cookie = cached
+        else:
+            cookie = None
     else:
         # Nếu phát hiện cookie mới khác cookie cũ trong cache -> người dùng vừa đăng nhập acc mới
         if state.get('cached_cookie') and state['cached_cookie'] != cookie:
@@ -4422,6 +4637,11 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
 
     state['last_acc_check'] = current_time
     if not cookie:
+        # Không có cookie sống trên máy -> Thử tự động nạp từ cookie.txt
+        replaced = try_auto_replace_expired_cookie(pkg, states, current_time)
+        if replaced:
+            launch_roblox_to_game(pkg)
+            return False
         return False
     state['cached_cookie'] = cookie
 
@@ -4453,15 +4673,27 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
         handle_not_approved_in_app(pkg)
         return True
     elif status == 'EXPIRED':
+        clean_dead = _normalize_roblosecurity_cookie(cookie)
+        if clean_dead:
+            DEAD_COOKIES.add(clean_dead)
+            remove_dead_cookie_from_download(clean_dead)
+        badge = res.get('badge', 'Cookie Die (401)')
+        msg_detail = res.get('message', '')
+        add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
+        state['cached_cookie'] = None
+        purge_stale_roblox_cookies(pkg)
+
+        # Tự động thay thế acc mới từ cookie.txt nếu có
+        replaced = try_auto_replace_expired_cookie(pkg, states, current_time)
+        if replaced:
+            launch_roblox_to_game(pkg)
+            return False
+
         state['is_blocked'] = True
         state['in_game'] = False
-        badge = res.get('badge', 'Cookie Die (401)')
         state['block_reason'] = badge
         state['text'] = "Cookie Die (401)"
         state['color'] = R
-        msg_detail = res.get('message', '')
-        add_log(f"[{pkg[-12:]}] {R}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
-        state['cached_cookie'] = None  # Xóa cache cookie chết ngay lập tức để không bị kẹt lặp!
         _kill_pkg(pkg)
         return True
     elif status == 'CAPTCHA_CHECKPOINT':
@@ -4472,7 +4704,6 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
         state['in_game'] = False
         state['is_blocked'] = True
         state['block_reason'] = badge
-        # TẮT NGAY TIẾN TRÌNH APP: TUYỆT ĐỐI KHÔNG VÀO GAME KHI DÍNH CAPTCHA!
         if is_app_running(pkg):
             _kill_pkg(pkg)
 
@@ -4496,30 +4727,20 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
                     state['block_reason'] = ''
                     state['text'] = "Đã Giải V2 -> Rejoin"
                     state['color'] = G
-                    return False  # Đã giải xong, cho phép tiếp tục vào game!
+                    return False
                 else:
                     state['is_blocked'] = True
-                    state['text'] = "Dính Captcha V2 (Chờ)"
-                    state['color'] = Y
+                    state['text'] = "Lỗi Giải Captcha V2"
+                    state['color'] = R
                     return True
             else:
-                state['is_blocked'] = True
-                state['text'] = "Dính Captcha V2 (Chờ)"
+                state['text'] = "Dính Nhấn & Giữ"
                 state['color'] = Y
-                add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Auto Solve đang Tắt, tạm dừng chờ kiểm tra lại...{RESET}")
                 return True
-    elif status == 'OK':
-        if state.get('is_blocked'):
-            state['is_blocked'] = False
-            state['block_reason'] = ''
-            u_name = res.get('username') or state.get('bound_name') or 'Acc'
-            add_log(f"[{pkg[-12:]}] {G}[ACC SẠCH] Acc {u_name} ĐÃ BÌNH THƯỜNG! Đang Rejoin vào game...{RESET}")
-            with pkg_restart_locks[pkg]:
-                force_restart_app(pkg, states, current_time, "Acc Sạch -> Rejoin", G)
-            return False
+    else:
+        state['is_blocked'] = False
+        state['block_reason'] = ''
         return False
-
-    return False
 
 def account_captcha_check_menu():
     global selected_packages
@@ -4718,7 +4939,6 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
             # === KIỂM TRA TRẠNG THÁI ACC ĐANG BỊ KẸT (NOT_APPROVED / CAPTCHA V1 / V2 / EXPIRED) ===
             if state.get('is_blocked'):
-                # Acc đang bị dính: TUYỆT ĐỐI KHÔNG VÀO GAME! Đảm bảo app tắt để không tốn tài nguyên
                 if is_app_running(pkg):
                     _kill_pkg(pkg)
 
@@ -4744,6 +4964,18 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
                 # Đến chu kỳ kiểm tra lại xem acc đã sạch chưa
                 if time_passed >= recheck_interval:
+                    # Nếu acc bị die (401 EXPIRED): tự động tìm cookie mới từ cookie.txt
+                    if state.get('account_status') == 'EXPIRED' or '401' in str(state.get('block_reason', '')):
+                        add_log(f"[{pkg[-12:]}] {Y}[TÌM ACC MỚI] Acc cũ die (401). Đang quét cookie.txt tìm acc thay thế...{RESET}")
+                        replaced = try_auto_replace_expired_cookie(pkg, states, current_time)
+                        state['last_acc_check'] = current_time
+                        if replaced:
+                            with pkg_restart_locks[pkg]:
+                                force_restart_app(pkg, states, current_time, "Cookie Mới -> Rejoin", G)
+                            last_ok_ping[pkg] = current_time
+                            stop_event.wait(5)
+                            continue
+
                     # Nếu dính Captcha V2 và Auto Solve đang BẬT: tự động thử giải lại trong app
                     if state.get('captcha_type') == 'CAPTCHAV2' and AUTO_SOLVE_CAPTCHA_V2 == "Enable":
                         add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V2] Đến chu kỳ re-check, đang tự động giải lại Captcha V2...{RESET}")
@@ -4756,7 +4988,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             continue
 
                     cookie = extract_roblox_cookie(pkg)
-                    if not cookie and state.get('cached_cookie'):
+                    if cookie and cookie in DEAD_COOKIES:
+                        cookie = None
+                    if not cookie and state.get('cached_cookie') and state['cached_cookie'] not in DEAD_COOKIES:
                         cookie = state['cached_cookie']
                     state['last_acc_check'] = current_time
                     if cookie:
@@ -4771,7 +5005,6 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
                         if res.get('status') == 'OK':
                             state['cached_cookie'] = cookie
-                            # Acc đã sạch hoàn toàn! Tiến hành Rejoin vào game
                             state['is_blocked'] = False
                             state['block_reason'] = ''
                             state['account_status'] = 'OK'
@@ -4785,21 +5018,32 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                             stop_event.wait(5)
                             continue
                         elif res.get('status') == 'EXPIRED':
-                            # Cookie đã hết hạn, xóa ngay cached_cookie để không bị kẹt lặp vô hạn!
-                            state['cached_cookie'] = None
-                            badge = res.get('badge', 'Cookie Die (401)')
-                            state['block_reason'] = badge
-                            state['account_status'] = 'EXPIRED'
-                            add_log(f"[{pkg[-12:]}] {R}[COOKIE EXPIRED] Cookie đã hết hạn (401). Đã xóa cache cookie cũ. Vui lòng nạp Cookie mới ở Mục [4]!{RESET}")
+                            clean_dead = _normalize_roblosecurity_cookie(cookie)
+                            if clean_dead:
+                                DEAD_COOKIES.add(clean_dead)
+                                remove_dead_cookie_from_download(clean_dead)
+                            purge_stale_roblox_cookies(pkg)
+                            replaced = try_auto_replace_expired_cookie(pkg, states, current_time)
+                            if replaced:
+                                with pkg_restart_locks[pkg]:
+                                    force_restart_app(pkg, states, current_time, "Cookie Mới -> Rejoin", G)
+                                last_ok_ping[pkg] = current_time
+                                stop_event.wait(5)
+                                continue
+                            else:
+                                state['cached_cookie'] = None
+                                badge = res.get('badge', 'Cookie Die (401)')
+                                state['block_reason'] = badge
+                                state['account_status'] = 'EXPIRED'
+                                add_log(f"[{pkg[-12:]}] {R}[COOKIE EXPIRED] Cookie đã hết hạn (401). Đã dọn sạch cookie cũ trên máy. Hãy thêm Cookie mới vào Download/cookie.txt hoặc nạp ở Mục [4]!{RESET}")
                         else:
-                            # Vẫn chưa sạch (vẫn còn Captcha V1 / V2 / Not-Approved)
                             state['cached_cookie'] = cookie
                             badge = res.get('badge', short_reason)
                             state['block_reason'] = badge
                             state['account_status'] = res.get('status')
                             add_log(f"[{pkg[-12:]}] {Y}[CHỜ COOKIE] Acc vẫn {badge}. Tiếp tục chờ {recheck_interval}s...{RESET}")
                     else:
-                        add_log(f"[{pkg[-12:]}] Chưa lấy được Cookie để kiểm tra lại (hoặc đã đăng xuất).")
+                        add_log(f"[{pkg[-12:]}] {Y}[CHỜ COOKIE MỚI] Đang chờ nạp Cookie mới vào Download/cookie.txt hoặc đăng nhập app...{RESET}")
 
                 stop_event.wait(5)
                 continue
@@ -4808,16 +5052,43 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
             if pkg in _boot_threads and _boot_threads[pkg].is_alive():
                 state['text'] = "Đang Khởi Động..."
                 state['color'] = Y
-                stop_event.wait(5)
+                stop_event.wait(3)
                 continue
 
-            # === KIỂM TRA PHÁT HIỆN CAPTCHA V1 / V2 TRONG APP (CHỐNG TREO MÁY) ===
+            # === CẬP NHẬT TRẠNG THÁI IN_GAME QUA HEARTBEAT ===
             bound = state.get('bound_name')
-            hb = get_heartbeat(bound, pkg) if bound else -1
-            if hb != -1 and (current_time - hb <= 120):
-                state['in_game'] = True
+            if not bound:
+                bound = discover_unbound_account(pkg, states)
+                if bound:
+                    state['bound_name'] = bound
+                    state['display_name'] = bound
 
-            if uptime_seconds > 10 and is_app_running(pkg) and not state.get('in_game'):
+            if bound:
+                hb = get_heartbeat(bound, pkg)
+                if hb != -1 and (current_time - hb <= 120):
+                    state['in_game'] = True
+                    # Nếu đã in_game thì hoàn tất warmup ngay
+                    if current_time < state.get('warmup_until', 0):
+                        state['warmup_until'] = 0
+
+            # === WARMUP (BẢO VỆ GIAI ĐOẠN KHỞI TẠO LOAD GAME BAN ĐẦU - TUYỆT ĐỐI KHÔNG CAN THIỆP/KILL APP) ===
+            if current_time < state.get('warmup_until', 0):
+                state['text'] = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
+                state['color'] = Y
+                stop_event.wait(3)
+                continue
+
+            # === MANDATORY PERIODIC COOKIE CHECK (CHỈ CHẠY SAU KHI QUA WARMUP) ===
+            last_mandatory_chk = state.get('last_mandatory_cookie_check', 0)
+            if (current_time - last_mandatory_chk >= MANDATORY_COOKIE_CHECK_INTERVAL) and (AUTO_CHECK_ACC_HEALTH == "Enable"):
+                state['last_mandatory_cookie_check'] = current_time
+                chk_res = check_and_handle_account_health(pkg, states, current_time, force=True)
+                if chk_res:
+                    stop_event.wait(3)
+                    continue
+
+            # === KIỂM TRA PHÁT HIỆN CAPTCHA V1 / V2 TRONG APP (CHỈ KHI HẾT WARMUP VÀ CHƯA IN_GAME) ===
+            if uptime_seconds > 45 and is_app_running(pkg) and not state.get('in_game'):
                 last_scr_chk = state.get('last_screen_security_check', 0)
                 if current_time - last_scr_chk >= 8:
                     state['last_screen_security_check'] = current_time
@@ -4877,7 +5148,7 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                                 continue
 
             # === ĐẢM BẢO PROCESS APP PHẢI CHẠY (NẾU KHÔNG CHẠY THÌ BẬT NGAY) ===
-            if uptime_seconds > 15 and not is_app_running(pkg):
+            if uptime_seconds > 45 and not is_app_running(pkg):
                 # Kiểm tra xem acc có bị kẹt Not-Approved/Captcha không trước khi bật lại
                 if check_and_handle_account_health(pkg, states, current_time):
                     stop_event.wait(5)
@@ -4906,13 +5177,6 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                 state['session_start_time'] = current_time
                 last_ok_ping[pkg] = current_time
                 stop_event.wait(10)
-                continue
-
-            # === WARMUP ===
-            if current_time < state.get('warmup_until', 0):
-                state['text'] = f"Warmup ({int(state['warmup_until'] - current_time)}s)"
-                state['color'] = Y
-                stop_event.wait(5)
                 continue
 
             # === TÌM TÊN NẾU CHƯA BIND ===
@@ -5439,17 +5703,34 @@ def launch_roblox_and_join_game(pkg):
             safe_root(f"su -c 'rm -f \"{lic}\"'")
 
     safe_root(f"su -c 'am force-stop {pkg}'")
-    time.sleep(2)
+    time.sleep(1.5)
     uri_k = build_roblox_launch_uri(pkg)
-    if uri_k:
-        safe_root(
-            f"su -c 'am start -p {pkg} -f 0x10008000 -a android.intent.action.VIEW "
-            f"-d \"{uri_k}\" 2>/dev/null'"
-        )
-    else:
-        safe_root(f"su -c 'monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+    if not uri_k:
+        pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
+        uri_k = f"roblox://experiences/start?placeId={pid}"
+
+    # Bắn deeplink với cờ chuẩn FLAG_ACTIVITY_NEW_TASK (0x10000000)
+    cmd = f"su -c 'am start -a android.intent.action.VIEW -d \"{uri_k}\" -p {pkg} -f 0x10000000 2>/dev/null'"
+    safe_root(cmd)
+
     target_lbl = "VIP Server" if (JOIN_SERVER_MODE == "Enable" and JOIN_SERVER_LINK) else f"Place: {target_place_id or 'Sảnh'}"
     add_log(f"[Key] Bắn {pkg[-14:]} vào game ({target_lbl})")
+
+    # Chờ app khởi tạo (poll 6s, nếu chưa lên mới fallback qua ActivitySplash)
+    for _ in range(3):
+        time.sleep(2)
+        if is_app_running(pkg):
+            return True
+
+    # Fallback an toàn qua Splash Activity nếu cold start trực tiếp vào ProtocolLaunch chưa nhận
+    safe_root(
+        f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
+        f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
+        f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
+    )
+    time.sleep(2)
+    safe_root(cmd)
+    return is_app_running(pkg)
 
 
 def obtain_delta_getkey_url(pkg, stop_event, max_wait_secs=120):
@@ -5630,7 +5911,7 @@ def delta_license_sync_thread(stop_event):
         stop_event.wait(15)
 
 def start_auto_rejoin():
-    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding
+    global selected_packages, kill_all_time, json_path_cache, heartbeat_last_check, CLAIMED_NAMES, last_restart_time, pkg_restart_locks, global_restart_semaphore, file_to_pkg_binding, states
     if not selected_packages:
         auto_select_vip_packages()
     if not selected_packages:
@@ -5651,7 +5932,7 @@ def start_auto_rejoin():
     inject_universal_lua()
     inject_user_script()
 
-    states = {}
+    states.clear()
     last_ok_ping = {}
     stop_event = threading.Event()
     sync_t = threading.Thread(target=delta_license_sync_thread, args=(stop_event,), daemon=True)
