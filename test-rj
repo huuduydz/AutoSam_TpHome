@@ -197,7 +197,7 @@ OMOCAPTCHA_KEY = ""
 # HuDy WebKey authorization for Tool Rejoin. The key is checked once at launch;
 # the server stores only its SHA-256 hash in Cloudflare D1.
 HUDY_WEBKEY_BASE = "https://hudyy.com"
-HUDY_REJOIN_VERSION = "3.5 (No Key Edition)"
+HUDY_REJOIN_VERSION = "3.6 (No Key Edition)"
 HUDY_REJOIN_ACCOUNT = "Vĩnh Viễn (No Key Edition)"
 CURRENT_REJOIN_KEY = "NO_KEY"
 
