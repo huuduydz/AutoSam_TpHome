@@ -197,7 +197,7 @@ OMOCAPTCHA_KEY = ""
 # HuDy WebKey authorization for Tool Rejoin. The key is checked once at launch;
 # the server stores only its SHA-256 hash in Cloudflare D1.
 HUDY_WEBKEY_BASE = "https://hudyy.com"
-HUDY_REJOIN_VERSION = "3.6 (No Key Edition)"
+HUDY_REJOIN_VERSION = "3.5 (No Key Edition)"
 HUDY_REJOIN_ACCOUNT = "Vĩnh Viễn (No Key Edition)"
 CURRENT_REJOIN_KEY = "NO_KEY"
 
@@ -1475,36 +1475,40 @@ def select_package_menu():
 # INJECT SCRIPT UNIVERSAL (REJOIN & HEARTBEAT)
 # =====================================================================
 def inject_universal_lua():
-    lua_code = """
-loadstring(game:HttpGet("https://raw.githubusercontent.com/huuduydz/AutoSam_TpHome/refs/heads/main/bypassloading.lua"))()
-local Players = game:GetService("Players")
-local GuiService = game:GetService("GuiService")
-local DisconnectErrors = Enum.ConnectionError.DisconnectErrors.Value
-local PlaceLaunchOtherError = Enum.ConnectionError.PlacelaunchOtherError.Value
-repeat task.wait() until game:IsLoaded() and Players.LocalPlayer
-local LocalPlayer = Players.LocalPlayer
-local fileName = "rj_" .. LocalPlayer.Name .. "_checkhudyhub.json"
-local sWF = true
+    lua_code = """-- [HuDy Rejoin Universal Heartbeat Monitor]
 task.spawn(function()
-    while sWF do
-        task.wait(3)
-        pcall(function()
-            local errorCode = GuiService:GetErrorCode().Value
-            if errorCode == 1 or errorCode == 773 or errorCode == 772 or errorCode == 769 or (errorCode >= DisconnectErrors and errorCode < PlaceLaunchOtherError) then
-                sWF = false
-            end
-        end)
-        if sWF then
-            local pidOk, pid = pcall(function() return game.PlaceId end)
-            local humOk, hum = pcall(function() return LocalPlayer.Character.Humanoid end)
-            if not (pidOk and pid == 0 and not (humOk and hum)) then
+    pcall(function()
+        repeat task.wait(1) until game:IsLoaded() and game:GetService("Players").LocalPlayer
+        local Players = game:GetService("Players")
+        local GuiService = game:GetService("GuiService")
+        local LocalPlayer = Players.LocalPlayer
+        if not LocalPlayer then return end
+
+        local fileName = "rj_" .. tostring(LocalPlayer.Name) .. "_checkhudyhub.json"
+        local sWF = true
+
+        while sWF do
+            task.wait(3)
+            pcall(function()
+                local errOk, errCode = pcall(function() return GuiService:GetErrorCode().Value end)
+                if errOk and (errCode == 1 or errCode == 773 or errCode == 772 or errCode == 769 or (errCode >= 256 and errCode <= 290)) then
+                    sWF = false
+                end
+            end)
+
+            if sWF then
                 pcall(function()
-                    -- Ghi Unix timestamp số nguyên (không dùng string date) để Python đọc chính xác
-                    writefile(fileName, string.format('{"playerName":"%s","timestamp":%d}', LocalPlayer.Name, math.floor(workspace:GetServerTimeNow())))
+                    local curTime = os.time()
+                    pcall(function()
+                        local srvTime = math.floor(workspace:GetServerTimeNow())
+                        if srvTime and srvTime > 0 then curTime = srvTime end
+                    end)
+                    local data = string.format('{"playerName":"%s","timestamp":%d}', tostring(LocalPlayer.Name), curTime)
+                    writefile(fileName, data)
                 end)
             end
         end
-    end
+    end)
 end)"""
     safe_root("su -c 'find /sdcard/ -maxdepth 4 -type f -name \"*checkhudyhub.lua\" -delete 2>/dev/null'")
     temp_lua = "/sdcard/Download/universal_checkhudyhub.lua"
@@ -1512,13 +1516,14 @@ end)"""
         with open(temp_lua, "w", encoding="utf-8") as f:
             f.write(lua_code)
     except Exception:
-        safe_root(f"su -c 'cat << \\'EOF\\' > {temp_lua}\n{lua_code}\nEOF'")
+        safe_root(f"""su -c 'cat << \\'EOF\\' > {temp_lua}
+{lua_code}
+EOF'""")
     root_cmd = f"""su -c "for dir in \\$(find /sdcard/ -maxdepth 3 -type d -iname '*autoexec*' 2>/dev/null); do cp {temp_lua} \\"\\$dir/universal_checkhudyhub.lua\\" && chmod 777 \\"\\$dir/universal_checkhudyhub.lua\\"; done; rm {temp_lua}" """
     safe_root(root_cmd)
 
 # =====================================================================
-# INJECT USER SCRIPT (FILE RIÊNG: user_autoinject.lua)
-# =====================================================================
+
 def inject_user_script():
     global SELECTED_SCRIPT_KEY, CUSTOM_SCRIPT_URL, CUSTOM_SCRIPT_IS_CODE, AUTO_INJECT_SCRIPTS
 
@@ -1863,7 +1868,7 @@ def is_app_running(pkg):
     2. Dumpsys Activity Processes (ProcessRecord của Android ActivityManager)
     3. Dumpsys Window (Nhận diện cửa sổ nổi / freeform window đang active trên màn hình)
     4. Dumpsys Activity Activities (Activity stack trong chế độ đa nhiệm / pop-up)
-    5. Heartbeat file mới cập nhật (< 90s)
+    (Đã loại bỏ kiểm tra file heartbeat để tránh nhận diện nhầm app còn sống khi thực tế đã bị văng).
     """
     # 1. Process PID (nhanh nhất)
     if bool(_pgrep_pkg(pkg)):
@@ -1904,17 +1909,6 @@ def is_app_running(pkg):
         pattern = re.compile(r'\b' + re.escape(pkg) + r'\b')
         if pattern.search(act_out):
             return True
-    except:
-        pass
-
-    # 5. Heartbeat file còn mới (< 90s)
-    try:
-        all_hb = get_all_heartbeat_files_fast(pkg)
-        now = time.time()
-        for f in all_hb:
-            mt = _get_file_mtime(f)
-            if mt > 0 and (now - mt < 90):
-                return True
     except:
         pass
 
@@ -1980,25 +1974,25 @@ def _kill_pkg(pkg, wait_dead=False):
             time.sleep(0.4)
 
 def boot_pkg_with_verify(pkg, max_retries=3):
-    """Boot pkg với tối đa 3 lần thử mượt mà, chống xung đột process và chống văng app."""
+    """Boot pkg với tối đa 3 lần thử mượt mà, chống xung đột process và chống văng app (Anti-Crash Two-Stage)."""
     for attempt in range(1, max_retries + 1):
         # A) Dọn process cũ hoàn toàn
         safe_root(f"su -c 'am force-stop {pkg}'")
         time.sleep(1.5)
 
-        # B) Launch đúng package bằng cờ FLAG_ACTIVITY_NEW_TASK (0x10000000)
+        # B) Giai đoạn 1: Mở ActivitySplash để Delta Executor khởi tạo hook và Window ổn định (chống văng do noHistory của ActivityProtocolLaunch)
+        safe_root(
+            f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
+            f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
+            f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
+        )
+        time.sleep(3)
+
+        # Giai đoạn 2: Bắn deeplink vào game khi app đã có Task ổn định
         launch_uri = build_roblox_launch_uri(pkg)
         if launch_uri:
-            safe_root(
-                f"su -c 'am start -a android.intent.action.VIEW "
-                f"-d \"{launch_uri}\" -p {pkg} -f 0x10000000 2>/dev/null'"
-            )
-        else:
-            safe_root(
-                f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
-                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
-                f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
-            )
+            cmd_view = f"su -c 'am start -a android.intent.action.VIEW -d \"{launch_uri}\" -p {pkg} -f 0x10000000 2>/dev/null'"
+            safe_root(cmd_view)
 
         # C) Poll nhẹ nhàng: 8 lần * 2.5s = 20s
         for _ in range(8):
@@ -2009,25 +2003,26 @@ def boot_pkg_with_verify(pkg, max_retries=3):
         if attempt < max_retries:
             time.sleep(2)
 
-    # Last resort
-    safe_root(f"su -c 'am force-stop {pkg}'")
-    time.sleep(1.5)
-    safe_root(
-        f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
-        f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
-        f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
-    )
     return False
 
 def launch_roblox_to_game(pkg):
-    """Bắn package vào game hoặc VIP Server mượt mà, chống lặp lệnh và chống văng app."""
+    """Bắn package vào game hoặc VIP Server mượt mà, chống lặp lệnh và chống văng app (Anti-Crash Two-Stage)."""
     global target_place_id
     uri = build_roblox_launch_uri(pkg)
     if not uri:
         pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
         uri = f"roblox://experiences/start?placeId={pid}"
 
-    # Dùng cờ chuẩn FLAG_ACTIVITY_NEW_TASK (0x10000000)
+    # Bước 1: Nếu app chưa chạy, khởi động ActivitySplash trước để Executor gắn hook an toàn
+    if not _is_pkg_active(pkg):
+        safe_root(
+            f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
+            f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
+            f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
+        )
+        time.sleep(3)
+
+    # Bước 2: Bắn deeplink với cờ chuẩn FLAG_ACTIVITY_NEW_TASK (0x10000000)
     cmd = f"su -c 'am start -a android.intent.action.VIEW -d \"{uri}\" -p {pkg} -f 0x10000000 2>/dev/null'"
     safe_root(cmd)
 
@@ -2037,13 +2032,6 @@ def launch_roblox_to_game(pkg):
         if is_app_running(pkg):
             return True
 
-    # Fallback chỉ khi sau 10s app hoàn toàn chưa chạy
-    safe_root(
-        f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
-        f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
-    )
-    time.sleep(3)
-    safe_root(cmd)
     return is_app_running(pkg)
 
 def _boot_worker(pkg, states):
@@ -2071,20 +2059,25 @@ def force_restart_app(pkg, states, current_time, reason, color):
     # ── B1: Kill ngay (ngược lại với semaphore → không block pkg khác) ───
     _kill_pkg(pkg)
 
-    # ── Dọn file heartbeat + cache RAM ──────────────────────────
+    # ── Dọn sạch file heartbeat cũ + cache RAM để tránh nhận nhầm session cũ ──
     bound_name = states[pkg].get('bound_name')
+    safe_root(
+        f"su -c 'rm -f "
+        f"/sdcard/Android/media/{pkg}/workspace/*_checkhudyhub.json "
+        f"/sdcard/Android/data/{pkg}/workspace/*_checkhudyhub.json "
+        f"/sdcard/Android/media/{pkg}/*_checkhudyhub.json "
+        f"/sdcard/Android/data/{pkg}/*_checkhudyhub.json "
+        f"/sdcard/Delta/workspace/*_checkhudyhub.json "
+        f"/storage/emulated/0/Delta/workspace/*_checkhudyhub.json "
+        f"/sdcard/Delta/*_checkhudyhub.json "
+        f"/storage/emulated/0/Delta/*_checkhudyhub.json "
+        f"/sdcard/DeltaQT/workspace/*_checkhudyhub.json "
+        f"/storage/emulated/0/DeltaQT/workspace/*_checkhudyhub.json "
+        f"2>/dev/null'"
+    )
+    json_path_cache.pop(pkg, None)
+    heartbeat_last_check.pop(pkg, None)
     if bound_name:
-        safe_root(
-            f"su -c 'rm -f "
-            f"/sdcard/Android/media/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
-            f"/sdcard/Android/data/{pkg}/workspace/*_{bound_name}_checkhudyhub.json "
-            f"/sdcard/Android/media/{pkg}/*_{bound_name}_checkhudyhub.json "
-            f"/sdcard/Android/data/{pkg}/*_{bound_name}_checkhudyhub.json "
-            f"/sdcard/Delta/*_{bound_name}_checkhudyhub.json "
-            f"2>/dev/null'"
-        )
-        json_path_cache.pop(pkg, None)
-        heartbeat_last_check.pop(pkg, None)
         with shared_lock:
             CLAIMED_NAMES.discard(bound_name)
             stale_fps = [fp for fp, fp_pkg in file_to_pkg_binding.items() if fp_pkg == pkg]
@@ -5066,7 +5059,8 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
 
             if bound:
                 hb = get_heartbeat(bound, pkg)
-                if hb != -1 and (current_time - hb <= 120):
+                rejoin_t = state.get('rejoin_time', 0)
+                if hb != -1 and (hb >= rejoin_t - 5) and (current_time - hb <= 120):
                     state['in_game'] = True
                     # Nếu đã in_game thì hoàn tất warmup ngay
                     if current_time < state.get('warmup_until', 0):
@@ -5230,6 +5224,9 @@ def monitor_package(pkg, states, last_ok_ping, stop_event):
                                    (last_any_restart_time != last_restart_time.get(pkg, 0))
 
             last_ping = get_heartbeat(bound, pkg)
+            rejoin_t = state.get('rejoin_time', 0)
+            if last_ping != -1 and last_ping < rejoin_t - 5:
+                last_ping = -1
             if last_ping == -1:
                 state['heartbeat_misses'] = state.get('heartbeat_misses', 0) + 1
                 misses = state['heartbeat_misses']
@@ -5704,7 +5701,7 @@ def _get_delta_license_dirs():
 
 def launch_roblox_and_join_game(pkg):
     """
-    Khởi động package và BẮN THẲNG VÀO GAME bằng Place ID để Delta inject và hiện bảng Welcome Back.
+    Khởi động package an toàn qua Splash rồi bắn vào game để Delta inject và hiện bảng Welcome Back.
     """
     global target_place_id
     # Xóa file license cũ hết hạn (nếu có) để Delta bắt buộc hiện bảng Welcome Back
@@ -5717,32 +5714,33 @@ def launch_roblox_and_join_game(pkg):
 
     safe_root(f"su -c 'am force-stop {pkg}'")
     time.sleep(1.5)
+
+    # Giai đoạn 1: Mở Splash trước
+    safe_root(
+        f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
+        f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
+        f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
+    )
+    time.sleep(3)
+
     uri_k = build_roblox_launch_uri(pkg)
     if not uri_k:
         pid = target_place_id if (target_place_id and str(target_place_id).strip().isdigit()) else "4520749081"
         uri_k = f"roblox://experiences/start?placeId={pid}"
 
-    # Bắn deeplink với cờ chuẩn FLAG_ACTIVITY_NEW_TASK (0x10000000)
+    # Giai đoạn 2: Bắn deeplink với cờ chuẩn FLAG_ACTIVITY_NEW_TASK (0x10000000)
     cmd = f"su -c 'am start -a android.intent.action.VIEW -d \"{uri_k}\" -p {pkg} -f 0x10000000 2>/dev/null'"
     safe_root(cmd)
 
     target_lbl = "VIP Server" if (JOIN_SERVER_MODE == "Enable" and JOIN_SERVER_LINK) else f"Place: {target_place_id or 'Sảnh'}"
     add_log(f"[Key] Bắn {pkg[-14:]} vào game ({target_lbl})")
 
-    # Chờ app khởi tạo (poll 6s, nếu chưa lên mới fallback qua ActivitySplash)
-    for _ in range(3):
+    # Chờ app khởi tạo
+    for _ in range(5):
         time.sleep(2)
         if is_app_running(pkg):
             return True
 
-    # Fallback an toàn qua Splash Activity nếu cold start trực tiếp vào ProtocolLaunch chưa nhận
-    safe_root(
-        f"su -c 'am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000 2>/dev/null || "
-        f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000 2>/dev/null || "
-        f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1 2>/dev/null'"
-    )
-    time.sleep(2)
-    safe_root(cmd)
     return is_app_running(pkg)
 
 
