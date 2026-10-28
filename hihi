@@ -9,4 +9,6 @@ _G.tool = {"Sword", "Fruit","Melee"}
 _G.skill = {"M1", "Z", "X", "C","V","B","E"}
 _G.BossEarlyJoinSec = 60
 _G.HopSpeed = 0.5
-loadstring(game:HttpGet("https://raw.githubusercontent.com/NTTTTTTTT/upload/refs/heads/main/content/68a85fe81e2d497ca5a63b486531c914_obf.lua",true))()
+
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/NTTTTTTTT/upload/refs/heads/main/content/a2a601adf5f8462c849c4eb7ad9628dc_obf.lua",true))()
