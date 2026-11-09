@@ -172,7 +172,7 @@ C_GRAY_LIGHT  = '\033[38;5;250m'
 # =====================================================================
 selected_packages = []
 target_place_id = "4520749081"
-COOKIE_LOGIN_REVISION = "2026-11-09 (Multi-Device Robustness & Anti-Header-Bloat)"
+COOKIE_LOGIN_REVISION = "v3.6-SSO-AutoWebLogin-FirstInstallFix"
 COOKIE_LOGIN_APP_LOAD_WAIT = 6
 kill_all_time = 0
 json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
@@ -2179,101 +2179,117 @@ def _run_root_capture(command, timeout=15):
     except Exception as exc:
         return -1, "", str(exc)
 
-def get_auth_ticket(cookie):
+def get_auth_ticket(cookie, pkg=None):
     """
     Tạo Auth Ticket từ Roblox API server thông qua Cookie .ROBLOSECURITY.
-    Auth Ticket giúp ứng dụng Android tự động kích hoạt Đăng Nhập tức thì.
+    Hỗ trợ cả máy chủ Global (roblox.com) và máy chủ VNG (robloxapp.vnggames.com).
+    Auth Ticket cho phép kích hoạt WebLoginProtocol trực tiếp qua:
+    roblox://single-sign-on/login?auth=<ticket>
+    giúp app Android tự động đăng nhập 100% vào màn hình Home chính thức!
     """
     cookie = _normalize_roblosecurity_cookie(cookie)
     if not cookie:
         return None, "Cookie rỗng"
 
-    base_headers = {
-        "Cookie": f".ROBLOSECURITY={cookie}",
-        "Content-Type": "application/json",
-        "Referer": "https://www.roblox.com/",
-        "Origin": "https://www.roblox.com",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*"
-    }
+    # Nhận diện nếu package mục tiêu là VNG
+    is_vng = bool(pkg and "vng" in str(pkg).lower())
 
-    # B1: Lấy X-CSRF-TOKEN từ auth.roblox.com (hoặc các endpoint auth chính)
-    csrf_token = None
-    csrf_candidates = [
-        ("https://auth.roblox.com/v1/authentication-ticket/", base_headers),
-        ("https://auth.roblox.com/v1/authentication-ticket", base_headers),
-        ("https://auth.roblox.com/v2/login", base_headers),
-        ("https://auth.roblox.com/v1/logout", base_headers),
-        ("https://apis.roblox.com/auth-token-service/v1/login/enterCode", {"Content-Type": "application/json", "User-Agent": base_headers["User-Agent"]})
-    ]
-    for url, hdrs in csrf_candidates:
+    endpoints = []
+    if is_vng:
+        endpoints.extend([
+            {
+                "url": "https://auth.robloxapp.vnggames.com/v1/authentication-ticket/",
+                "origin": "https://www.robloxapp.vnggames.com",
+                "referer": "https://www.robloxapp.vnggames.com/"
+            },
+            {
+                "url": "https://auth.robloxapp.vnggames.com/v1/authentication-ticket",
+                "origin": "https://www.robloxapp.vnggames.com",
+                "referer": "https://www.robloxapp.vnggames.com/"
+            }
+        ])
+    endpoints.extend([
+        {
+            "url": "https://auth.roblox.com/v1/authentication-ticket/",
+            "origin": "https://www.roblox.com",
+            "referer": "https://www.roblox.com/"
+        },
+        {
+            "url": "https://auth.roblox.com/v1/authentication-ticket",
+            "origin": "https://www.roblox.com",
+            "referer": "https://www.roblox.com/"
+        },
+        {
+            "url": "https://auth.robloxapp.vnggames.com/v1/authentication-ticket/",
+            "origin": "https://www.robloxapp.vnggames.com",
+            "referer": "https://www.robloxapp.vnggames.com/"
+        },
+        {
+            "url": "https://auth.robloxapp.vnggames.com/v1/authentication-ticket",
+            "origin": "https://www.robloxapp.vnggames.com",
+            "referer": "https://www.robloxapp.vnggames.com/"
+        }
+    ])
+
+    last_err = "Không tạo được Auth Ticket"
+    for ep in endpoints:
+        t_url = ep["url"]
+        orig = ep["origin"]
+        ref = ep["referer"]
+        base_hdrs = {
+            "Cookie": f".ROBLOSECURITY={cookie}",
+            "Content-Type": "application/json",
+            "Referer": ref,
+            "Origin": orig,
+            "User-Agent": "Roblox/WinInet",
+            "Accept": "application/json, text/plain, */*"
+        }
+
+        # Lấy X-CSRF-TOKEN
+        csrf_token = None
         try:
-            req_c = urllib.request.Request(url, data=b"{}", headers=hdrs, method="POST")
+            req_c = urllib.request.Request(t_url, data=b"{}", headers=base_hdrs, method="POST")
             with urllib.request.urlopen(req_c, timeout=6) as resp_c:
                 csrf_token = resp_c.headers.get("x-csrf-token") or resp_c.headers.get("X-CSRF-TOKEN")
         except urllib.error.HTTPError as e:
             csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
         except Exception:
             pass
-        if csrf_token:
-            break
 
-    if not csrf_token:
-        return None, "Không lấy được X-CSRF-Token từ server Roblox"
+        if not csrf_token:
+            continue
 
-    # B2: Gửi request sinh Auth Ticket (ưu tiên có RBXAuthenticationNegotiation: 1)
-    req_configs = [
-        # Kiểu 1: Negotiation flag chuẩn của Roblox Client
-        {
-            "Cookie": f".ROBLOSECURITY={cookie}",
-            "Content-Type": "application/json",
-            "Referer": "https://www.roblox.com/",
-            "Origin": "https://www.roblox.com",
-            "User-Agent": "Roblox/WinInet",
-            "RBXAuthenticationNegotiation": "1",
-            "x-csrf-token": csrf_token
-        },
-        # Kiểu 2: Trình duyệt chuẩn kèm negotiation flag
-        dict(base_headers, **{"x-csrf-token": csrf_token, "RBXAuthenticationNegotiation": "1"}),
-        # Kiểu 3: Trình duyệt thuần
-        dict(base_headers, **{"x-csrf-token": csrf_token}),
-        # Kiểu 4: Roblox native client thuần
-        {
-            "Cookie": f".ROBLOSECURITY={cookie}",
-            "Content-Type": "application/json",
-            "Referer": "https://www.roblox.com/",
-            "Origin": "https://www.roblox.com",
-            "User-Agent": "Roblox/WinInet",
-            "x-csrf-token": csrf_token
-        }
-    ]
+        configs = [
+            dict(base_hdrs, **{"x-csrf-token": csrf_token, "RBXAuthenticationNegotiation": "1"}),
+            dict(base_hdrs, **{"x-csrf-token": csrf_token}),
+            dict(base_hdrs, **{
+                "x-csrf-token": csrf_token,
+                "RBXAuthenticationNegotiation": "1",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            })
+        ]
 
-    ticket_urls = [
-        "https://auth.roblox.com/v1/authentication-ticket/",
-        "https://auth.roblox.com/v1/authentication-ticket",
-        "https://auth.robloxapp.vnggames.com/v1/authentication-ticket/",
-        "https://auth.robloxapp.vnggames.com/v1/authentication-ticket"
-    ]
-
-    last_err = "Không tạo được Auth Ticket"
-    for hdrs in req_configs:
-        for t_url in ticket_urls:
+        for hdrs in configs:
             try:
-                req2 = urllib.request.Request(t_url, data=b"{}", headers=hdrs, method="POST")
-                with urllib.request.urlopen(req2, timeout=8) as resp2:
-                    ticket = resp2.headers.get("rbx-authentication-ticket") or resp2.headers.get("RBX-Authentication-Ticket")
-                    if ticket:
-                        return ticket, "Thành công"
+                req_t = urllib.request.Request(t_url, data=b"{}", headers=hdrs, method="POST")
+                with urllib.request.urlopen(req_t, timeout=7) as resp_t:
+                    for h_name in ["rbx-authentication-ticket", "RBX-Authentication-Ticket", "Rbx-Authentication-Ticket"]:
+                        ticket = resp_t.headers.get(h_name)
+                        if ticket:
+                            return ticket.strip(), "Thành công"
                     try:
-                        data = json.loads(resp2.read().decode('utf-8'))
-                        t = data.get("authTicket")
-                        if t: return t, "Thành công"
+                        raw_body = resp_t.read().decode('utf-8', errors='ignore')
+                        data = json.loads(raw_body) if raw_body else {}
+                        t = data.get("authTicket") or data.get("ticket")
+                        if t:
+                            return str(t).strip(), "Thành công"
                     except:
                         pass
             except urllib.error.HTTPError as e:
-                ticket = e.headers.get("rbx-authentication-ticket") or e.headers.get("RBX-Authentication-Ticket")
-                if ticket:
-                    return ticket, "Thành công"
+                for h_name in ["rbx-authentication-ticket", "RBX-Authentication-Ticket", "Rbx-Authentication-Ticket"]:
+                    ticket = e.headers.get(h_name)
+                    if ticket:
+                        return ticket.strip(), "Thành công"
                 last_err = f"HTTP {e.code}"
             except Exception as e:
                 last_err = str(e)
@@ -2372,13 +2388,9 @@ def purge_stale_roblox_cookies(pkg):
 
     # 5. Xóa sạch cache, code_cache và file session trong files/
     misc_wipe_cmd = (
-        f"rm -rf '/data/data/{pkg}/files/'*session* "
-        f"'/data/data/{pkg}/files/'*account* "
-        f"'/data/data/{pkg}/files/'*user* "
-        f"'/data/data/{pkg}/files/'*token* "
-        f"'/data/data/{pkg}/files/'*auth* "
-        f"'/data/data/{pkg}/files/rbxcache'* "
+        f"rm -rf '/data/data/{pkg}/files/rbxcache'* "
         f"'/data/data/{pkg}/files/app_instances'* "
+        f"'/data/data/{pkg}/files/'*session*.dat* "
         f"'/data/data/{pkg}/cache/'* "
         f"'/data/data/{pkg}/code_cache/'* 2>/dev/null || true"
     )
@@ -2601,7 +2613,12 @@ def inject_cookie_webview(pkg, cookie):
     exp_1601 = (int(time.time()) + 10 * 365 * 86400 + epoch_offset) * 1000000
 
     # CHỈ DÙNG 2 DOMAIN GỐC CHUẨN ĐỂ TRÁNH PHÌNH TO COOKIE HEADER (>8KB GÂY LỖI HTTP 400/431)
-    hosts = ['.roblox.com', 'roblox.com', 'www.roblox.com', '.robloxapp.vnggames.com', 'robloxapp.vnggames.com']
+    hosts = [
+        '.roblox.com', 'roblox.com', 'www.roblox.com',
+        '.robloxapp.vnggames.com', 'robloxapp.vnggames.com', 'www.robloxapp.vnggames.com',
+        'users.robloxapp.vnggames.com', 'auth.robloxapp.vnggames.com', 'apis.robloxapp.vnggames.com',
+        'users.roblox.com', 'auth.roblox.com', 'apis.roblox.com'
+    ]
     cookie_names = ['.ROBLOSECURITY']
     site_keys = ['']
 
@@ -2784,6 +2801,7 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
     # Các file SharedPreferences thiết yếu theo phân tích mã nguồn Roblox:
     target_files = [
         f"{shared_prefs_dir}/WebViewCookieHandlerNativeStorage.xml",
+        f"{shared_prefs_dir}/FirstRunPrefs.xml",
         f"{shared_prefs_dir}/prefs.xml",
         f"{shared_prefs_dir}/roblox.com_prefs.xml",
         f"{shared_prefs_dir}/robloxapp.vnggames.com_prefs.xml",
@@ -2812,11 +2830,15 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
             ET.SubElement(root_el, 'boolean', name='has_migrated_to_native_cookie_storage', value='true')
             el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             el.text = cookie
-            el2 = ET.SubElement(root_el, 'string', name='ROBLOSECURITY')
-            el2.text = cookie
             ET.SubElement(root_el, 'long', name='.ROBLOSECURITY__write_time', value=str(now_ms))
             s_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY__write_source')
             s_el.text = "MIGRATION"
+
+        elif fname == "FirstRunPrefs.xml":
+            # Vô hiệu hóa triệt để cờ cài mới First Install trong Roblox C++ Engine (NativeAppBridgeInterface.setIsFirstInstall(false))
+            # Ngăn chặn hoàn toàn việc app rơi vào màn hình chào mừng / đăng ký onboarding khi đã có cookie!
+            root_el = ET.Element('map')
+            ET.SubElement(root_el, 'boolean', name='isFreshInstall', value='false')
 
         elif fname in ("prefs.xml", "roblox.com_prefs.xml", "robloxapp.vnggames.com_prefs.xml"):
             root_el = ET.Element('map')
@@ -2834,9 +2856,14 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
                     ET.SubElement(root_el, 'int', name='userid', value=uid_val)
 
             ET.SubElement(root_el, 'boolean', name='under13', value='false')
+            ET.SubElement(root_el, 'boolean', name='isFreshInstall', value='false')
             ET.SubElement(root_el, 'long', name='user_logged_in_time', value=str(now_ms))
             c_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             c_el.text = cookie
+            ET.SubElement(root_el, 'boolean', name='is_first_install', value='false')
+            ET.SubElement(root_el, 'boolean', name='isFreshInstall', value='false')
+            ET.SubElement(root_el, 'boolean', name='has_completed_onboarding', value='true')
+            ET.SubElement(root_el, 'boolean', name='has_seen_landing', value='true')
             ET.SubElement(root_el, 'boolean', name='has_migrated_to_native_cookie_storage', value='true')
 
         # 3. Các file Preferences thông thường: Đọc file cũ (nếu có) để giữ setting đồ họa, dọn sạch key user cũ và nạp user mới
@@ -2862,6 +2889,10 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
 
             c_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             c_el.text = cookie
+            ET.SubElement(root_el, 'boolean', name='is_first_install', value='false')
+            ET.SubElement(root_el, 'boolean', name='isFreshInstall', value='false')
+            ET.SubElement(root_el, 'boolean', name='has_completed_onboarding', value='true')
+            ET.SubElement(root_el, 'boolean', name='has_seen_landing', value='true')
 
             if user_name:
                 for k in ['Username', 'RobloxUsername', 'RBX_USERNAME', 'username', 'displayName']:
@@ -3289,24 +3320,37 @@ def login_via_cookie():
         _run_root_capture("sync 2>/dev/null || true", timeout=3)
         time.sleep(0.5)
 
-        # 7. Khởi chạy ứng dụng Roblox trực tiếp vào giao diện chính đã đăng nhập
-        print(f"{Y}  └─ [*] Khởi động ứng dụng vào giao diện tài khoản {C}{u_name}{Y}...{RESET}")
-        launcher_cmds = [
-            f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
-            f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1",
-            f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000",
-            f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000",
-            f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -f 0x10000000"
-        ]
+        # 7. Khởi chạy ứng dụng Roblox trực tiếp vào giao diện chính đã đăng nhập:
+        # Ưu tiên cấp 1: Sinh Auth Ticket chính thức từ Roblox API để kích hoạt WebLoginProtocol (roblox://single-sign-on/login?auth=...)
+        # Đây là giao thức native của Roblox C++ Engine, server sẽ tự động liên kết phiên, cấp token và đưa thẳng vào Home không bao giờ bị kẹt màn hình chào mừng!
+        print(f"{Y}  ├─ [*] Đang sinh Auth Ticket đăng nhập chính thức từ server Roblox...{RESET}")
+        auth_ticket, t_msg = get_auth_ticket(cur_cookie, pkg=pkg)
         launched = False
-        for l_cmd in launcher_cmds:
-            code_l, out_l, _ = _run_root_capture(l_cmd, timeout=10)
-            if code_l == 0 and "Error:" not in out_l:
-                print(f"{G}     [✓] Đã khởi động App vào màn hình chính đã đăng nhập!{RESET}")
+        if auth_ticket:
+            print(f"{G}  ├─ [✓] Sinh Auth Ticket thành công: {W}{auth_ticket[:12]}...{RESET}")
+            sso_uri = f"roblox://single-sign-on/login?auth={auth_ticket}"
+            sso_cmd = f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"{sso_uri}\" -f 0x10000000"
+            code_sso, out_sso, _ = _run_root_capture(sso_cmd, timeout=10)
+            if code_sso == 0 and "Error:" not in out_sso:
+                print(f"{G}  └─ [✓] Đã khởi động App qua WebLogin SSO vào thẳng màn hình Home!{RESET}")
                 launched = True
-                break
-        
-        print(f"{Y}     [*] Chờ {COOKIE_LOGIN_APP_LOAD_WAIT}s để app tải xong...{RESET}")
+
+        if not launched:
+            print(f"{Y}  └─ [*] Khởi động ứng dụng vào giao diện tài khoản {C}{u_name}{Y} (Direct Mode)...{RESET}")
+            launcher_cmds = [
+                f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
+                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000",
+                f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000",
+                f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -f 0x10000000"
+            ]
+            for l_cmd in launcher_cmds:
+                code_l, out_l, _ = _run_root_capture(l_cmd, timeout=10)
+                if code_l == 0 and "Error:" not in out_l:
+                    print(f"{G}     [✓] Đã khởi động App vào màn hình chính đã đăng nhập!{RESET}")
+                    launched = True
+                    break
+
+        print(f"{Y}     [*] Chờ {COOKIE_LOGIN_APP_LOAD_WAIT}s để app tải và đồng bộ phiên...{RESET}")
         time.sleep(COOKIE_LOGIN_APP_LOAD_WAIT)
 
         # 8. Kiểm tra kết quả thực tế trên app
@@ -3315,6 +3359,44 @@ def login_via_cookie():
             print(f"{G}     [✓] Kiểm tra sau nạp: App ĐÃ NHẬN COOKIE MỚI! ({ck_src}){RESET}")
         else:
             print(f"{Y}     [!] Lưu ý: {ck_src}.{RESET}")
+
+        # 9. Tự động kiểm tra & vượt màn hình Chào Mừng / Landing Screen nếu app vô tình rơi vào:
+        # Nếu màn hình xuất hiện nút 'Đăng nhập' / 'Tạo Tài khoản', tool sẽ tự động bấm 'Đăng nhập'
+        # để WebView đọc ngay Cookie SQLite đã tiêm và hoàn tất đăng nhập tức thì!
+        try:
+            has_dump, ui_xml = safe_uiautomator_dump(timeout=4)
+            if has_dump and ui_xml:
+                ui_lower = ui_xml.lower()
+                is_landing = any(k in ui_lower for k in ["đăng nhập", "tạo tài khoản", "sign up", "log in", "chơi quá 180 phút"])
+                if is_landing:
+                    print(f"{Y}     [*] Phát hiện màn hình Chào Mừng (Landing), đang tự động kích hoạt Đăng Nhập...{RESET}")
+                    # Tìm tọa độ nút 'Đăng nhập' hoặc 'Log In' trong UI dump
+                    btn_m = re.search(r'text="[^"]*(?:Đăng nhập|Log In|ĐĂNG NHẬP)[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', ui_xml, re.I)
+                    if not btn_m:
+                        btn_m = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="[^"]*(?:Đăng nhập|Log In|ĐĂNG NHẬP)[^"]*"', ui_xml, re.I)
+
+                    if btn_m:
+                        x1, y1, x2, y2 = int(btn_m.group(1)), int(btn_m.group(2)), int(btn_m.group(3)), int(btn_m.group(4))
+                        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                        _run_root_capture(f"input tap {cx} {cy} 2>/dev/null", timeout=2)
+                        print(f"{G}     [✓] Đã tự động chạm nút 'Đăng nhập' tại ({cx}, {cy}) để kích hoạt phiên!{RESET}")
+                    else:
+                        # Fallback click vị trí nút Đăng Nhập phổ biến (tâm ngang, 64% dọc màn hình Landscape)
+                        w_code, w_out, _ = _run_root_capture("wm size 2>/dev/null", timeout=2)
+                        sw, sh = 1280, 720
+                        if w_code == 0 and "x" in w_out:
+                            try:
+                                sz = re.search(r'(\d+)x(\d+)', w_out)
+                                if sz:
+                                    w_val, h_val = int(sz.group(1)), int(sz.group(2))
+                                    sw, sh = max(w_val, h_val), min(w_val, h_val)
+                            except: pass
+                        tap_x, tap_y = sw // 2, int(sh * 0.64)
+                        _run_root_capture(f"input tap {tap_x} {tap_y} 2>/dev/null", timeout=2)
+                        print(f"{G}     [✓] Đã chạm nút Đăng Nhập theo tọa độ màn hình ({tap_x}, {tap_y})!{RESET}")
+                    time.sleep(3)
+        except Exception:
+            pass
 
     print(f"\n{G}╔═══════════════════════════════════════════════════════════╗{RESET}")
     print(f"{G}║             [✓] HOÀN TẤT NẠP COOKIE MỚI THÀNH CÔNG!       ║{RESET}")
