@@ -2277,13 +2277,7 @@ def purge_stale_roblox_cookies(pkg):
         f"rm -f '{shared_prefs_dir}/webView_backup'* "
         f"'{shared_prefs_dir}/WebViewCookieHandlerNativeStorage'* "
         f"'{shared_prefs_dir}/prefs'* "
-        f"'{shared_prefs_dir}/roblox.com_prefs'* "
-        f"'{shared_prefs_dir}/'*session* "
-        f"'{shared_prefs_dir}/'*account* "
-        f"'{shared_prefs_dir}/'*user* "
-        f"'{shared_prefs_dir}/'*auth* "
-        f"'{shared_prefs_dir}/'*login* "
-        f"'{shared_prefs_dir}/'*token* 2>/dev/null || true"
+        f"'{shared_prefs_dir}/roblox.com_prefs'* 2>/dev/null || true"
     )
     _run_root_capture(rm_session_xml_cmd, timeout=3)
 
@@ -2334,18 +2328,9 @@ def purge_stale_roblox_cookies(pkg):
                     except:
                         pass
 
-    # 4. Xóa sạch Chromium Web Storage (LocalStorage leveldb, SessionStorage, IndexedDB...)
+    # 4. Dọn dẹp tàn dư Chromium Web Storage an toàn (không xóa thư mục gây hỏng LevelDB VFS)
     wv_wipe_cmd = (
-        f"rm -rf '/data/data/{pkg}/app_webview/Default/Local Storage' "
-        f"'/data/data/{pkg}/app_webview/Default/Session Storage' "
-        f"'/data/data/{pkg}/app_webview/Default/IndexedDB' "
-        f"'/data/data/{pkg}/app_webview/Default/Web Data'* "
-        f"'/data/data/{pkg}/app_webview/Default/Shared Dictionary' "
-        f"'/data/data/{pkg}/app_webview/Default/Service Worker' "
-        f"'/data/data/{pkg}/app_webview/Default/shared_proto_db' "
-        f"'/data/data/{pkg}/app_webview/Local Storage' "
-        f"'/data/data/{pkg}/app_webview/Session Storage' "
-        f"'/data/data/{pkg}/app_webview/IndexedDB' 2>/dev/null || true"
+        f"find '/data/data/{pkg}/app_webview/' -type f \\( -name '*-journal' -o -name '*-wal' -o -name '*-shm' \\) -delete 2>/dev/null || true"
     )
     _run_root_capture(wv_wipe_cmd, timeout=3)
 
@@ -2582,9 +2567,9 @@ def inject_cookie_webview(pkg, cookie):
 
     # Chỉ dùng 2 host chuẩn (.roblox.com và roblox.com) và tên chuẩn .ROBLOSECURITY
     # để tránh sinh 40 hàng trùng lặp gây phình to Cookie Header (>2KB) bị Akamai chặn!
-    hosts = ['.roblox.com', 'roblox.com']
+    hosts = ['.roblox.com', 'roblox.com', '.robloxapp.vnggames.com', 'robloxapp.vnggames.com']
     cookie_names = ['.ROBLOSECURITY']
-    site_keys = ['', 'https://roblox.com']
+    site_keys = ['', 'https://roblox.com', 'https://robloxapp.vnggames.com']
 
     success_count = 0
     primary_synced_db = None
@@ -2612,7 +2597,7 @@ def inject_cookie_webview(pkg, cookie):
             columns = [col[1] for col in column_info]
 
             # Xóa TOÀN BỘ cookie Roblox cũ & session token cũ để tránh xung đột
-            c.execute("DELETE FROM cookies WHERE host_key LIKE '%roblox.com%' OR name LIKE '%ROBLOSECURITY%' OR name='RobloxSecurityToken' OR name LIKE '%RBX%'")
+            c.execute("DELETE FROM cookies WHERE host_key LIKE '%roblox%' OR host_key LIKE '%vnggames%' OR name LIKE '%ROBLOSECURITY%' OR name='RobloxSecurityToken' OR name LIKE '%RBX%'")
 
             counter = 0
             for hk in hosts:
@@ -2789,9 +2774,14 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
         # 1. WebViewCookieHandlerNativeStorage.xml: Luôn tạo mới tinh khiết cho tài khoản mới
         if fname == "WebViewCookieHandlerNativeStorage.xml":
             root_el = ET.Element('map')
+            ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v5__', value='true')
+            ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v4__', value='true')
             ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v3__', value='true')
             el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             el.text = cookie
+            ET.SubElement(root_el, 'long', name='.ROBLOSECURITY__write_time', value=str(now_ms))
+            s_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY__write_source')
+            s_el.text = "MIGRATION"
 
         # 2. prefs.xml & roblox.com_prefs.xml: Luôn tạo mới tinh khiết để xóa sạch mọi tàn dư tài khoản cũ
         elif fname in ("prefs.xml", "roblox.com_prefs.xml"):
@@ -2813,6 +2803,7 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
             ET.SubElement(root_el, 'long', name='user_logged_in_time', value=str(now_ms))
             c_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             c_el.text = cookie
+            ET.SubElement(root_el, 'boolean', name='has_migrated_to_native_cookie_storage', value='true')
 
         # 3. Các file Preferences thông thường: Đọc file cũ (nếu có) để giữ setting đồ họa, dọn sạch key user cũ và nạp user mới
         else:
@@ -3268,39 +3259,37 @@ def login_via_cookie():
         # 7. Khởi chạy ứng dụng
         print(f"{Y}  └─ [*] Đang khởi động ứng dụng...{RESET}")
         launched = False
-        if ticket:
+
+        # Nếu có ticket và target_place_id hợp lệ -> kích hoạt vào game qua experiences/start
+        if ticket and target_place_id and str(target_place_id).strip().isdigit():
+            pid = str(target_place_id).strip()
             print(f"{G}     [✓] Tạo Auth Ticket thành công: {ticket[:18]}...{RESET}")
             proto_cmds = [
-                f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -f 0x10000000",
-                f"am start -a android.intent.action.VIEW -d \"roblox://navigation?authTicket={ticket}\" -p {pkg} -f 0x10000000",
-                f"am start -a android.intent.action.VIEW -d \"robloxmobile://navigation?authTicket={ticket}\" -p {pkg} -f 0x10000000",
-                f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"roblox://navigation/home?authTicket={ticket}\" -f 0x10000000",
-                f"am start -a android.intent.action.VIEW -d \"robloxglobal://navigation?authTicket={ticket}\" -p {pkg} -f 0x10000000"
+                f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={pid}&authTicket={ticket}\" -f 0x10000000",
+                f"am start -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={pid}&authTicket={ticket}\" -p {pkg} -f 0x10000000",
+                f"am start -a android.intent.action.VIEW -d \"robloxmobile://experiences/start?placeId={pid}&authTicket={ticket}\" -p {pkg} -f 0x10000000"
             ]
             for p_cmd in proto_cmds:
                 code_p, out_p, _ = _run_root_capture(p_cmd, timeout=8)
                 if code_p == 0 and "Error:" not in out_p:
-                    print(f"{G}     [✓] Đã kích hoạt Protocol Deeplink kèm Auth Ticket!{RESET}")
+                    print(f"{G}     [✓] Đã kích hoạt Game Deeplink (PlaceId: {pid}) kèm Auth Ticket!{RESET}")
                     launched = True
                     break
 
         if not launched:
-            if ticket:
-                print(f"{Y}     [!] Protocol Launch không phản hồi, dùng Launcher Splash...{RESET}")
-            else:
-                print(f"{Y}     [!] Không dùng Auth Ticket ({t_msg}). Khởi chạy qua Launcher với Cookie & Session đã nạp...{RESET}")
-
+            print(f"{Y}     [*] Khởi chạy App Roblox trực tiếp vào giao diện đã đăng nhập...{RESET}")
             launcher_cmds = [
+                f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
                 f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000",
-                f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -f 0x10000000",
-                f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -f 0x10000000",
+                f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
+                f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
                 f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000",
                 f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1"
             ]
             for l_cmd in launcher_cmds:
                 code_l, out_l, _ = _run_root_capture(l_cmd, timeout=10)
                 if code_l == 0 and "Error:" not in out_l:
-                    print(f"{G}     [✓] Đã khởi động App thành công!{RESET}")
+                    print(f"{G}     [✓] Đã khởi động App vào màn hình chính đã đăng nhập!{RESET}")
                     launched = True
                     break
 
@@ -3370,7 +3359,7 @@ def extract_roblox_cookie_with_source(pkg):
                 if norm_val not in DEAD_COOKIES:
                     return val, "NativeStorage XML (fl.e - Phiên hiện tại)"
 
-        if '__migrated_from_webview_v3__' in xml_content:
+        if '__migrated_from_webview_v5__' in xml_content or '__migrated_from_webview_v3__' in xml_content:
             return None, "Đã Đăng Xuất trên App (NativeStorage rỗng)"
 
     # 2. ƯU TIÊN 2: Chromium SQLite Cookies
@@ -3434,7 +3423,7 @@ def extract_roblox_cookie_with_source(pkg):
                     elif "last_access_utc" in cols:
                         order_by = "ORDER BY last_access_utc DESC"
 
-                    c.execute(f"SELECT value FROM cookies WHERE (name='.ROBLOSECURITY' OR name='ROBLOSECURITY') AND host_key LIKE '%roblox.com%' {order_by} LIMIT 1")
+                    c.execute(f"SELECT value FROM cookies WHERE (name='.ROBLOSECURITY' OR name='ROBLOSECURITY') AND (host_key LIKE '%roblox%' OR host_key LIKE '%vnggames%') {order_by} LIMIT 1")
                     row = c.fetchone()
                     conn.close()
                     for f_del in [local_db, f"{local_db}-wal", f"{local_db}-shm"]:
@@ -3768,14 +3757,6 @@ def check_roblox_account_status(cookie):
         except:
             pass
 
-    # 4. KIỂM TRA ĐẶC TRỊ: POST https://gamejoin.roblox.com/v1/join-game (Bắt chuẩn 100% Game Join Captcha)
-    pid = 4520749081
-    try:
-        if target_place_id and str(target_place_id).strip().isdigit():
-            pid = int(target_place_id)
-    except:
-        pass
-
     join_headers = {
         "Cookie": cookie_header,
         "Content-Type": "application/json",
@@ -3787,154 +3768,7 @@ def check_roblox_account_status(cookie):
         join_headers["x-csrf-token"] = csrf_token
         join_headers["X-CSRF-TOKEN"] = csrf_token
 
-    payload = json.dumps({"placeId": pid}).encode('utf-8')
-    req_join = urllib.request.Request(
-        "https://gamejoin.roblox.com/v1/join-game",
-        data=payload,
-        headers=join_headers,
-        method="POST"
-    )
-    try:
-        with urllib.request.urlopen(req_join, timeout=6) as res_j:
-            # 200 OK -> game-join thành công, tài khoản sạch hoàn toàn!
-            pass
-    except urllib.error.HTTPError as e:
-        chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
-        chal_id = e.headers.get("rblx-challenge-id") or ""
-        chal_meta = e.headers.get("rblx-challenge-metadata") or ""
-        raw_body = e.read().decode('utf-8', errors='ignore')
-        err_body = raw_body.lower()
-
-        # Nếu 403 do cần token mới thì thử lại 1 lần với token mới
-        if e.code == 403 and (e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")) and not chal_type:
-            new_csrf = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
-            join_headers["x-csrf-token"] = new_csrf
-            join_headers["X-CSRF-TOKEN"] = new_csrf
-            req_retry = urllib.request.Request(
-                "https://gamejoin.roblox.com/v1/join-game",
-                data=payload,
-                headers=join_headers,
-                method="POST"
-            )
-            try:
-                with urllib.request.urlopen(req_retry, timeout=6) as res_r:
-                    pass
-            except urllib.error.HTTPError as e2:
-                chal_type = (e2.headers.get("rblx-challenge-type") or "").lower()
-                chal_id = e2.headers.get("rblx-challenge-id") or ""
-                chal_meta = e2.headers.get("rblx-challenge-metadata") or ""
-                raw_body = e2.read().decode('utf-8', errors='ignore')
-                err_body = raw_body.lower()
-
-        if "moderated" in err_body:
-            return {
-                "status": "NOT_APPROVED",
-                "badge": "Kẹt Not-Approved / Kiểm Duyệt",
-                "color": R,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
-            }
-        is_press_and_hold = (
-            any(k in err_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold", "người thật", "human", "reference id", "id tham chiếu"]) or
-            any(k in chal_type for k in ["security", "generic", "proof-of-work", "press", "hold"])
-        )
-        if is_press_and_hold:
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": "PRESS_AND_HOLD",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'security'}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn vào game (join-game 403) yêu cầu vượt qua màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {chal_id or 'N/A'})!"
-            }
-        elif "twostepverification" in chal_type or "two-step" in err_body:
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Yêu Cầu Xác Minh 2FA",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": "TWO_STEP_VERIFICATION",
-                "challenge_id": chal_id,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
-                "message": "Roblox yêu cầu xác minh 2 bước trước khi vào game!"
-            }
-        elif "captchav2" in chal_type or ("captchav2" in chal_meta.lower() if chal_meta else False):
-            meta_json = {}
-            if chal_meta:
-                try:
-                    meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
-                except:
-                    pass
-            action_type = meta_json.get("actionType", "JoinGame") if isinstance(meta_json, dict) else "JoinGame"
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha V2 Vào Game",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": "CAPTCHAV2",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "meta_data": meta_json,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn vào game (join-game HTTP 403, challenge_type=captchav2) và yêu cầu giải Captcha V2 (Action: {action_type}, ID: {chal_id or 'N/A'})!"
-            }
-        elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body or "funcaptcha" in err_body or "challenge is required" in err_body:
-            meta_json = {}
-            if chal_meta:
-                try:
-                    meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
-                except:
-                    pass
-            action_type = meta_json.get("actionType", "JoinGame") if isinstance(meta_json, dict) else "JoinGame"
-            hybrid_challenge_url = ""
-            if chal_id:
-                ch_params = {
-                    "generic-challenge-type": "captcha",
-                    "app-type": "browser",
-                    "generic-challenge-id": chal_id,
-                    "challenge-metadata-json": chal_meta or "",
-                    "challenge-type": "generic",
-                    "dark-mode": "false"
-                }
-                hybrid_challenge_url = "https://www.roblox.com/challenge/cdn/hybrid?" + urllib.parse.urlencode(ch_params)
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha V1 (Arkose FunCaptcha)",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": "CAPTCHA_V1",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "challenge_url": hybrid_challenge_url,
-                "meta_data": meta_json,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn vào game (join-game HTTP 403, challenge_type={chal_type or 'captcha'}) và yêu cầu giải Captcha V1 (Arkose FunCaptcha, Action: {action_type}, ID: {chal_id or 'N/A'})!"
-            }
-        elif chal_id or chal_type or chal_meta:
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": f"Dính Checkpoint Bảo Mật ({chal_type or 'Challenge'})",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": chal_type or "CHALLENGE",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn vào game (join-game 403) và kích hoạt Thử Thách Bảo Mật (ID tham chiếu: {chal_id or 'N/A'})!"
-            }
-    except Exception:
-        pass
-
-    # 5. Kiểm tra dự phòng qua POST https://auth.roblox.com/v1/authentication-ticket/
+    # 4. Kiểm tra sinh Auth Ticket qua POST https://auth.roblox.com/v1/authentication-ticket/
     if csrf_token:
         try:
             req_ticket = urllib.request.Request(
@@ -4698,15 +4532,14 @@ def check_and_handle_account_health(pkg, states, current_time, force=False):
         state['in_game'] = False
         state['is_blocked'] = True
         state['block_reason'] = badge
-        if is_app_running(pkg):
-            _kill_pkg(pkg)
-
         if chal_type in ['CAPTCHA_V1', 'ARKOSE_CAPTCHA'] or "V1" in badge or "Arkose" in badge:
             state['captcha_type'] = 'CAPTCHA_V1'
-            state['text'] = "Chờ Cookie Sạch (V1)"
+            state['text'] = "Yêu Cầu Giải Captcha"
             state['color'] = Y
             add_log(f"[{pkg[-12:]}] {Y}[CẢNH BÁO COOKIE] {badge}: {msg_detail}{RESET}")
-            add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA V1] Không vào game! Đã tắt app, chờ đến khi Cookie sạch lại sẽ tự Rejoin...{RESET}")
+            add_log(f"[{pkg[-12:]}] {Y}[CAPTCHA] Vui lòng giải Captcha trên màn hình điện thoại nếu hiển thị...{RESET}")
+            if not is_app_running(pkg):
+                launch_roblox_to_game(pkg)
             return True
         else:
             state['captcha_type'] = 'CAPTCHAV2'
