@@ -172,7 +172,7 @@ C_GRAY_LIGHT  = '\033[38;5;250m'
 # =====================================================================
 selected_packages = []
 target_place_id = "4520749081"
-COOKIE_LOGIN_REVISION = "2026-11-09 (VNG robloxapp.vnggames.com_prefs & Chromium Native Sync)"
+COOKIE_LOGIN_REVISION = "2026-11-09 (Multi-Device Robustness & Anti-Header-Bloat)"
 COOKIE_LOGIN_APP_LOAD_WAIT = 6
 kill_all_time = 0
 json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
@@ -197,7 +197,7 @@ OMOCAPTCHA_KEY = ""
 # HuDy WebKey authorization for Tool Rejoin. The key is checked once at launch;
 # the server stores only its SHA-256 hash in Cloudflare D1.
 HUDY_WEBKEY_BASE = "https://hudyy.com"
-HUDY_REJOIN_VERSION = "3.5 (No Key Edition)"
+HUDY_REJOIN_VERSION = "3.6 (No Key Edition)"
 HUDY_REJOIN_ACCOUNT = "Vĩnh Viễn (No Key Edition)"
 CURRENT_REJOIN_KEY = "NO_KEY"
 
@@ -2110,12 +2110,46 @@ def force_restart_app(pkg, states, current_time, reason, color):
 # =====================================================================
 
 def get_pkg_uid_gid(pkg):
-    """Lấy chính xác Linux UID và GID của app để phân quyền tránh bị Android/Chromium reset database."""
-    code, ownership, _ = _run_root_capture(f"stat -c '%u %g' '/data/data/{pkg}'", timeout=3)
-    if code == 0:
+    """
+    Lấy chính xác Linux UID và GID của app với đa tầng fallback:
+    Tương thích 100% mọi thiết bị Android, Cloud Phone (Redfinger, UgPhone, LDCloud, Nox...)
+    kể cả máy không cài stat / busybox.
+    """
+    # Cách 1: dumpsys package (Cách chuẩn nhất và chính xác nhất từ Android OS)
+    code_d, out_d, _ = _run_root_capture(f"dumpsys package '{pkg}' 2>/dev/null | grep -E 'userId=|appId=' | head -n 1", timeout=3)
+    if code_d == 0 and out_d:
+        m = re.search(r'(?:userId|appId)=(\d+)', out_d)
+        if m:
+            uid_val = m.group(1).strip()
+            return uid_val, uid_val
+
+    # Cách 2: ls -nd (Lệnh cơ bản có sẵn trên 100% Android Toolbox/Toybox từ Android 4.0+)
+    code_l, out_l, _ = _run_root_capture(f"ls -nd '/data/data/{pkg}' 2>/dev/null", timeout=3)
+    if code_l == 0 and out_l:
+        parts = out_l.strip().split()
+        if len(parts) >= 4:
+            if parts[1].isdigit() and parts[2].isdigit():
+                return parts[1], parts[2]
+            elif parts[2].isdigit() and parts[3].isdigit():
+                return parts[2], parts[3]
+
+    # Cách 3: stat -c '%u %g' (Nếu máy có hỗ trợ)
+    code, ownership, _ = _run_root_capture(f"stat -c '%u %g' '/data/data/{pkg}' 2>/dev/null", timeout=2)
+    if code == 0 and ownership:
         parts = ownership.split()
         if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
             return parts[0], parts[1]
+
+    # Cách 4: Quét UID của bất kỳ file/folder nào đã có trong /data/data/{pkg}
+    code_sub, out_sub, _ = _run_root_capture(f"ls -nd '/data/data/{pkg}'/* 2>/dev/null | head -n 1", timeout=2)
+    if code_sub == 0 and out_sub:
+        parts = out_sub.strip().split()
+        if len(parts) >= 4:
+            if parts[1].isdigit() and parts[2].isdigit():
+                return parts[1], parts[2]
+            elif parts[2].isdigit() and parts[3].isdigit():
+                return parts[2], parts[3]
+
     return "10000", "10000"
 
 def _normalize_roblosecurity_cookie(cookie):
@@ -2278,10 +2312,9 @@ def purge_stale_roblox_cookies(pkg):
     rm_session_xml_cmd = (
         f"rm -f '{shared_prefs_dir}/webView_backup'* "
         f"'{shared_prefs_dir}/WebViewCookieHandlerNativeStorage'* "
-        f"'{shared_prefs_dir}/prefs'* "
-        f"'{shared_prefs_dir}/roblox.com_prefs'* "
-        f"'{shared_prefs_dir}/robloxapp.vnggames.com_prefs'* "
-        f"'{shared_prefs_dir}'/*prefs* 2>/dev/null || true"
+        f"'{shared_prefs_dir}/prefs.xml'* "
+        f"'{shared_prefs_dir}/roblox.com_prefs.xml'* "
+        f"'{shared_prefs_dir}/robloxapp.vnggames.com_prefs.xml'* 2>/dev/null || true"
     )
     _run_root_capture(rm_session_xml_cmd, timeout=3)
 
@@ -2320,11 +2353,10 @@ def purge_stale_roblox_cookies(pkg):
                             with open(t_f, 'w', encoding='utf-8') as cf:
                                 cf.write(xml_clean)
                             _run_root_capture(
-                                f"cp '{t_f}' '{x_path}' && chown {uid}:{gid} '{x_path}' && chmod 660 '{x_path}' && "
+                                f"cp '{t_f}' '{x_path}' && chown {uid}:{gid} '{x_path}' && chmod 666 '{x_path}' && "
                                 f"(chcon -R --reference='/data/data/{pkg}' '{x_path}' 2>/dev/null || true); "
                                 f"CTX=$(ls -d -Z '/data/data/{pkg}' 2>/dev/null | tr -s ' ' '\\n' | grep '^u:' | head -n 1); "
-                                f"[ -n \"$CTX\" ] && chcon \"$CTX\" '{x_path}' 2>/dev/null || true; "
-                                f"restorecon -F '{x_path}' 2>/dev/null || true",
+                                f"[ -n \"$CTX\" ] && chcon \"$CTX\" '{x_path}' 2>/dev/null || true",
                                 timeout=3
                             )
                             try: os.remove(t_f)
@@ -2402,11 +2434,10 @@ def purge_stale_roblox_cookies(pkg):
                 conn.close()
                 _run_root_capture(
                     f"cp '{local_db}' '{db_path}' && rm -f '{db_path}-wal' '{db_path}-shm' '{db_path}-journal' 2>/dev/null && "
-                    f"chown {uid}:{gid} '{db_path}' && chmod 660 '{db_path}' && "
+                    f"chown {uid}:{gid} '{db_path}' && chmod 666 '{db_path}' && "
                     f"(chcon -R --reference='/data/data/{pkg}' '{db_path}' 2>/dev/null || true); "
                     f"CTX=$(ls -d -Z '/data/data/{pkg}' 2>/dev/null | tr -s ' ' '\\n' | grep '^u:' | head -n 1); "
-                    f"[ -n \"$CTX\" ] && chcon \"$CTX\" '{db_path}' 2>/dev/null || true; "
-                    f"restorecon -F '{db_path}' 2>/dev/null || true",
+                    f"[ -n \"$CTX\" ] && chcon \"$CTX\" '{db_path}' 2>/dev/null || true",
                     timeout=4
                 )
             except Exception:
@@ -2449,7 +2480,7 @@ def inject_cookie_webview(pkg, cookie):
     - Đồng bộ sang cả app_webview/Default/Cookies và app_webview/Default/Network/Cookies.
     - Xóa sạch file WAL/SHM/journal trước và sau khi ghi.
     - PRAGMA journal_mode=DELETE, wal_checkpoint(TRUNCATE), VACUUM.
-    - Phân quyền chính xác UID:GID, chmod 660 và chcon/restorecon SELinux.
+    - Phân quyền chính xác UID:GID, chmod 666 và chcon/restorecon SELinux.
     """
     cookie = _normalize_roblosecurity_cookie(cookie)
     if not cookie:
@@ -2464,7 +2495,7 @@ def inject_cookie_webview(pkg, cookie):
         f"/data/data/{pkg}/app_webview",
         f"/data/data/{pkg}/databases"
     ]:
-        _run_root_capture(f"mkdir -p '{d}' && chown {uid}:{gid} '{d}' && chmod 771 '{d}' 2>/dev/null", timeout=3)
+        _run_root_capture(f"mkdir -p '{d}' && chown {uid}:{gid} '{d}' && chmod 777 '{d}' 2>/dev/null", timeout=3)
 
     # Xóa file WAL/journal cũ trước khi đọc
     _run_root_capture(
@@ -2554,7 +2585,7 @@ def inject_cookie_webview(pkg, cookie):
             init_conn.commit()
             init_conn.close()
 
-            _run_root_capture(f"cp '{local_init}' '{fallback_db}' && chown {uid}:{gid} '{fallback_db}' && chmod 660 '{fallback_db}'", timeout=5)
+            _run_root_capture(f"cp '{local_init}' '{fallback_db}' && chown {uid}:{gid} '{fallback_db}' && chmod 666 '{fallback_db}'", timeout=5)
             dbs.append(fallback_db)
             try: os.remove(local_init)
             except: pass
@@ -2569,14 +2600,10 @@ def inject_cookie_webview(pkg, cookie):
     now_1601 = (int(time.time()) + epoch_offset) * 1000000
     exp_1601 = (int(time.time()) + 10 * 365 * 86400 + epoch_offset) * 1000000
 
-    # Danh sách host chuẩn cho cả Global Roblox và VNG Delta
-    hosts = [
-        '.roblox.com', 'roblox.com', 'www.roblox.com', 'users.roblox.com', 'auth.roblox.com',
-        '.robloxapp.vnggames.com', 'robloxapp.vnggames.com', 'www.robloxapp.vnggames.com',
-        'users.robloxapp.vnggames.com', 'auth.robloxapp.vnggames.com'
-    ]
-    cookie_names = ['.ROBLOSECURITY', 'ROBLOSECURITY']
-    site_keys = ['', 'https://roblox.com', 'https://robloxapp.vnggames.com']
+    # CHỈ DÙNG 2 DOMAIN GỐC CHUẨN ĐỂ TRÁNH PHÌNH TO COOKIE HEADER (>8KB GÂY LỖI HTTP 400/431)
+    hosts = ['.roblox.com', 'roblox.com', 'www.roblox.com', '.robloxapp.vnggames.com', 'robloxapp.vnggames.com']
+    cookie_names = ['.ROBLOSECURITY']
+    site_keys = ['']
 
     success_count = 0
     primary_synced_db = None
@@ -2671,11 +2698,10 @@ def inject_cookie_webview(pkg, cookie):
                 f"cp \"{local_db}\" \"{webview_db}\" && "
                 f"rm -f \"{webview_db}-wal\" \"{webview_db}-shm\" \"{webview_db}-journal\" 2>/dev/null && "
                 f"chown {uid}:{gid} \"{webview_db}\" && "
-                f"chmod 660 \"{webview_db}\" && "
+                f"chmod 666 \"{webview_db}\" && "
                 f"(chcon -R --reference='/data/data/{pkg}' \"{webview_db}\" 2>/dev/null || true); "
                 f"CTX=$(ls -d -Z '/data/data/{pkg}' 2>/dev/null | tr -s ' ' '\\n' | grep '^u:' | head -n 1); "
-                f"[ -n \"$CTX\" ] && chcon \"$CTX\" \"{webview_db}\" 2>/dev/null || true; "
-                f"restorecon -F \"{webview_db}\" 2>/dev/null || true"
+                f"[ -n \"$CTX\" ] && chcon \"$CTX\" \"{webview_db}\" 2>/dev/null || true"
             )
             write_code, _, _ = _run_root_capture(fix_cmd)
             if write_code == 0:
@@ -2705,11 +2731,10 @@ def inject_cookie_webview(pkg, cookie):
                 f"rm -f \"{st}-wal\" \"{st}-shm\" \"{st}-journal\" 2>/dev/null && "
                 f"cp \"{primary_synced_db}\" \"{st}\" && "
                 f"rm -f \"{st}-wal\" \"{st}-shm\" \"{st}-journal\" 2>/dev/null && "
-                f"chown {uid}:{gid} \"{st}\" && chmod 660 \"{st}\" && "
+                f"chown {uid}:{gid} \"{st}\" && chmod 666 \"{st}\" && "
                 f"(chcon -R --reference='/data/data/{pkg}' \"{st}\" 2>/dev/null || true); "
                 f"CTX=$(ls -d -Z '/data/data/{pkg}' 2>/dev/null | tr -s ' ' '\\n' | grep '^u:' | head -n 1); "
-                f"[ -n \"$CTX\" ] && chcon \"$CTX\" \"{st}\" 2>/dev/null || true; "
-                f"restorecon -F \"{st}\" 2>/dev/null || true",
+                f"[ -n \"$CTX\" ] && chcon \"$CTX\" \"{st}\" 2>/dev/null || true",
                 timeout=5
             )
         try: os.remove(primary_synced_db)
@@ -2720,8 +2745,7 @@ def inject_cookie_webview(pkg, cookie):
         f"chmod 771 '/data/data/{pkg}' '/data/data/{pkg}/app_webview' '/data/data/{pkg}/app_webview/Default' '/data/data/{pkg}/app_webview/Default/Network' 2>/dev/null || true; "
         f"(chcon -R --reference='/data/data/{pkg}' '/data/data/{pkg}/app_webview' 2>/dev/null || true); "
         f"CTX=$(ls -d -Z '/data/data/{pkg}' 2>/dev/null | tr -s ' ' '\\n' | grep '^u:' | head -n 1); "
-        f"[ -n \"$CTX\" ] && chcon -R \"$CTX\" '/data/data/{pkg}/app_webview' 2>/dev/null || true; "
-        f"restorecon -RF '/data/data/{pkg}/app_webview' 2>/dev/null || true",
+        f"[ -n \"$CTX\" ] && chcon -R \"$CTX\" '/data/data/{pkg}/app_webview' 2>/dev/null || true",
         timeout=5
     )
 
@@ -2752,7 +2776,7 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
     uid, gid = get_pkg_uid_gid(pkg)
 
     # Đảm bảo thư mục shared_prefs tồn tại
-    _run_root_capture(f"mkdir -p '{shared_prefs_dir}' && chown {uid}:{gid} '{shared_prefs_dir}' && chmod 771 '{shared_prefs_dir}' 2>/dev/null", timeout=3)
+    _run_root_capture(f"mkdir -p '{shared_prefs_dir}' && chown {uid}:{gid} '{shared_prefs_dir}' && chmod 777 '{shared_prefs_dir}' 2>/dev/null", timeout=3)
 
     # Xóa hoàn toàn file webView_backup.xml để ni.s không cố giải mã AES hoặc restore cookie cũ
     _run_root_capture(f"rm -f '{shared_prefs_dir}/webView_backup'* 2>/dev/null", timeout=2)
@@ -2783,6 +2807,9 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
         if fname == "WebViewCookieHandlerNativeStorage.xml":
             root_el = ET.Element('map')
             ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v5__', value='true')
+            ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v4__', value='true')
+            ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v3__', value='true')
+            ET.SubElement(root_el, 'boolean', name='has_migrated_to_native_cookie_storage', value='true')
             el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             el.text = cookie
             el2 = ET.SubElement(root_el, 'string', name='ROBLOSECURITY')
@@ -2791,8 +2818,6 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
             s_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY__write_source')
             s_el.text = "MIGRATION"
 
-        # 2. prefs.xml, roblox.com_prefs.xml & robloxapp.vnggames.com_prefs.xml:
-        # Cốt lõi nhận diện session đăng nhập của Roblox C++ Engine & SessionManager
         elif fname in ("prefs.xml", "roblox.com_prefs.xml", "robloxapp.vnggames.com_prefs.xml"):
             root_el = ET.Element('map')
             if user_name:
@@ -2812,8 +2837,6 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
             ET.SubElement(root_el, 'long', name='user_logged_in_time', value=str(now_ms))
             c_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             c_el.text = cookie
-            c_el2 = ET.SubElement(root_el, 'string', name='ROBLOSECURITY')
-            c_el2.text = cookie
             ET.SubElement(root_el, 'boolean', name='has_migrated_to_native_cookie_storage', value='true')
 
         # 3. Các file Preferences thông thường: Đọc file cũ (nếu có) để giữ setting đồ họa, dọn sạch key user cũ và nạp user mới
@@ -2863,11 +2886,10 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
         fix_xml_cmd = (
             f"cp '{temp_file}' '{xml_path}' && "
             f"chown {uid}:{gid} '{xml_path}' && "
-            f"chmod 660 '{xml_path}' && "
+            f"chmod 666 '{xml_path}' && "
             f"(chcon -R --reference='/data/data/{pkg}' '{xml_path}' 2>/dev/null || true); "
             f"CTX=$(ls -d -Z '/data/data/{pkg}' 2>/dev/null | tr -s ' ' '\\n' | grep '^u:' | head -n 1); "
-            f"[ -n \"$CTX\" ] && chcon \"$CTX\" '{xml_path}' 2>/dev/null || true; "
-            f"restorecon -F '{xml_path}' 2>/dev/null || true"
+            f"[ -n \"$CTX\" ] && chcon \"$CTX\" '{xml_path}' 2>/dev/null || true"
         )
         write_code, _, _ = _run_root_capture(fix_xml_cmd)
         try: os.remove(temp_file)
@@ -2877,12 +2899,11 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
 
     # Phân quyền & đồng bộ SELinux trên toàn thư mục shared_prefs
     _run_root_capture(
-        f"chmod 771 '{shared_prefs_dir}' 2>/dev/null || true; "
+        f"chmod 777 '{shared_prefs_dir}' 2>/dev/null || true; "
         f"chown {uid}:{gid} '{shared_prefs_dir}' 2>/dev/null || true; "
         f"(chcon -R --reference='/data/data/{pkg}' '{shared_prefs_dir}' 2>/dev/null || true); "
         f"CTX=$(ls -d -Z '/data/data/{pkg}' 2>/dev/null | tr -s ' ' '\\n' | grep '^u:' | head -n 1); "
-        f"[ -n \"$CTX\" ] && chcon -R \"$CTX\" '{shared_prefs_dir}' 2>/dev/null || true; "
-        f"restorecon -RF '{shared_prefs_dir}' 2>/dev/null || true",
+        f"[ -n \"$CTX\" ] && chcon -R \"$CTX\" '{shared_prefs_dir}' 2>/dev/null || true",
         timeout=5
     )
 
@@ -3056,7 +3077,7 @@ def clone_package_session(src_pkg, dst_pkg):
     chown_cmd = (
         f"chown -R {dst_uid}:{dst_gid} '/data/data/{dst_pkg}' && "
         f"chmod -R 771 '/data/data/{dst_pkg}' && "
-        f"(restorecon -R '/data/data/{dst_pkg}' 2>/dev/null || true)"
+        f"(sync 2>/dev/null || true)"
     )
     ch_code, _, ch_err = _run_root_capture(chown_cmd, timeout=10)
     if ch_code != 0:
@@ -3263,47 +3284,28 @@ def login_via_cookie():
         except:
             pass
 
-        # 6. Tạo Auth Ticket từ Roblox Server
-        print(f"{Y}  ├─ [*] Đang kiểm tra & tạo Roblox Auth Ticket...{RESET}")
-        ticket, t_msg = get_auth_ticket(cur_cookie)
+                # 6. Cam kết bộ nhớ đệm đĩa Linux (sync)
+        print(f"{Y}  ├─ [*] Đồng bộ bộ nhớ đĩa Linux (sync)...{RESET}")
+        _run_root_capture("sync 2>/dev/null || true", timeout=3)
+        time.sleep(0.5)
 
-        # 7. Khởi chạy ứng dụng
-        print(f"{Y}  └─ [*] Đang khởi động ứng dụng...{RESET}")
+        # 7. Khởi chạy ứng dụng Roblox trực tiếp vào giao diện chính đã đăng nhập
+        print(f"{Y}  └─ [*] Khởi động ứng dụng vào giao diện tài khoản {C}{u_name}{Y}...{RESET}")
+        launcher_cmds = [
+            f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
+            f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1",
+            f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000",
+            f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000",
+            f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -f 0x10000000"
+        ]
         launched = False
-
-        # Nếu có ticket và target_place_id hợp lệ -> kích hoạt vào game qua experiences/start
-        if ticket and target_place_id and str(target_place_id).strip().isdigit():
-            pid = str(target_place_id).strip()
-            print(f"{G}     [✓] Tạo Auth Ticket thành công: {ticket[:18]}...{RESET}")
-            proto_cmds = [
-                f"am start -n {pkg}/com.roblox.client.ActivityProtocolLaunch -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={pid}&authTicket={ticket}\" -f 0x10000000",
-                f"am start -a android.intent.action.VIEW -d \"roblox://experiences/start?placeId={pid}&authTicket={ticket}\" -p {pkg} -f 0x10000000",
-                f"am start -a android.intent.action.VIEW -d \"robloxmobile://experiences/start?placeId={pid}&authTicket={ticket}\" -p {pkg} -f 0x10000000"
-            ]
-            for p_cmd in proto_cmds:
-                code_p, out_p, _ = _run_root_capture(p_cmd, timeout=8)
-                if code_p == 0 and "Error:" not in out_p:
-                    print(f"{G}     [✓] Đã kích hoạt Game Deeplink (PlaceId: {pid}) kèm Auth Ticket!{RESET}")
-                    launched = True
-                    break
-
-        if not launched:
-            print(f"{Y}     [*] Khởi chạy App Roblox trực tiếp vào giao diện đã đăng nhập...{RESET}")
-            launcher_cmds = [
-                f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
-                f"am start -n {pkg}/com.roblox.client.startup.ActivitySplash -f 0x10000000",
-                f"am start -n {pkg}/com.roblox.client.startup.LauncherAliasMain -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
-                f"am start -n {pkg}/com.roblox.client.ActivityNativeMain -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10000000",
-                f"am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {pkg} -f 0x10000000",
-                f"monkey -p '{pkg}' -c android.intent.category.LAUNCHER 1"
-            ]
-            for l_cmd in launcher_cmds:
-                code_l, out_l, _ = _run_root_capture(l_cmd, timeout=10)
-                if code_l == 0 and "Error:" not in out_l:
-                    print(f"{G}     [✓] Đã khởi động App vào màn hình chính đã đăng nhập!{RESET}")
-                    launched = True
-                    break
-
+        for l_cmd in launcher_cmds:
+            code_l, out_l, _ = _run_root_capture(l_cmd, timeout=10)
+            if code_l == 0 and "Error:" not in out_l:
+                print(f"{G}     [✓] Đã khởi động App vào màn hình chính đã đăng nhập!{RESET}")
+                launched = True
+                break
+        
         print(f"{Y}     [*] Chờ {COOKIE_LOGIN_APP_LOAD_WAIT}s để app tải xong...{RESET}")
         time.sleep(COOKIE_LOGIN_APP_LOAD_WAIT)
 
