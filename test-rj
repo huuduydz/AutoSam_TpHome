@@ -172,7 +172,7 @@ C_GRAY_LIGHT  = '\033[38;5;250m'
 # =====================================================================
 selected_packages = []
 target_place_id = "4520749081"
-COOKIE_LOGIN_REVISION = "2026-10-18 (Auto Stale Cookie Purge & Auto-Replace Dead Acc)"
+COOKIE_LOGIN_REVISION = "2026-11-09 (VNG robloxapp.vnggames.com_prefs & Chromium Native Sync)"
 COOKIE_LOGIN_APP_LOAD_WAIT = 6
 kill_all_time = 0
 json_path_cache = {}          # {pkg: {acc_name: (path, last_mtime)}}
@@ -2216,7 +2216,9 @@ def get_auth_ticket(cookie):
 
     ticket_urls = [
         "https://auth.roblox.com/v1/authentication-ticket/",
-        "https://auth.roblox.com/v1/authentication-ticket"
+        "https://auth.roblox.com/v1/authentication-ticket",
+        "https://auth.robloxapp.vnggames.com/v1/authentication-ticket/",
+        "https://auth.robloxapp.vnggames.com/v1/authentication-ticket"
     ]
 
     last_err = "Không tạo được Auth Ticket"
@@ -2277,7 +2279,9 @@ def purge_stale_roblox_cookies(pkg):
         f"rm -f '{shared_prefs_dir}/webView_backup'* "
         f"'{shared_prefs_dir}/WebViewCookieHandlerNativeStorage'* "
         f"'{shared_prefs_dir}/prefs'* "
-        f"'{shared_prefs_dir}/roblox.com_prefs'* 2>/dev/null || true"
+        f"'{shared_prefs_dir}/roblox.com_prefs'* "
+        f"'{shared_prefs_dir}/robloxapp.vnggames.com_prefs'* "
+        f"'{shared_prefs_dir}'/*prefs* 2>/dev/null || true"
     )
     _run_root_capture(rm_session_xml_cmd, timeout=3)
 
@@ -2565,10 +2569,13 @@ def inject_cookie_webview(pkg, cookie):
     now_1601 = (int(time.time()) + epoch_offset) * 1000000
     exp_1601 = (int(time.time()) + 10 * 365 * 86400 + epoch_offset) * 1000000
 
-    # Chỉ dùng 2 host chuẩn (.roblox.com và roblox.com) và tên chuẩn .ROBLOSECURITY
-    # để tránh sinh 40 hàng trùng lặp gây phình to Cookie Header (>2KB) bị Akamai chặn!
-    hosts = ['.roblox.com', 'roblox.com', '.robloxapp.vnggames.com', 'robloxapp.vnggames.com']
-    cookie_names = ['.ROBLOSECURITY']
+    # Danh sách host chuẩn cho cả Global Roblox và VNG Delta
+    hosts = [
+        '.roblox.com', 'roblox.com', 'www.roblox.com', 'users.roblox.com', 'auth.roblox.com',
+        '.robloxapp.vnggames.com', 'robloxapp.vnggames.com', 'www.robloxapp.vnggames.com',
+        'users.robloxapp.vnggames.com', 'auth.robloxapp.vnggames.com'
+    ]
+    cookie_names = ['.ROBLOSECURITY', 'ROBLOSECURITY']
     site_keys = ['', 'https://roblox.com', 'https://robloxapp.vnggames.com']
 
     success_count = 0
@@ -2755,6 +2762,7 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
         f"{shared_prefs_dir}/WebViewCookieHandlerNativeStorage.xml",
         f"{shared_prefs_dir}/prefs.xml",
         f"{shared_prefs_dir}/roblox.com_prefs.xml",
+        f"{shared_prefs_dir}/robloxapp.vnggames.com_prefs.xml",
         f"{shared_prefs_dir}/{pkg}_preferences.xml",
         f"{shared_prefs_dir}/com.roblox.client_preferences.xml",
         f"{shared_prefs_dir}/AppPreferences.xml"
@@ -2775,16 +2783,17 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
         if fname == "WebViewCookieHandlerNativeStorage.xml":
             root_el = ET.Element('map')
             ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v5__', value='true')
-            ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v4__', value='true')
-            ET.SubElement(root_el, 'boolean', name='__migrated_from_webview_v3__', value='true')
             el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             el.text = cookie
+            el2 = ET.SubElement(root_el, 'string', name='ROBLOSECURITY')
+            el2.text = cookie
             ET.SubElement(root_el, 'long', name='.ROBLOSECURITY__write_time', value=str(now_ms))
             s_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY__write_source')
             s_el.text = "MIGRATION"
 
-        # 2. prefs.xml & roblox.com_prefs.xml: Luôn tạo mới tinh khiết để xóa sạch mọi tàn dư tài khoản cũ
-        elif fname in ("prefs.xml", "roblox.com_prefs.xml"):
+        # 2. prefs.xml, roblox.com_prefs.xml & robloxapp.vnggames.com_prefs.xml:
+        # Cốt lõi nhận diện session đăng nhập của Roblox C++ Engine & SessionManager
+        elif fname in ("prefs.xml", "roblox.com_prefs.xml", "robloxapp.vnggames.com_prefs.xml"):
             root_el = ET.Element('map')
             if user_name:
                 u_el = ET.SubElement(root_el, 'string', name='username')
@@ -2803,6 +2812,8 @@ def inject_cookie_safe_xml(pkg, cookie, user_name=None, user_id=None):
             ET.SubElement(root_el, 'long', name='user_logged_in_time', value=str(now_ms))
             c_el = ET.SubElement(root_el, 'string', name='.ROBLOSECURITY')
             c_el.text = cookie
+            c_el2 = ET.SubElement(root_el, 'string', name='ROBLOSECURITY')
+            c_el2.text = cookie
             ET.SubElement(root_el, 'boolean', name='has_migrated_to_native_cookie_storage', value='true')
 
         # 3. Các file Preferences thông thường: Đọc file cũ (nếu có) để giữ setting đồ họa, dọn sạch key user cũ và nạp user mới
@@ -3514,356 +3525,124 @@ def check_roblox_account_status(cookie):
     username = None
     display_name = None
 
-    # 1. API Xác thực chính: users.roblox.com
-    try:
-        req = urllib.request.Request(
-            "https://users.roblox.com/v1/users/authenticated",
-            headers={"Cookie": cookie_header, "User-Agent": ua}
-        )
-        with urllib.request.urlopen(req, timeout=6) as res:
-            raw = res.read().decode('utf-8', errors='ignore')
-            data = json.loads(raw)
-            user_id = data.get("id")
-            username = data.get("name")
-            display_name = data.get("displayName")
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode('utf-8', errors='ignore').lower()
-        if e.code == 401:
-            clean_dead = _normalize_roblosecurity_cookie(cookie)
-            if clean_dead:
-                DEAD_COOKIES.add(clean_dead)
-                remove_dead_cookie_from_download(clean_dead)
-            return {
-                "status": "EXPIRED",
-                "badge": "Cookie Hết Hạn / Die (401)",
-                "color": R,
-                "user_id": None,
-                "username": None,
-                "message": "Cookie không hợp lệ hoặc đã bị đăng xuất trên hệ thống."
-            }
-        elif "moderated" in err_body:
-            return {
-                "status": "NOT_APPROVED",
-                "badge": "Kẹt Not-Approved / Kiểm Duyệt",
-                "color": R,
-                "user_id": None,
-                "username": None,
-                "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
-            }
-    except Exception:
-        pass
+    # 1. API Xác thực chính: users.roblox.com (hỗ trợ dự phòng users.robloxapp.vnggames.com)
+    auth_urls = [
+        "https://users.roblox.com/v1/users/authenticated",
+        "https://users.robloxapp.vnggames.com/v1/users/authenticated"
+    ]
+    for a_url in auth_urls:
+        try:
+            req = urllib.request.Request(
+                a_url,
+                headers={"Cookie": cookie_header, "User-Agent": ua}
+            )
+            with urllib.request.urlopen(req, timeout=6) as res:
+                raw = res.read().decode('utf-8', errors='ignore')
+                data = json.loads(raw)
+                user_id = data.get("id")
+                username = data.get("name")
+                display_name = data.get("displayName")
+                if user_id:
+                    break
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore').lower()
+            if e.code == 401:
+                clean_dead = _normalize_roblosecurity_cookie(cookie)
+                if clean_dead:
+                    DEAD_COOKIES.add(clean_dead)
+                    remove_dead_cookie_from_download(clean_dead)
+                return {
+                    "status": "EXPIRED",
+                    "badge": "Cookie Hết Hạn / Die (401)",
+                    "color": R,
+                    "user_id": None,
+                    "username": None,
+                    "message": "Cookie không hợp lệ hoặc đã bị đăng xuất trên hệ thống."
+                }
+            elif "moderated" in err_body:
+                return {
+                    "status": "NOT_APPROVED",
+                    "badge": "Kẹt Not-Approved / Kiểm Duyệt",
+                    "color": R,
+                    "user_id": None,
+                    "username": None,
+                    "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
+                }
+        except Exception:
+            pass
 
-    # 2. Kiểm tra điều hướng trang chủ roblox.com/home
-    try:
-        req_home = urllib.request.Request(
-            "https://www.roblox.com/home",
-            headers={"Cookie": cookie_header, "User-Agent": ua}
-        )
-        with urllib.request.urlopen(req_home, timeout=6) as res:
-            final_url = res.geturl().lower()
-            html_body = res.read().decode('utf-8', errors='ignore').lower()
+    # 2. Kiểm tra điều hướng trang chủ roblox.com/home (và robloxapp.vnggames.com/home)
+    home_urls = [
+        "https://www.roblox.com/home",
+        "https://www.robloxapp.vnggames.com/home"
+    ]
+    for h_url in home_urls:
+        try:
+            req_home = urllib.request.Request(
+                h_url,
+                headers={"Cookie": cookie_header, "User-Agent": ua}
+            )
+            with urllib.request.urlopen(req_home, timeout=6) as res:
+                final_url = res.geturl().lower()
+                html_body = res.read().decode('utf-8', errors='ignore').lower()
 
-            if "not-approved" in final_url or "not-approved" in html_body:
+                if "not-approved" in final_url or "not-approved" in html_body:
+                    return {
+                        "status": "NOT_APPROVED",
+                        "badge": "Kẹt Trang Not-Approved / Cần Duyệt",
+                        "color": R,
+                        "user_id": user_id,
+                        "username": username or "N/A",
+                        "url": res.geturl(),
+                        "message": "Tài khoản đang bị kẹt tại trang Not-Approved (cần vào web chấp thuận cảnh báo hoặc giải captcha)!"
+                    }
+                elif any(k in html_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold"]):
+                    ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', html_body, re.I)
+                    ref_id = ref_m.group(1) if ref_m else "N/A"
+                    return {
+                        "status": "CAPTCHA_CHECKPOINT",
+                        "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
+                        "color": Y,
+                        "user_id": user_id,
+                        "username": username or "N/A",
+                        "challenge_type": "PRESS_AND_HOLD",
+                        "challenge_id": ref_id,
+                        "url": res.geturl(),
+                        "message": f"Tài khoản bị chặn bởi màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {ref_id})!"
+                    }
+                elif any(k in final_url for k in ["/checkpoint", "/challenge", "/two-step", "arkoselabs.com"]) or \
+                     any(k in html_body for k in ["api.arkoselabs.com", "funcaptcha.com", "id=\"challenge-container\"", "id=\"two-step-verification\""]):
+                    return {
+                        "status": "CAPTCHA_CHECKPOINT",
+                        "badge": "Dính Captcha / Checkpoint Xác Minh",
+                        "color": Y,
+                        "user_id": user_id,
+                        "username": username or "N/A",
+                        "url": res.geturl(),
+                        "message": "Tài khoản bị yêu cầu giải Captcha FunCaptcha/Arkose hoặc xác minh 2 bước!"
+                    }
+                break
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location", "").lower()
+            if "not-approved" in loc:
                 return {
                     "status": "NOT_APPROVED",
                     "badge": "Kẹt Trang Not-Approved / Cần Duyệt",
                     "color": R,
                     "user_id": user_id,
                     "username": username or "N/A",
-                    "url": res.geturl(),
-                    "message": "Tài khoản đang bị kẹt tại trang Not-Approved (cần vào web chấp thuận cảnh báo hoặc giải captcha)!"
+                    "url": e.headers.get("Location"),
+                    "message": "Tài khoản bị chuyển hướng vào trang Not-Approved!"
                 }
-            elif any(k in html_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold"]):
-                ref_m = re.search(r'(?:id tham chiếu|reference id)[:\s]*([a-f0-9\-]+)', html_body, re.I)
-                ref_id = ref_m.group(1) if ref_m else "N/A"
-                return {
-                    "status": "CAPTCHA_CHECKPOINT",
-                    "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
-                    "color": Y,
-                    "user_id": user_id,
-                    "username": username or "N/A",
-                    "challenge_type": "PRESS_AND_HOLD",
-                    "challenge_id": ref_id,
-                    "url": res.geturl(),
-                    "message": f"Tài khoản bị chặn bởi màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {ref_id})!"
-                }
-            elif any(k in final_url for k in ["/checkpoint", "/challenge", "/two-step", "arkoselabs.com"]) or \
-                 any(k in html_body for k in ["api.arkoselabs.com", "funcaptcha.com", "id=\"challenge-container\"", "id=\"two-step-verification\""]):
+            elif any(k in loc for k in ["checkpoint", "challenge", "two-step"]):
                 return {
                     "status": "CAPTCHA_CHECKPOINT",
                     "badge": "Dính Captcha / Checkpoint Xác Minh",
                     "color": Y,
                     "user_id": user_id,
                     "username": username or "N/A",
-                    "url": res.geturl(),
-                    "message": "Tài khoản bị yêu cầu giải Captcha FunCaptcha/Arkose hoặc xác minh 2 bước!"
-                }
-    except urllib.error.HTTPError as e:
-        loc = e.headers.get("Location", "").lower()
-        if "not-approved" in loc:
-            return {
-                "status": "NOT_APPROVED",
-                "badge": "Kẹt Trang Not-Approved / Cần Duyệt",
-                "color": R,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "url": e.headers.get("Location"),
-                "message": "Tài khoản bị chuyển hướng vào trang Not-Approved!"
-            }
-        elif any(k in loc for k in ["checkpoint", "challenge", "two-step"]):
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha / Checkpoint Xác Minh",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "url": e.headers.get("Location"),
-                "message": "Tài khoản bị chuyển hướng yêu cầu giải Captcha / Checkpoint!"
-            }
-    except Exception:
-        pass
-
-    # 3. Lấy X-CSRF-TOKEN từ Auth / Join API
-    csrf_token = None
-    req_csrf = urllib.request.Request(
-        "https://auth.roblox.com/v1/authentication-ticket/",
-        data=b"{}",
-        headers={
-            "Cookie": cookie_header,
-            "Content-Type": "application/json",
-            "User-Agent": ua,
-            "Origin": "https://www.roblox.com",
-            "Referer": "https://www.roblox.com/"
-        },
-        method="POST"
-    )
-    try:
-        with urllib.request.urlopen(req_csrf, timeout=6) as resp_c:
-            csrf_token = resp_c.headers.get("x-csrf-token") or resp_c.headers.get("X-CSRF-TOKEN")
-    except urllib.error.HTTPError as e:
-        csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
-        chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
-        chal_id = e.headers.get("rblx-challenge-id") or ""
-        chal_meta = e.headers.get("rblx-challenge-metadata") or ""
-        raw_body = e.read().decode('utf-8', errors='ignore')
-        err_body = raw_body.lower()
-
-        if "moderated" in err_body:
-            return {
-                "status": "NOT_APPROVED",
-                "badge": "Kẹt Not-Approved / Kiểm Duyệt",
-                "color": R,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
-            }
-        is_press_and_hold = (
-            any(k in err_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold", "người thật", "human", "reference id", "id tham chiếu"]) or
-            any(k in chal_type for k in ["security", "generic", "proof-of-work", "press", "hold"])
-        )
-        if is_press_and_hold:
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": "PRESS_AND_HOLD",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'security'}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn (Auth Ticket 403) và yêu cầu vượt qua màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {chal_id or 'N/A'})!"
-            }
-        elif "captchav2" in chal_type or ("captchav2" in chal_meta.lower() if chal_meta else False):
-            meta_json = {}
-            if chal_meta:
-                try:
-                    meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
-                except:
-                    pass
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha V2 Vào Game",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": "CAPTCHAV2",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "meta_data": meta_json,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn xác thực (Auth Ticket 403, challenge_type=captchav2) và yêu cầu giải Captcha V2 (ID: {chal_id or 'N/A'})!"
-            }
-        elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body or "challenge is required" in err_body:
-            meta_json = {}
-            if chal_meta:
-                try:
-                    meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
-                except:
-                    pass
-            hybrid_challenge_url = ""
-            if chal_id:
-                ch_params = {
-                    "generic-challenge-type": "captcha",
-                    "app-type": "browser",
-                    "generic-challenge-id": chal_id,
-                    "challenge-metadata-json": chal_meta or "",
-                    "challenge-type": "generic",
-                    "dark-mode": "false"
-                }
-                hybrid_challenge_url = "https://www.roblox.com/challenge/cdn/hybrid?" + urllib.parse.urlencode(ch_params)
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": "Dính Captcha V1 (Arkose FunCaptcha)",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": "CAPTCHA_V1",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "challenge_url": hybrid_challenge_url,
-                "meta_data": meta_json,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn xác thực (Auth Ticket 403, challenge_type={chal_type or 'captcha'}) và yêu cầu giải Captcha V1 (Arkose FunCaptcha, ID: {chal_id or 'N/A'})!"
-            }
-        elif chal_id or chal_type or chal_meta:
-            return {
-                "status": "CAPTCHA_CHECKPOINT",
-                "badge": f"Dính Checkpoint Bảo Mật ({chal_type or 'Challenge'})",
-                "color": Y,
-                "user_id": user_id,
-                "username": username or "N/A",
-                "challenge_type": chal_type or "CHALLENGE",
-                "challenge_id": chal_id,
-                "challenge_meta": chal_meta,
-                "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
-                "message": f"Roblox chặn xác thực (Auth Ticket 403) và kích hoạt Thử Thách Bảo Mật (ID tham chiếu: {chal_id or 'N/A'})!"
-            }
-    except Exception:
-        pass
-
-    if not csrf_token:
-        try:
-            req_l = urllib.request.Request(
-                "https://auth.roblox.com/v1/logout",
-                data=b"{}",
-                headers={"Cookie": cookie_header, "Content-Type": "application/json", "User-Agent": ua},
-                method="POST"
-            )
-            with urllib.request.urlopen(req_l, timeout=6) as resp_l:
-                csrf_token = resp_l.headers.get("x-csrf-token") or resp_l.headers.get("X-CSRF-TOKEN")
-        except urllib.error.HTTPError as e:
-            csrf_token = e.headers.get("x-csrf-token") or e.headers.get("X-CSRF-TOKEN")
-        except:
-            pass
-
-    join_headers = {
-        "Cookie": cookie_header,
-        "Content-Type": "application/json",
-        "User-Agent": ua,
-        "Origin": "https://www.roblox.com",
-        "Referer": "https://www.roblox.com/"
-    }
-    if csrf_token:
-        join_headers["x-csrf-token"] = csrf_token
-        join_headers["X-CSRF-TOKEN"] = csrf_token
-
-    # 4. Kiểm tra sinh Auth Ticket qua POST https://auth.roblox.com/v1/authentication-ticket/
-    if csrf_token:
-        try:
-            req_ticket = urllib.request.Request(
-                "https://auth.roblox.com/v1/authentication-ticket/",
-                data=b"{}",
-                headers=join_headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req_ticket, timeout=6) as res_t:
-                pass
-        except urllib.error.HTTPError as e:
-            chal_type = (e.headers.get("rblx-challenge-type") or "").lower()
-            chal_id = e.headers.get("rblx-challenge-id") or ""
-            chal_meta = e.headers.get("rblx-challenge-metadata") or ""
-            raw_body = e.read().decode('utf-8', errors='ignore')
-            err_body = raw_body.lower()
-
-            if "moderated" in err_body:
-                return {
-                    "status": "NOT_APPROVED",
-                    "badge": "Kẹt Not-Approved / Kiểm Duyệt",
-                    "color": R,
-                    "user_id": user_id,
-                    "username": username or "N/A",
-                    "message": "Tài khoản đang bị kiểm duyệt (User is moderated)!"
-                }
-            is_press_and_hold = (
-                any(k in err_body for k in ["nhấn giữ nút", "nhấn và giữ", "press and hold", "press & hold", "người thật", "human", "reference id", "id tham chiếu"]) or
-                any(k in chal_type for k in ["security", "generic", "proof-of-work", "press", "hold"])
-            )
-            if is_press_and_hold:
-                return {
-                    "status": "CAPTCHA_CHECKPOINT",
-                    "badge": "Dính Captcha 'Nhấn và Giữ' (Bảo Mật)",
-                    "color": Y,
-                    "user_id": user_id,
-                    "username": username or "N/A",
-                    "challenge_type": "PRESS_AND_HOLD",
-                    "challenge_id": chal_id,
-                    "challenge_meta": chal_meta,
-                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'security'}, body={raw_body.strip()[:150]}",
-                    "message": f"Roblox chặn sinh Ticket và yêu cầu vượt qua màn hình Bảo Mật 'Nhấn và Giữ' (ID tham chiếu: {chal_id or 'N/A'})!"
-                }
-            elif "captchav2" in chal_type or ("captchav2" in chal_meta.lower() if chal_meta else False):
-                meta_json = {}
-                if chal_meta:
-                    try:
-                        meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
-                    except:
-                        pass
-                return {
-                    "status": "CAPTCHA_CHECKPOINT",
-                    "badge": "Dính Captcha V2 Vào Game",
-                    "color": Y,
-                    "user_id": user_id,
-                    "username": username or "N/A",
-                    "challenge_type": "CAPTCHAV2",
-                    "challenge_id": chal_id,
-                    "challenge_meta": chal_meta,
-                    "meta_data": meta_json,
-                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captchav2'}, body={raw_body.strip()[:150]}",
-                    "message": f"Roblox chặn sinh Ticket vào game (challenge_type=captchav2) và yêu cầu giải Captcha V2 (ID: {chal_id or 'N/A'})!"
-                }
-            elif "captcha" in chal_type or "arkose" in chal_type or "captcha" in err_body or "challenge is required" in err_body:
-                meta_json = {}
-                if chal_meta:
-                    try:
-                        meta_json = json.loads(base64.b64decode(chal_meta).decode('utf-8', errors='ignore'))
-                    except:
-                        pass
-                return {
-                    "status": "CAPTCHA_CHECKPOINT",
-                    "badge": "Dính Captcha V1 (Arkose FunCaptcha)",
-                    "color": Y,
-                    "user_id": user_id,
-                    "username": username or "N/A",
-                    "challenge_type": "CAPTCHA_V1",
-                    "challenge_id": chal_id,
-                    "challenge_meta": chal_meta,
-                    "meta_data": meta_json,
-                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type or 'captcha'}, body={raw_body.strip()[:150]}",
-                    "message": f"Roblox chặn sinh Ticket vào game (challenge_type={chal_type or 'captcha'}) và yêu cầu giải Captcha V1 (Arkose FunCaptcha, ID: {chal_id or 'N/A'})!"
-                }
-            elif chal_id or chal_type or chal_meta:
-                return {
-                    "status": "CAPTCHA_CHECKPOINT",
-                    "badge": f"Dính Checkpoint Bảo Mật ({chal_type or 'Challenge'})",
-                    "color": Y,
-                    "user_id": user_id,
-                    "username": username or "N/A",
-                    "challenge_type": chal_type or "CHALLENGE",
-                    "challenge_id": chal_id,
-                    "challenge_meta": chal_meta,
-                    "raw_response": f"HTTP {e.code}, challenge_type={chal_type}, body={raw_body.strip()[:150]}",
-                    "message": f"Roblox chặn sinh Ticket và kích hoạt Thử Thách Bảo Mật (ID tham chiếu: {chal_id or 'N/A'})!"
+                    "url": e.headers.get("Location"),
+                    "message": "Tài khoản bị chuyển hướng yêu cầu giải Captcha / Checkpoint!"
                 }
         except Exception:
             pass
