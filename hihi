@@ -8,7 +8,7 @@ _G.boss = {"Sea King", "Hydra","Ghost Ship"}
 _G.tool = {"Sword", "Fruit","Melee"}
 _G.skill = {"M1", "Z", "X", "C","V","B","E"}
 _G.BossEarlyJoinSec = 30
-_G.HopSpeed = 0.25
+_G.HopSpeed = 0.1
 
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/NTTTTTTTT/upload/refs/heads/main/content/eeb189fca0a84599a6575ca5bf55f359_obf.lua",true))()
