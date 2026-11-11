@@ -1,12 +1,3 @@
-local StarterGui = game:GetService("StarterGui")
-
-StarterGui:SetCore("SendNotification", {
-    Title = "Thành công!",
-    Text = "Script v6 đã được load hoàn tất.",
-    Duration = 5, -- Thời gian hiển thị (giây)
-    -- Icon = "rbxassetid://12345678" -- (Tùy chọn) Thêm ID icon nếu cần
-})
-
 _G.webhook_url = ""
 _G.AutoSeaEvents = true
 _G.buso = true
