@@ -7,7 +7,7 @@ _G.WhiteScreen = false
 _G.boss = {"Sea King", "Hydra"}
 _G.tool = {"Sword", "Fruit","Melee"}
 _G.skill = {"M1", "Z", "X", "C","V","B","E"}
-_G.BossEarlyJoinSec = 30
+_G.BossEarlyJoinSec = 15
 _G.HopSpeed = 0.1
 _G.MaxHopServers = 1500 
 
