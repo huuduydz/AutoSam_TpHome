@@ -11,4 +11,4 @@ _G.BossEarlyJoinSec = 15
 _G.HopSpeed = 0.05
 _G.MaxHopServers = 1500 
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/NTTTTTTTT/upload/refs/heads/main/content/01eb9f95ef3d446ebc49c02ffe6998af_obf.lua",true))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/NTTTTTTTT/upload/refs/heads/main/content/ced7c5eab23845ec92c346ee8aa07c4a_obf.lua",true))()
