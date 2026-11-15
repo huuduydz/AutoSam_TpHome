@@ -10,5 +10,5 @@ _G.skill = {"M1", "Z", "X", "C","V","B","E"}
 _G.BossEarlyJoinSec = 15
 _G.HopSpeed = 0.1
 _G.MaxHopServers = 1800 
-_G.MinServersToFarm = 1500
+_G.MinServersToFarm = 1200
 loadstring(game:HttpGet("https://raw.githubusercontent.com/NTTTTTTTT/upload/refs/heads/main/content/8bcea75b84d548f9a4dd3d42f4cdbfba_obf.lua",true))()
