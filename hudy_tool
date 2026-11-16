@@ -194,7 +194,7 @@ MENU_ITEMS = [
 CURRENT_VERSION = "3.0.0"
 VERSION_URL = ""
 _EN = {'Ngon ngu / Language': 'Language', 'Auto Rejoin Roblox': 'Auto Rejoin Roblox', 'Setup (UID + Link Server)': 'Setup (UID + Server Link)', 'Xoa UID / Link Server': 'Delete UID / Server Link', 'Xem danh sach da luu': 'View saved accounts and links', 'Mo tat ca tab Roblox': 'Open all Roblox apps', 'Cau hinh Auto Script / Import Autoexec': 'Auto Script / Import Autoexec', 'Chon Package chay': 'Select packages to run', 'Thoat': 'Exit', 'Xoa cache': 'Clear cache', 'Check Interval (s)': 'Check Interval (s)', 'Retries truoc khi Rejoin': 'Retries before Rejoin', 'CAU HINH DELAY & TINH NANG NANG CAO': 'DELAY & ADVANCED SETTINGS', 'Tu dong xep cua so (Sort)': 'Arrange windows (Sort)', 'Kill tat ca neu 1 tab dis': 'Stop all if one disconnects', 'Auto Doi Acc khi Ban/Die': 'Switch banned/expired account', 'Auto Unwarn tai khoan': 'Reactivate eligible account', 'Dung Rejoin khi Captcha': 'Pause rejoin on Captcha', 'Dung Rejoin khi FaceID': 'Pause rejoin on FaceID', 'Auto Block cung dan acc': 'Block other managed accounts', 'Xoay vong Doi Acc (phut)': 'Rotate accounts (minutes)', 'Cau hinh Solver API': 'Solver API settings', 'Luu & Quay lai Menu': 'Save & Return to Menu', 'Chon (0-15):': 'Choose (0-15):', 'Giua cac tab:': 'Between apps:', 'Cho truoc khi rejoin (giay)': 'Wait before rejoin (seconds)', 'Khoang cach giua cac tab (giay)': 'Delay between apps (seconds)', 'Enter giu cu:': 'Enter to keep:', 'Delay phai la so tu 0 den 86400 giay.': 'Delay must be a number from 0 to 86400 seconds.', 'Chon ngon ngu (1/2, Enter huy):': 'Choose language (1/2, Enter to cancel):', 'Da luu ngon ngu.': 'Language saved.', 'Dang nhap cookie rieng cho tung package': 'Log in with a separate cookie per package', 'Dang nhap hang loat tu cookie.txt': 'Log in in bulk from cookie.txt', 'Chon so package, cach phay; "all" = tung package; Enter huy:': 'Choose package numbers separated by commas; "all" = each package; Enter to cancel:', 'Nhap cookie cho package nay (Enter bo qua, 0 = dung):': 'Cookie for this package (Enter to skip, 0 to stop):', 'Da nap cookie nhung chua luu duoc UID. Hay setup lai package.': 'Cookie loaded, but UID could not be saved. Set up this package again.', 'Da nap cookie cho': 'Cookie loaded for', 'Kiem tra dang nhap trong Roblox.': 'Check the login inside Roblox.', 'Khong mo duoc ung dung. Hay mo Roblox thu cong.': 'Could not open the app. Open Roblox manually.', 'Tool da bi vo hieu hoa.': 'The tool has been disabled.', 'Phien ban hien tai:': 'Current version:', 'Can cap nhat:': 'Update required:', 'Khong doc duoc chinh sach phien ban:': 'Could not read the version policy:', 'Khong the an du lieu nhap. Hay chay trong terminal Termux.': 'Hidden input is unavailable. Run in a Termux terminal.', 'Lay token bang /gettoken tai': 'Get a token using /gettoken at', 'Nhap token Premium (0 = thoat):': 'Enter Premium token (0 to exit):', 'Nhap token (Enter bo qua, 0 = thoat):': 'Enter token (Enter to skip, 0 to exit):', 'Bat buoc nhap token Premium.': 'A Premium token is required.', 'Khong xac minh duoc token (HTTP': 'Could not verify token (HTTP', 'Thu lai hoac nhap 0 de thoat.': 'Retry or enter 0 to exit.', 'Token sai hoac het han.': 'Invalid or expired token.', 'May chu tra ve trang thai Premium khong hop le.': 'The server returned an invalid Premium status.', 'Token hop le nhung khong co Premium.': 'Valid token, but Premium is not active.', 'Xac minh token thanh cong.': 'Token verified.', 'Loi ket noi xac minh token.': 'Token verification connection error.', 'Enter thu lai kiem tra phien ban; 0 de thoat:': 'Enter to retry the version check; 0 to exit:', 'Auto rejoin dang chay. Ctrl+C de dung!': 'Auto rejoin is running. Ctrl+C to stop!', 'Dung auto rejoin.': 'Auto rejoin stopped.', 'Loi vong lap Auto Rejoin:': 'Auto Rejoin loop error:', 'Dang tu khoi phuc...': 'Recovering...', 'Tap trung khoi dong lai...': 'Restarting...', 'Che do Kill All khi 1 tab vang dang bat! Khoi dong lai tat ca tab...': 'Stop-all mode is enabled. Restarting all apps...', 'Executor khong phan hoi sau': 'Executor did not respond after', 'Nhan Enter de tro ve menu...': 'Press Enter to return to the menu...', 'Nhan Enter de thoat...': 'Press Enter to exit...', 'Lua chon khong hop le!': 'Invalid selection!', 'Gia tri nhap khong hop le!': 'Invalid value!', 'Khong hop le!': 'Invalid!', 'Loi thuc thi menu:': 'Menu error:', 'Tam biet!': 'Goodbye!', 'Da luu cau hinh!': 'Settings saved!', 'Loi luu cau hinh:': 'Could not save settings:', 'Da luu!': 'Saved!', 'Da luu:': 'Saved:', 'Khong tim thay package Roblox nao!': 'No Roblox packages found!', 'Khong tim thay package nao!': 'No packages found!', 'Khong tim thay package!': 'No packages found!', 'Khong co package nao!': 'No packages available!', 'Khong co package!': 'No packages available!', 'Khong co quyen truy cap package:': 'Cannot access package:', 'Khong the dung package:': 'Could not stop package:', 'Khong the mo package:': 'Could not open package:', 'Khong the nap cookie cho': 'Could not load cookie for', 'Khong nap duoc cookie cho': 'Could not load cookie for', 'Cookie khong hop le hoac dang loi ket noi!': 'Invalid cookie or connection error!', 'Cookie khong hop le hoac khong the kiem tra cho': 'Cookie is invalid or could not be verified for', 'Khong doc duoc cookie.txt:': 'Could not read cookie.txt:', 'Khong sao luu duoc Cookies DB': 'Could not back up Cookies DB', 'Khong sao luu duoc SQLite WAL': 'Could not back up SQLite WAL', 'Khong sao luu duoc appStorage': 'Could not back up appStorage', 'Khong the cap nhat Cookies DB cho': 'Could not update Cookies DB for', 'Khong tim thay Cookies DB cho': 'Cookies DB not found for', 'Mo Roblox mot lan hoac dat Cookies.db cuc bo.': 'Open Roblox once or provide a local Cookies.db.', 'appStorage.json khong hop le': 'Invalid appStorage.json', 'Loi ghi du lieu': 'Data write error', 'Nhap .ROBLOSECURITY:': 'Enter .ROBLOSECURITY:', 'Ban co muon lam moi (Bypass) cookie nay? (y/n):': 'Refresh this cookie? (y/n):', 'Cookie moi:': 'New cookie:', 'Khong the lam moi cookie!': 'Could not refresh cookie!', 'Chua co cookie': 'No cookie available', 'Cookie die': 'Cookie invalid or verification unavailable', 'Quet Unwarn + Check Ban/Captcha tat ca package': 'Check reactivation, ban and captcha for all packages', 'Export cookie (Luu file + gui Webhook)': 'Export cookies locally + notify Webhook', 'Khong tim thay cookie trong': 'No cookie found in', 'Da xuat cookie': 'Exported cookie for', 'Hoan tat xuat': 'Exported', 'Xuat tat ca package': 'Export all packages', 'Dang doi account cho': 'Switching account for', 'Unwarn thanh cong cho': 'Account reactivated for', 'Giai Captcha thanh cong cho': 'Captcha resolved for', 'Giai FaceID thanh cong cho': 'FaceID resolved for', 'Chua co UID hoac Link Server! Vao lenh 2 de setup.': 'No UID or server link configured! Use option 2 to set up.', 'BUOC 1/2 — AUTO LAY USER ID': 'STEP 1/2 — GET USER ID', 'BUOC 2/2 — NHAP LINK SERVER / GAME ID': 'STEP 2/2 — SERVER LINK / GAME ID', 'Dang quet': 'Scanning', 'Dang tra cuu': 'Looking up', 'Khong tim duoc UID cho': 'Could not find UID for', 'Username/UID cho': 'Username/UID for', 'package chua co UID. Nhap thu cong:': 'packages have no UID. Enter them manually:', 'Da luu tat ca User ID!': 'All user IDs saved!', '1 link chung cho tat ca package': 'One link for all packages', 'Link rieng cho tung package': 'Separate link per package', 'Nhap Game ID hoac Link Server:': 'Enter Game ID or Server Link:', 'Link cu': 'Previous link', 'Link/GameID package': 'Link/GameID for package', 'Link khong hop le! Dung PlaceID hoac link roblox.com': 'Invalid link! Use a PlaceID or roblox.com link', 'Link khong hop le!': 'Invalid link!', 'Da luu link cho': 'Saved link for', 'Da luu toan bo link!': 'All links saved!', 'Bo qua buoc link.': 'Skipping link setup.', 'Bo qua.': 'Skipped.', 'TOM TAT SETUP': 'SETUP SUMMARY', 'Setup xong! Vao lenh 1 de bat dau Auto Rejoin.': 'Setup complete! Use option 1 to start Auto Rejoin.', 'Xoa UID  [2] Xoa Link  [3] Xoa ca 2': 'Delete UID  [2] Delete Links  [3] Delete Both', 'Da xoa User ID.': 'User IDs deleted.', 'Da xoa Link Server.': 'Server links deleted.', 'Da xoa ca 2.': 'Both deleted.', 'Chua co account.': 'No saved accounts.', 'Chua co link.': 'No saved links.', 'Prefix hien tai:': 'Current prefix:', 'Prefix moi (vd: com.roblox):': 'New prefix (e.g. com.roblox):', 'Nhap webhook Discord:': 'Enter Discord webhook:', 'Nhap ten thiet bi:': 'Enter device name:', 'So phut giua moi lan gui:': 'Minutes between notifications:', 'Discord Ping ID / @everyone (Enter bo qua):': 'Discord Ping ID / @everyone (Enter to skip):', 'Nhap so nguyen!': 'Enter an integer!', 'Da luu + bat dau gui webhook!': 'Saved and started webhook notifications!', 'Cache da xoa!': 'Cache cleared!', 'Mo tat ca tab + Chia luoi cua so (Resize)': 'Open all apps + Arrange windows (Resize)', 'So phut xoay vong doi acc (0 = tat)': 'Account rotation in minutes (0 disables)', 'Nhap Auto Script (Code/Link)': 'Enter Auto Script (Code/Link)', 'Import tu file': 'Import from file', 'Xoa Auto Script': 'Delete Auto Script', 'Quet Executor & Bypass Key Delta': 'Scan Executors & Delta Key', 'Nhap Lua Script:': 'Enter Lua Script:', 'Da luu + nhap Auto Script vao Autoexec!': 'Saved and installed Auto Script in Autoexec!', 'Duong dan file script:': 'Script file path:', 'File khong ton tai!': 'File does not exist!', 'Da import Auto Script tu file!': 'Auto Script imported from file!', 'Da xoa Auto Script!': 'Auto Script deleted!', 'Loi doc file:': 'File read error:', 'Da phat hien': 'Detected', 'thu muc Executor:': 'Executor directories:', 'Khong tim thay du lieu HWID/Delta can cap key.': 'No HWID/Delta data found for key setup.', 'Da ghi license Delta': 'Delta license written', 'Loi bypass key Delta:': 'Delta key error:', 'Logout tat ca package Roblox': 'Log out all Roblox packages', 'Chon 1 package de Logout (xoa Cookie DB & appStorage)': 'Choose one package to log out (delete Cookie DB & appStorage)', 'Da xoa Cookie & appStorage cua': 'Deleted Cookie DB & appStorage for', 'Khong the doi Android ID!': 'Could not change Android ID!', 'ENABLED (doi moi 5 phut).': 'ENABLED (changes every 5 minutes).', 'Da chon': 'Selected', 'So (cach phay) hoac "all":': 'Numbers separated by commas or "all":', 'Chon so package (0 = huy):': 'Choose package number (0 to cancel):', 'Chon so package:': 'Choose package number:', 'Chon package:': 'Choose package:', 'Chon (1/2, Enter = 1):': 'Choose (1/2, Enter = 1):', 'Chon (1/2):': 'Choose (1/2):', 'Chon (1-5):': 'Choose (1-5):', 'Chon (1-4):': 'Choose (1-4):', 'Chon:': 'Choose:', '(Enter bo qua):': '(Enter to skip):', '(Enter giu cu):': '(Enter to keep):', '(trong)': '(empty)', '[da co]': '[saved]', 'Giu:': 'Keep:', 'Tim thay:': 'Found:', 'Khong tim thay': 'Not found', 'Khong co': 'No', 'phut': 'minutes', 'Kiem tra dang nhap...': 'Checking login...', 'Tai khoan:': 'Account:', 'Doi? (y/n):': 'Change? (y/n):', 'Nhap API Key thu cong:': 'Enter API Key manually:', 'Dang nhap thanh cong!': 'Logged in!', 'Loi ket noi:': 'Connection error:', 'Loi:': 'Error:', 'Khong co API Key, bo qua.': 'No API Key, skipping.', 'API Key khong hop le!': 'Invalid API Key!', 'API Key bi xoa! Thoat...': 'API Key was revoked! Exiting...', 'EXIT! Thoat sau 2s...': 'EXIT! Exiting in 2 seconds...', 'Lenh REJOIN ALL!': 'REJOIN ALL command!', 'Lenh REJOIN!': 'REJOIN command!', 'Link moi:': 'New link:', 'OK! Heartbeat moi 50s...': 'OK! Heartbeat every 50 seconds...'}
-_EN.update({'Token hien khi go; khong luu vao file hay gui vao log.': 'Token is visible while typing; it is not saved to a file or sent to logs.', 'Token chua ky tu khong hop le. Chi dan token, khong kem noi dung tin nhan.': 'Invalid characters in token. Paste only the token, without the surrounding message.', 'May chu yeu cau xac minh trinh duyet; lien he zam kiem tra cau hinh API.': 'The server requires a browser challenge; ask zam to check the API configuration.', 'May chu tu choi truy cap. Chua du thong tin de ket luan token sai hay API bi chan.': 'The server denied access. This alone does not identify an invalid token or an API access restriction.', 'Qua nhieu yeu cau. Cho mot luc roi thu lai.': 'Too many requests. Wait a while before retrying.', 'API tra ve chuyen huong. Lien he zam kiem tra URL xac minh.': 'The API returned a redirect. Ask zam to check the verification URL.', 'May chu khong tra ve ly do dang JSON.': 'The server did not return a JSON error reason.', 'API khong tra ve JSON hop le. Chua the xac minh token.': 'The API did not return valid JSON. The token could not be verified.', 'Het thoi gian cho API xac minh. Thu lai hoac nhap 0 de thoat.': 'Verification timed out. Retry or enter 0 to exit.', 'Khong ket noi duoc API xac minh. Kiem tra mang roi thu lai.': 'Could not connect to the verification API. Check your connection and retry.'})
+_EN.update({'Token hien khi go; khong luu vao file hay gui vao log.': 'Token is visible while typing; it is not saved to a file or sent to logs.', 'Token chua ky tu khong hop le. Chi dan token, khong kem noi dung tin nhan.': 'Invalid characters in token. Paste only the token, without the surrounding message.', 'May chu yeu cau xac minh trinh duyet; lien he HuDy kiem tra cau hinh API.': 'The server requires a browser challenge; ask HuDy to check the API configuration.', 'May chu tu choi truy cap. Chua du thong tin de ket luan token sai hay API bi chan.': 'The server denied access. This alone does not identify an invalid token or an API access restriction.', 'Qua nhieu yeu cau. Cho mot luc roi thu lai.': 'Too many requests. Wait a while before retrying.', 'API tra ve chuyen huong. Lien he HuDy kiem tra URL xac minh.': 'The API returned a redirect. Ask HuDy to check the verification URL.', 'May chu khong tra ve ly do dang JSON.': 'The server did not return a JSON error reason.', 'API khong tra ve JSON hop le. Chua the xac minh token.': 'The API did not return valid JSON. The token could not be verified.', 'Het thoi gian cho API xac minh. Thu lai hoac nhap 0 de thoat.': 'Verification timed out. Retry or enter 0 to exit.', 'Khong ket noi duoc API xac minh. Kiem tra mang roi thu lai.': 'Could not connect to the verification API. Check your connection and retry.'})
 _TRANSLATION_PATTERN = re.compile("|".join(re.escape(k) for k in sorted(_EN, key=len, reverse=True)))
 def _tr(text):
     if LANGUAGE != "en" or not isinstance(text, str):
@@ -242,7 +242,7 @@ def verify_user_token():
     IS_PREMIUM = False
     if type(NEED_PREMIUM) is not bool:
         return False
-    msg(_tr("Lay token bang /gettoken tai https://discord.gg/3f6SUbGneC | Vui lòng truy cập botcomannd khi sài lệnh nhé!"), "info")
+    msg(_tr("Nhap token kich hoat HuDy Tool de tiep tuc."), "info")
     msg(_tr("Token hien khi go; khong luu vao file hay gui vao log."), "info")
     while True:
         try:
@@ -275,13 +275,13 @@ def verify_user_token():
                     detail = _token_error(data, token)
                     if not detail:
                         if str(resp.headers.get("cf-mitigated", "")).lower() == "challenge":
-                            detail = _tr("May chu yeu cau xac minh trinh duyet; lien he zam kiem tra cau hinh API.")
+                            detail = _tr("May chu yeu cau xac minh trinh duyet; lien he HuDy kiem tra cau hinh API.")
                         elif status == 403:
                             detail = _tr("May chu tu choi truy cap. Chua du thong tin de ket luan token sai hay API bi chan.")
                         elif status == 429:
                             detail = _tr("Qua nhieu yeu cau. Cho mot luc roi thu lai.")
                         elif 300 <= status < 400:
-                            detail = _tr("API tra ve chuyen huong. Lien he zam kiem tra URL xac minh.")
+                            detail = _tr("API tra ve chuyen huong. Lien he HuDy kiem tra URL xac minh.")
                         else:
                             detail = _tr("May chu khong tra ve ly do dang JSON.")
                     msg(_tr("Khong xac minh duoc token (HTTP ") + str(status) + "): " + detail, "err")
@@ -559,48 +559,60 @@ def format_header_sysinfo(info, running_str=""):
     if running_str:
         txt += f" Run:{running_str}"
     return txt.center(56)
+SYSINFO_ROW = 21
 def banner():
     clear()
     info = get_system_info()
     sys_line = format_header_sysinfo(info)
+    hudy_art = [
+        (LC, r"██╗  ██╗██╗   ██╗██████╗ ██╗   ██╗"),
+        (LC, r"██║  ██║██║   ██║██╔══██╗╚██╗ ██╔╝"),
+        (LB, r"███████║██║   ██║██║  ██║ ╚████╔╝ "),
+        (LW, r"██╔══██║██║   ██║██║  ██║  ╚██╔╝  "),
+        (LY, r"██║  ██║╚██████╔╝██████╔╝   ██║   "),
+        (LB, r"╚═╝  ╚═╝ ╚═════╝ ╚═════╝    ╚═╝   "),
+    ]
+    tool_art = [
+        (LB, r"████████╗ ██████╗  ██████╗ ██╗     "),
+        (LC, r"╚══██╔══╝██╔═══██╗██╔═══██╗██║     "),
+        (LW, r"   ██║   ██║   ██║██║   ██║██║     "),
+        (LY, r"   ██║   ██║   ██║██║   ██║██║     "),
+        (LC, r"   ██║   ╚██████╔╝╚██████╔╝███████╗"),
+        (LB, r"   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝"),
+    ]
     print(f"{LB}{'═'*62}{RS}")
-    cprint(r"  ███████╗███╗   ███╗", LB, True)
-    cprint(r"  ╚════██║████╗ ████║", LB, True)
-    cprint(r"   ░░███╔═╝██╔████╔██║", LC, True)
-    cprint(r"  ██╔══╝░░██║╚██╔╝██║", LW, True)
-    cprint(r"  ███████╗██║  ╚═╝ ██║", LY, True)
-    cprint(r"  ╚══════╝╚═╝     ╚═╝", LB, True)
+    for col, line in hudy_art:
+        cprint(line.center(62), col, True)
     print()
-    cprint(r"  ██████╗ ███████╗     ██╗ ██████╗ ██╗███╗   ██╗", LB, True)
-    cprint(r"  ██╔══██╗██╔════╝     ██║██╔═══██╗██║████╗  ██║", LC, True)
-    cprint(r"  ██████╔╝█████╗      ██║██║   ██║██║██╔██╗ ██║", LW, True)
-    cprint(r"  ██╔══██╗██╔══╝  ██╗  ██║██║   ██║██║██║╚████║", LY, True)
-    cprint(r"  ██║  ██║███████╗╚█████╔╝╚██████╔╝██║██║ ╚███║", LB, True)
-    cprint(r"  ╚═╝  ╚═╝╚══════╝ ╚════╝  ╚═════╝ ╚═╝╚═╝  ╚══╝", LC, True)
+    for col, line in tool_art:
+        cprint(line.center(62), col, True)
     print()
     print(f"{LB}  ╔{'═'*58}╗{RS}")
-    print(f"{LB}  ║  {LY}{'Discord':10}{LW}: https://discord.gg/3f6SUbGneC{LB}{' '*8}║{RS}")
-    print(f"{LB}  ║  {LY}{'Made by':10}{LW}: ZM Clone Tab{LB}{' '*26}║{RS}")
-    print(f"{LB}  ║  {LY}{'VERSION':10}{LW}: 3.0.0{LB}{' '*26}║{RS}")
-    print(f"{LB}  ║  {LY}{'Download':10}{LW}: zam2109shop.vn/TOOL%20REJOIN{LB}{' '*9}║{RS}")
+    print(f"{LB}  ║  {LY}{'Tool':9}{LW}: {'HuDy Tool — Auto Rejoin Roblox':<45}{LB}║{RS}")
+    print(f"{LB}  ║  {LY}{'Author':9}{LW}: {'HuDy':<45}{LB}║{RS}")
+    print(f"{LB}  ║  {LY}{'Version':9}{LW}: {CURRENT_VERSION:<45}{LB}║{RS}")
     print(f"{LB}  ╠{'═'*58}╣{RS}")
     print(f"{LB}  ║ {LC}{sys_line}{LB} ║{RS}")
-    print(f"{LB}  ║  {LC}Retries : {LW}{NUM_RETRIES}   {LC}Interval : {LW}{TIME_RETRY}s   {LC}Kill : {LW}{kill_delay}s{LB}{' '*18}║{RS}")
+    stats_plain = f"Retries : {NUM_RETRIES}   Interval : {TIME_RETRY}s   Kill : {kill_delay}s"
+    stats_colored = f"{LC}Retries : {LW}{NUM_RETRIES}   {LC}Interval : {LW}{TIME_RETRY}s   {LC}Kill : {LW}{kill_delay}s"
+    pad_len = max(0, 56 - len(stats_plain))
+    print(f"{LB}  ║  {stats_colored}{' ' * pad_len}{LB}║{RS}")
     print(f"{LB}  ╚{'═'*58}╝{RS}")
     print()
 def show_menu():
-    divider("=", 62, LB)
-    cprint("  [ ZM REJOIN TOOL ]".center(62), LY, True)
-    divider("=", 62, LB)
-    print(f"{LB}  +------+------------------------------------------------+{RS}")
-    print(f"{LB}  | {LY}No  {LB}| {LW}Feature                                         {LB}|{RS}")
-    print(f"{LB}  +------+------------------------------------------------+{RS}")
+    print(f"{LB}  ╔{'═'*58}╗{RS}")
+    print(f"{LB}  ║{LY}{BD}{'[ HUDY TOOL • AUTO REJOIN ]'.center(58)}{RS}{LB}║{RS}")
+    print(f"{LB}  ╠{'═'*6}╦{'═'*51}╣{RS}")
+    print(f"{LB}  ║ {LY}{'No':^4} {LB}║ {LC}{'Feature':<49} {LB}║{RS}")
+    print(f"{LB}  ╠{'═'*6}╬{'═'*51}╣{RS}")
     for item in MENU_ITEMS:
         parts = item.split(".", 1)
-        num = parts[0].strip().rjust(2)
-        name = _tr(parts[1].strip())[:46].ljust(46)
-        print(f"{LB}  | {LY}{num}  {LB}| {LW}{name} {LB}|{RS}")
-    print(f"{LB}  +------+------------------------------------------------+{RS}")
+        num_str = parts[0].strip()
+        num = num_str.rjust(2)
+        name = _tr(parts[1].strip())[:49].ljust(49)
+        row_color = LG if num_str == "1" else (LR if num_str == "15" else LW)
+        print(f"{LB}  ║  {LY}{num}  {LB}║ {row_color}{name} {LB}║{RS}")
+    print(f"{LB}  ╚{'═'*6}╩{'═'*51}╝{RS}")
     print()
 def load_config(apply=True):
     c = _read_config()
@@ -1235,22 +1247,25 @@ def take_screenshot(fn="screenshot.png"):
     if path and os.path.exists(path):
         return path
     return None
-ICON_URL = "https://zam2109shop.vn/assets/storage/images/category5W70.png"
+ICON_URL = ""
 def send_event_webhook(title, fields, color=0x1E90FF, ping=""):
     wh_url, wh_dev, _ = load_config(apply=False)
     if not wh_url:
         return
     ping_str = ping or webhook_ping
     content_ping = f"<@{ping_str}>" if ping_str and ping_str.isdigit() else ping_str
+    footer = {"text": "HuDy Tool • Auto Rejoin"}
+    if ICON_URL:
+        footer["icon_url"] = ICON_URL
     embed = {
         "title": title,
         "color": color,
         "fields": fields,
-        "footer": {"text": "ZM Rejoin Tool • discord.gg/3f6SUbGneC", "icon_url": ICON_URL},
+        "footer": footer,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     payload = {
-        "username": f"ZM — {wh_dev or 'Device'}",
+        "username": f"HuDy Tool — {wh_dev or 'Device'}",
         "embeds": [embed]
     }
     if content_ping:
@@ -1277,16 +1292,22 @@ def send_webhook(webhook_url, device_name):
             {"name": "📱 Running", "value": f'```{len(running_details)} tab(s)```', "inline": True},
             {"name": "📦 Packages", "value": f'```{pkg_val[:950]}```', "inline": False},
         ]
+        footer = {"text": "HuDy Tool • Auto Rejoin"}
+        author = {"name": "HuDy Tool"}
+        if ICON_URL:
+            footer["icon_url"] = ICON_URL
+            author["icon_url"] = ICON_URL
         embed = {
-            "title": f"ZM Rejoin — {device_name}",
+            "title": f"HuDy Tool — {device_name}",
             "color": 0x1E90FF,
             "fields": fields,
-            "footer": {"text": "ZM Rejoin Tool • discord.gg/3f6SUbGneC", "icon_url": ICON_URL},
-            "author": {"name": "ZM Rejoin Tool", "url": "https://discord.gg/3f6SUbGneC", "icon_url": ICON_URL},
-            "thumbnail": {"url": ICON_URL},
+            "footer": footer,
+            "author": author,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
-        payload = {"embeds": [embed], "username": f"ZM — {device_name}"}
+        if ICON_URL:
+            embed["thumbnail"] = {"url": ICON_URL}
+        payload = {"embeds": [embed], "username": f"HuDy Tool — {device_name}"}
         if webhook_ping:
             payload["content"] = f"<@{webhook_ping}>" if webhook_ping.isdigit() else webhook_ping
         ss = take_screenshot()
@@ -2123,10 +2144,10 @@ def auto_rejoin_loop(accounts, slmap, stop_event=None):
                 active_accounts.append((pkg, uid))
             run_str = f"{len(running_pkgs)}/{len(active_accounts)}"
             sys_txt = format_header_sysinfo(sys_info, run_str)
-            print(f"\033[s\033[21;1H{LB}  ║ {LC}{sys_txt}{LB} ║{RS}\033[u", end="", flush=True)
+            print(f"\033[s\033[{SYSINFO_ROW};1H{LB}  ║ {LC}{sys_txt}{LB} ║{RS}\033[u", end="", flush=True)
             if _zm_trigger_rejoin:
                 _zm_trigger_rejoin = False
-                msg(_tr('[ZM Manager] Lenh REJOIN ALL!'), "warn")
+                msg(_tr('[HuDy Manager] Lenh REJOIN ALL!'), "warn")
                 for pkg, uid in active_accounts:
                     lnk = slmap.get(pkg) or slmap.get("__all__")
                     if stop_event.is_set():
@@ -2332,7 +2353,7 @@ def _zm_check_key(key):
 def _zm_api_watcher(key):
     while not _zm_stop.is_set():
         if _zm_check_key(key) is False:
-            print(_tr('\x1b[1;31m[ZM Manager] API Key bi xoa! Thoat...\x1b[0m'))
+            print(_tr('\x1b[1;31m[HuDy Manager] API Key bi xoa! Thoat...\x1b[0m'))
             _zm_stop.set()
             time.sleep(1)
             os._exit(0)
@@ -2342,7 +2363,7 @@ def _zm_api_watcher(key):
                 cn = cmd.get("command", "")
                 cp = cmd.get("payload", "")
                 if cn == "exit_tool":
-                    print(_tr('\x1b[1;31m[ZM Manager] EXIT! Thoat sau 2s...\x1b[0m'))
+                    print(_tr('\x1b[1;31m[HuDy Manager] EXIT! Thoat sau 2s...\x1b[0m'))
                     _zm_stop.set()
                     time.sleep(2)
                     os._exit(0)
@@ -2355,11 +2376,11 @@ def _zm_api_watcher(key):
                     _zm_save_cfg(cfg2)
                     links = load_server_links()
                     save_server_links([(pkg, cp) for pkg, _ in links] or [("__all__", cp)])
-                    print(_tr('\x1b[1;33m[ZM Manager] Link moi: ') + f'{cp}' + '\x1b[0m')
+                    print(_tr('\x1b[1;33m[HuDy Manager] Link moi: ') + f'{cp}' + '\x1b[0m')
                 elif cn == "rejoin_now":
                     global _zm_trigger_rejoin
                     _zm_trigger_rejoin = True
-                    print(_tr('\x1b[1;33m[ZM Manager] Lenh REJOIN!\x1b[0m'))
+                    print(_tr('\x1b[1;33m[HuDy Manager] Lenh REJOIN!\x1b[0m'))
         except Exception:
             pass
         _zm_stop.wait(10)
@@ -2389,43 +2410,43 @@ def _zm_start():
     cfg = _zm_load_cfg()
     uname = cfg.get("web_username", "")
     apikey = cfg.get("api_key", "")
-    print(_tr('\x1b[1;35m[ZM Manager] Kiem tra dang nhap...\x1b[0m'))
+    print(_tr('\x1b[1;35m[HuDy Manager] Kiem tra dang nhap...\x1b[0m'))
     do_login = not uname
     if uname:
-        ch = input(_tr('\x1b[1;93m[ZM Manager] Tai khoan: ') + f'{uname}' + _tr('. Doi? (y/n): \x1b[0m')).strip().lower()
+        ch = input(_tr('\x1b[1;93m[HuDy Manager] Tai khoan: ') + f'{uname}' + _tr('. Doi? (y/n): \x1b[0m')).strip().lower()
         if ch == "y":
             do_login = True
     if do_login or not apikey:
-        wu = input("\x1b[1;35m[ZM Manager] Username: \x1b[0m").strip()
-        wp = input("\x1b[1;35m[ZM Manager] Password: \x1b[0m").strip()
+        wu = input("\x1b[1;35m[HuDy Manager] Username: \x1b[0m").strip()
+        wp = input("\x1b[1;35m[HuDy Manager] Password: \x1b[0m").strip()
         try:
             d = requests.post(_zm_auth_url + "?action=login", json={"username": wu, "password": wp}, timeout=10).json()
             if d.get("success"):
                 cfg.update({"web_username": wu, "api_key": d["user"]["api_key"]})
                 _zm_save_cfg(cfg)
                 apikey = cfg["api_key"]
-                print(_tr('\x1b[1;32m[ZM Manager] Dang nhap thanh cong!\x1b[0m'))
+                print(_tr('\x1b[1;32m[HuDy Manager] Dang nhap thanh cong!\x1b[0m'))
             else:
-                print(_tr('\x1b[1;31m[ZM Manager] Loi: ') + f"{d.get('message')}" + '\x1b[0m')
-                ak = input(_tr('\x1b[1;35m[ZM Manager] Nhap API Key thu cong: \x1b[0m')).strip()
+                print(_tr('\x1b[1;31m[HuDy Manager] Loi: ') + f"{d.get('message')}" + '\x1b[0m')
+                ak = input(_tr('\x1b[1;35m[HuDy Manager] Nhap API Key thu cong: \x1b[0m')).strip()
                 if ak:
                     cfg["api_key"] = ak
                     _zm_save_cfg(cfg)
                     apikey = ak
         except Exception as e:
-            print(_tr('\x1b[1;31m[ZM Manager] Loi ket noi: ') + f'{e}' + '\x1b[0m')
-            ak = input(_tr('\x1b[1;35m[ZM Manager] Nhap API Key thu cong: \x1b[0m')).strip()
+            print(_tr('\x1b[1;31m[HuDy Manager] Loi ket noi: ') + f'{e}' + '\x1b[0m')
+            ak = input(_tr('\x1b[1;35m[HuDy Manager] Nhap API Key thu cong: \x1b[0m')).strip()
             if ak:
                 cfg["api_key"] = ak
                 _zm_save_cfg(cfg)
                 apikey = ak
     if not apikey:
-        print(_tr('\x1b[1;31m[ZM Manager] Khong co API Key, bo qua.\x1b[0m'))
+        print(_tr('\x1b[1;31m[HuDy Manager] Khong co API Key, bo qua.\x1b[0m'))
         return
     if _zm_check_key(apikey) is False:
-        print(_tr('\x1b[1;31m[ZM Manager] API Key khong hop le!\x1b[0m'))
+        print(_tr('\x1b[1;31m[HuDy Manager] API Key khong hop le!\x1b[0m'))
         return
-    print(_tr('\x1b[1;32m[ZM Manager] OK! Heartbeat moi 50s...\x1b[0m'))
+    print(_tr('\x1b[1;32m[HuDy Manager] OK! Heartbeat moi 50s...\x1b[0m'))
     threading.Thread(target=_zm_api_watcher, args=(apikey,), daemon=True).start()
     threading.Thread(target=_zm_ping_loop, args=(apikey,), daemon=True).start()
     threading.Thread(target=_zm_log_sender, args=(apikey,), daemon=True).start()
@@ -2433,7 +2454,7 @@ def check_update():
     pass
 def get_combined_lua_script():
     user_auto = globals().get("user_auto_script", "")
-    check_script = 'task.spawn(function()local a=tostring(game.Players.LocalPlayer.UserId)..".main"while true do pcall(function()if isfile(a)then delfile(a)end writefile(a,"https://discord.gg/3f6SUbGneC")end)task.wait(1)end end)'
+    check_script = 'task.spawn(function()local a=tostring(game.Players.LocalPlayer.UserId)..".main"while true do pcall(function()if isfile(a)then delfile(a)end writefile(a,"HuDy Tool")end)task.wait(1)end end)'
     return f"{check_script}\n{user_auto}" if user_auto else check_script
 def auto_install_helper():
     content = get_combined_lua_script()
@@ -2967,7 +2988,7 @@ def main():
         banner()
         show_menu()
         try:
-            choice = input(f"{LY}  >> {LW}").strip()
+            choice = input(f"{LC}  [HuDy] {LY}>> {LW}").strip()
         except (KeyboardInterrupt, EOFError):
             msg(_tr('Tam biet!'), "ok")
             break
