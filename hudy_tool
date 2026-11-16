@@ -565,32 +565,20 @@ def format_header_sysinfo(info, running_str=""):
     if running_str:
         txt += f" Run:{running_str}"
     return txt.center(56)
-SYSINFO_ROW = 21
+SYSINFO_ROW = 13
 def banner():
     clear()
     info = get_system_info()
     sys_line = format_header_sysinfo(info)
-    hudy_art = [
-        (LC, r"██╗  ██╗██╗   ██╗██████╗ ██╗   ██╗"),
-        (LC, r"██║  ██║██║   ██║██╔══██╗╚██╗ ██╔╝"),
-        (LB, r"███████║██║   ██║██║  ██║ ╚████╔╝ "),
-        (LW, r"██╔══██║██║   ██║██║  ██║  ╚██╔╝  "),
-        (LY, r"██║  ██║╚██████╔╝██████╔╝   ██║   "),
-        (LB, r"╚═╝  ╚═╝ ╚═════╝ ╚═════╝    ╚═╝   "),
-    ]
-    tool_art = [
-        (LB, r"████████╗ ██████╗  ██████╗ ██╗     "),
-        (LC, r"╚══██╔══╝██╔═══██╗██╔═══██╗██║     "),
-        (LW, r"   ██║   ██║   ██║██║   ██║██║     "),
-        (LY, r"   ██║   ██║   ██║██║   ██║██║     "),
-        (LC, r"   ██║   ╚██████╔╝╚██████╔╝███████╗"),
-        (LB, r"   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝"),
+    hudy_tool_art = [
+        (LC, r"██  ██ ██  ██ █████  ██  ██    ██████  ████   ████  ██    "),
+        (LC, r"██  ██ ██  ██ ██  ██  ████       ██   ██  ██ ██  ██ ██    "),
+        (LB, r"██████ ██  ██ ██  ██   ██        ██   ██  ██ ██  ██ ██    "),
+        (LW, r"██  ██ ██  ██ ██  ██   ██        ██   ██  ██ ██  ██ ██    "),
+        (LY, r"██  ██  ████  █████    ██        ██    ████   ████  ██████"),
     ]
     print(f"{LB}{'═'*62}{RS}")
-    for col, line in hudy_art:
-        cprint(line.center(62), col, True)
-    print()
-    for col, line in tool_art:
+    for col, line in hudy_tool_art:
         cprint(line.center(62), col, True)
     print()
     print(f"{LB}  ╔{'═'*58}╗{RS}")
@@ -729,21 +717,51 @@ def load_package_prefix():
     except Exception:
         pass
     return "com.roblox"
+def _extract_pkg_lines(out):
+    pkgs = set()
+    for l in (out or "").splitlines():
+        s = l.strip()
+        if s.startswith("package:"):
+            p = s.split(":", 1)[1].strip()
+            if p:
+                pkgs.add(p)
+    return pkgs
+def _list_installed_packages(third_party=False):
+    flag = " -3" if third_party else ""
+    for cmd in (f"pm list packages{flag}", f"cmd package list packages{flag}", f"/system/bin/pm list packages{flag}"):
+        ok, out = CookieInjector._root_command(cmd)
+        pkgs = _extract_pkg_lines(out)
+        if pkgs:
+            return pkgs
+    pkgs = set()
+    ok, out = CookieInjector._root_command("ls -1 /data/data 2>/dev/null")
+    if ok and out:
+        for line in out.splitlines():
+            p = line.strip()
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+", p):
+                pkgs.add(p)
+    if not pkgs and os.path.isdir("/sdcard/Android/data"):
+        try:
+            for p in os.listdir("/sdcard/Android/data"):
+                if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+", p):
+                    pkgs.add(p)
+        except OSError:
+            pass
+    return pkgs
 def get_roblox_packages():
     prefix = load_package_prefix()
-    ok, out = CookieInjector._root_command("pm list packages")
-    if not ok:
-        return []
-    return sorted({l.split(":", 1)[1].strip() for l in out.splitlines()
-                   if l.startswith("package:") and l.split(":", 1)[1].strip().startswith(prefix)})
+    all_pkgs = _list_installed_packages(third_party=False)
+    matched = sorted(p for p in all_pkgs if p.startswith(prefix))
+    if not matched and prefix == "com.roblox":
+        matched = sorted(p for p in all_pkgs if "roblox" in p.lower())
+    return matched
 def get_all_packages():
     black = {"com.termux", "bin.mt.plus", "com.og.launcher", "com.og.toolcenter",
              "com.og.gamecenter", "ru.zdevs.zarchiver", "com.lwi.android.flapps",
              "ahapps.controlthescreenorientation", "com.cloudflare.onedotonedotonedotone",
              "org.swiftapps.swiftbackup"}
-    ok, out = CookieInjector._root_command("pm list packages -3")
-    return sorted({l.split(":", 1)[1].strip() for l in out.splitlines()
-                   if l.startswith("package:") and l.split(":", 1)[1].strip() not in black}) if ok else []
+    all_pkgs = _list_installed_packages(third_party=True) or _list_installed_packages(third_party=False)
+    return sorted(p for p in all_pkgs if p not in black)
 def scan_exec_dirs():
     global detected_exec_dirs
     base_path = "/storage/emulated/0"
@@ -847,11 +865,16 @@ def get_screen_resolution():
 def get_task_ids():
     prefix = load_package_prefix()
     task_ids = []
-    ok, out = CookieInjector._root_command("am stack list")
-    if ok:
+    for cmd in ("am stack list", "cmd activity stack list", "dumpsys activity activities"):
+        ok, out = CookieInjector._root_command(cmd)
+        if not ok or not out:
+            continue
         for line in out.splitlines():
-            if prefix in line:
+            if prefix in line or (prefix == "com.roblox" and "roblox" in line.lower()):
                 task_ids.extend(int(tid) for tid in re.findall(r"taskId=(\d+)\b", line))
+                task_ids.extend(int(tid) for tid in re.findall(r"Task\{[0-9a-fA-F]+\s+#(\d+)\b", line))
+        if task_ids:
+            break
     return list(dict.fromkeys(task_ids))
 def calculate_positions(screen_width, screen_height, tab_count):
     if tab_count <= 0:
@@ -893,24 +916,52 @@ def resize_old(packages):
         positions = calculate_positions(screen_width, screen_height, len(packages))
         for package_name, (left, top, right, bottom) in zip(packages, positions):
             file_path = f"/data/data/{package_name}/shared_prefs/{package_name}_preferences.xml"
-            if not os.path.exists(file_path):
-                continue
-            try:
-                tree = ET.parse(file_path)
-                root = tree.getroot()
-                for child in root:
-                    attr_name = child.attrib.get("name")
-                    if attr_name == "app_cloner_current_window_left":
-                        child.set("value", str(left))
-                    elif attr_name == "app_cloner_current_window_top":
-                        child.set("value", str(top))
-                    elif attr_name == "app_cloner_current_window_right":
-                        child.set("value", str(right))
-                    elif attr_name == "app_cloner_current_window_bottom":
-                        child.set("value", str(bottom))
-                tree.write(file_path)
-            except Exception:
-                pass
+            direct = os.path.exists(file_path)
+            if direct:
+                try:
+                    tree = ET.parse(file_path)
+                    root = tree.getroot()
+                    for child in root:
+                        attr_name = child.attrib.get("name")
+                        if attr_name == "app_cloner_current_window_left":
+                            child.set("value", str(left))
+                        elif attr_name == "app_cloner_current_window_top":
+                            child.set("value", str(top))
+                        elif attr_name == "app_cloner_current_window_right":
+                            child.set("value", str(right))
+                        elif attr_name == "app_cloner_current_window_bottom":
+                            child.set("value", str(bottom))
+                    tree.write(file_path)
+                    continue
+                except Exception:
+                    pass
+            q = shlex.quote
+            ok, owner = CookieInjector._root_command(f"stat -c %u:%g {q(f'/data/data/{package_name}')}")
+            ok_xml, xml_raw = CookieInjector._root_command(f"cat {q(file_path)}")
+            if ok_xml and xml_raw.strip():
+                try:
+                    root = ET.fromstring(xml_raw)
+                    for child in root:
+                        attr_name = child.attrib.get("name")
+                        if attr_name == "app_cloner_current_window_left":
+                            child.set("value", str(left))
+                        elif attr_name == "app_cloner_current_window_top":
+                            child.set("value", str(top))
+                        elif attr_name == "app_cloner_current_window_right":
+                            child.set("value", str(right))
+                        elif attr_name == "app_cloner_current_window_bottom":
+                            child.set("value", str(bottom))
+                    new_xml = ET.tostring(root, encoding="unicode")
+                    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tf:
+                        tf.write(new_xml)
+                        tmp_path = tf.name
+                    try:
+                        chown_cmd = f"chown {owner} {q(file_path)} && " if ok and re.fullmatch(r"\d+:\d+", owner) else ""
+                        CookieInjector._root_command(f"cp {q(tmp_path)} {q(file_path)} && {chown_cmd}chmod 660 {q(file_path)}")
+                    finally:
+                        safe_remove(tmp_path)
+                except Exception:
+                    pass
     except Exception:
         pass
 def clear_package_logs(pkg):
@@ -925,47 +976,110 @@ def clear_package_logs(pkg):
                             pass
             except Exception:
                 pass
+    CookieInjector._root_command(f"rm -f {shlex.quote(f'/data/data/{pkg}/files/logs')}/*.log")
 def get_all_running_packages(prefix):
     pkgs = set()
-    for cmd in ("ps -A -o NAME", "ps -A"):
+    match_fn = (lambda p: p.startswith(prefix) or (prefix == "com.roblox" and "roblox" in p.lower()))
+    for cmd, use_first in (("ps -A -o ARGS", True), ("ps -A -o NAME", False), ("ps -A", False), ("ps", False)):
         ok, out = CookieInjector._root_command(cmd)
         if ok and out:
             for line in out.splitlines():
-                part = line.strip().split()[-1] if line.strip() else ""
+                tokens = line.strip().split()
+                if not tokens:
+                    continue
+                part = tokens[0] if use_first else tokens[-1]
                 clean_pkg = part.split(":", 1)[0]
-                if clean_pkg.startswith(prefix) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+", clean_pkg):
+                if match_fn(clean_pkg) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+", clean_pkg):
                     pkgs.add(clean_pkg)
-            if pkgs or out.strip().splitlines()[0].strip() in ("NAME", "CMD"):
+            if pkgs:
                 return pkgs
     for pkg, _ in find_running_packages():
         pkgs.add(pkg)
     return pkgs
 def check_package_log_status(pkg):
-    log_dir = f"/data/data/{pkg}/files/logs"
-    try:
-        files = [os.path.join(log_dir, f) for f in os.listdir(log_dir) if f.endswith(".log")]
-        if not files:
+    kicked_re = r"(?i)\b(?:disconnected|disconnecting|connectionlost|lost connection)\b|\b(?:kicked|kick|disconnect)\b[^\n]{0,100}\b(?:reason|code|error|idle|afk|timeout)\b|\berror\s*(?:code)?\s*[:=]\s*(?:267|268|273|277|278|279)\b"
+    for log_dir in (f"/data/data/{pkg}/files/logs", f"/sdcard/Android/data/{pkg}/files/logs"):
+        try:
+            files = [os.path.join(log_dir, f) for f in os.listdir(log_dir) if f.endswith(".log")]
+            if not files:
+                continue
+            latest_file = max(files, key=os.path.getmtime)
+            with open(latest_file, "rb") as f:
+                stat = os.fstat(f.fileno())
+                previous = _log_offsets.get(pkg)
+                start = max(0, stat.st_size - 8192)
+                if previous and previous[:2] == (latest_file, stat.st_ino) and previous[2] <= stat.st_size:
+                    if previous[2:] == (stat.st_size, stat.st_mtime_ns):
+                        return "ok"
+                    if previous[2] < stat.st_size:
+                        start = max(start, previous[2])
+                f.seek(start)
+                raw = f.read(8192).decode("utf-8", errors="ignore")
+                _log_offsets[pkg] = (latest_file, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            if time.time() - stat.st_mtime > 40:
+                return "ok"
+            if re.search(kicked_re, raw):
+                return "kicked"
             return "ok"
-        latest_file = max(files, key=os.path.getmtime)
-        with open(latest_file, "rb") as f:
-            stat = os.fstat(f.fileno())
-            previous = _log_offsets.get(pkg)
-            start = max(0, stat.st_size - 8192)
-            if previous and previous[:2] == (latest_file, stat.st_ino) and previous[2] <= stat.st_size:
-                if previous[2:] == (stat.st_size, stat.st_mtime_ns):
+        except (OSError, ValueError):
+            pass
+    if not (hasattr(os, "geteuid") and os.geteuid() == 0):
+        q = shlex.quote
+        log_dir = f"/data/data/{pkg}/files/logs"
+        ok, out = CookieInjector._root_command(
+            f"f=$(ls -1t {q(log_dir)}/*.log 2>/dev/null | head -n 1); "
+            f"if [ -n \"$f\" ]; then "
+            f"st=$(stat -c '%Y:%s:%i' \"$f\" 2>/dev/null || echo '0:0:0'); "
+            f"echo \"__META__:$f:$st\"; tail -c 8192 \"$f\" 2>/dev/null; fi"
+        )
+        if ok and out.startswith("__META__:"):
+            first_nl = out.find("\n")
+            meta_line = out if first_nl == -1 else out[:first_nl]
+            raw = "" if first_nl == -1 else out[first_nl + 1:]
+            parts = meta_line.split(":", 4)
+            if len(parts) >= 4:
+                fpath = parts[1]
+                try:
+                    mtime = float(parts[2])
+                    fsize = int(parts[3])
+                    fino = parts[4] if len(parts) > 4 else ""
+                except ValueError:
+                    mtime, fsize, fino = 0.0, 0, ""
+                prev = _log_offsets.get(pkg)
+                _log_offsets[pkg] = (fpath, fino, fsize, mtime)
+                if prev == (fpath, fino, fsize, mtime):
                     return "ok"
-                if previous[2] < stat.st_size:
-                    start = max(start, previous[2])
-            f.seek(start)
-            raw = f.read(8192).decode("utf-8", errors="ignore")
-            _log_offsets[pkg] = (latest_file, stat.st_ino, stat.st_size, stat.st_mtime_ns)
-        if time.time() - stat.st_mtime > 40:
-            return "ok"
-        if re.search(r"(?i)\b(?:disconnected|disconnecting|connectionlost|lost connection)\b|\b(?:kicked|kick|disconnect)\b[^\n]{0,100}\b(?:reason|code|error|idle|afk|timeout)\b|\berror\s*(?:code)?\s*[:=]\s*(?:267|268|273|277|278|279)\b", raw):
-            return "kicked"
-    except (OSError, ValueError):
-        pass
+                if mtime and (time.time() - mtime > 40):
+                    return "ok"
+                if re.search(kicked_re, raw):
+                    return "kicked"
     return "ok"
+def _extract_uid_from_text(content):
+    for key in ("UserId", "userId", "userid", "user_id", "UserID"):
+        idx = content.find(key)
+        if idx == -1:
+            continue
+        i = idx + len(key)
+        while i < len(content) and content[i] in ': "\' =>':
+            i += 1
+        j = i
+        while j < len(content) and content[j].isdigit():
+            j += 1
+        if j > i:
+            uid = content[i:j]
+            if uid and uid != "-1":
+                return uid
+    try:
+        data = json.loads(content)
+        if isinstance(data, dict):
+            for k in ("UserId", "userId", "userid", "user_id", "UserID"):
+                v = data.get(k)
+                if v and str(v) != "-1":
+                    return str(v)
+    except Exception:
+        pass
+    m = re.search(r'[Uu]ser[Ii][Dd]["\'\s:=>]+([0-9]{5,})', content)
+    return m.group(1) if m else None
 def get_uid_from_package(pkg):
     for fpath in [
         f"/data/data/{pkg}/files/appData/LocalStorage/appStorage.json",
@@ -976,30 +1090,9 @@ def get_uid_from_package(pkg):
             continue
         try:
             with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-            for key in ("UserId", "userId", "userid", "user_id", "UserID"):
-                idx = content.find(key)
-                if idx == -1:
-                    continue
-                i = idx + len(key)
-                while i < len(content) and content[i] in ': "\' ':
-                    i += 1
-                j = i
-                while j < len(content) and content[j].isdigit():
-                    j += 1
-                if j > i:
-                    uid = content[i:j]
-                    if uid and uid != "-1":
-                        return uid
-            try:
-                data = json.loads(content)
-                if isinstance(data, dict):
-                    for k in ("UserId", "userId", "userid", "user_id", "UserID"):
-                        v = data.get(k)
-                        if v and str(v) != "-1":
-                            return str(v)
-            except Exception:
-                pass
+                uid = _extract_uid_from_text(f.read())
+            if uid:
+                return uid
         except Exception:
             pass
     for lpath in [
@@ -1013,21 +1106,9 @@ def get_uid_from_package(pkg):
                 if not fname.endswith((".ldb", ".log")):
                     continue
                 with open(os.path.join(lpath, fname), "rb") as f:
-                    raw = f.read().decode("utf-8", errors="ignore")
-                for key in ("UserId", "userId", "userid"):
-                    idx = raw.find(key)
-                    if idx == -1:
-                        continue
-                    i = idx + len(key)
-                    while i < len(raw) and raw[i] in ': "\' ':
-                        i += 1
-                    j = i
-                    while j < len(raw) and raw[j].isdigit():
-                        j += 1
-                    if j > i:
-                        uid = raw[i:j]
-                        if len(uid) >= 5 and uid != "-1":
-                            return uid
+                    uid = _extract_uid_from_text(f.read().decode("utf-8", errors="ignore"))
+                if uid and len(uid) >= 5:
+                    return uid
         except Exception:
             pass
     pref_dir = f"/data/data/{pkg}/shared_prefs/"
@@ -1035,12 +1116,25 @@ def get_uid_from_package(pkg):
         try:
             for fname in os.listdir(pref_dir):
                 with open(os.path.join(pref_dir, fname), "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-                m = re.search(r'[Uu]ser[Ii][Dd]["\'\\s:=>]+([0-9]{5,})', content)
-                if m:
-                    return m.group(1)
+                    uid = _extract_uid_from_text(f.read())
+                if uid:
+                    return uid
         except Exception:
             pass
+    if not (hasattr(os, "geteuid") and os.geteuid() == 0):
+        q = shlex.quote
+        base = f"/data/data/{pkg}"
+        cmd = (
+            f"for f in {q(base + '/files/appData/LocalStorage/appStorage.json')} {q(base + '/files/appStorage.json')}; do "
+            f"if [ -f \"$f\" ]; then cat \"$f\"; fi; done; "
+            f"grep -hEo '(UserId|userId|userid|user_id|UserID)[^0-9]{{0,12}}[0-9]{{5,}}' "
+            f"{q(base + '/shared_prefs')}/* {q(base + '/app_webview/Default/Local Storage/leveldb')}/* 2>/dev/null | head -n 5"
+        )
+        ok, out = CookieInjector._root_command(cmd)
+        if ok and out:
+            uid = _extract_uid_from_text(out)
+            if uid:
+                return uid
     return None
 def get_user_id_api(username):
     try:
@@ -1150,17 +1244,20 @@ def logout_all_roblox():
             return
         target = pkgs[int(idx) - 1]
         kill_roblox_process(target)
-        safe_remove(f"/data/data/{target}/app_webview/Default/Cookies")
-        safe_remove(f"/data/data/{target}/files/appData/LocalStorage/appStorage.json")
+        q = shlex.quote
+        base = f"/data/data/{target}"
+        CookieInjector._root_command(
+            f"rm -f {q(base + '/app_webview/Default/Cookies')} {q(base + '/app_webview/Default/Cookies-wal')} {q(base + '/app_webview/Default/Cookies-shm')} "
+            f"{q(base + '/app_webview/Default/Network/Cookies')} {q(base + '/app_webview/Default/Network/Cookies-wal')} {q(base + '/app_webview/Default/Network/Cookies-shm')} "
+            f"{q(base + '/files/appData/LocalStorage/appStorage.json')}"
+        )
         msg(_tr('Da xoa Cookie & appStorage cua ') + f'{target}' + '!', "ok")
         wait_back_menu()
         return
     for pkg in get_roblox_packages():
         try:
-            subprocess.run(f"su -c am force-stop {pkg}", shell=True)
-            subprocess.run(f"am force-stop {pkg}", shell=True)
-            subprocess.run(f"su -c pm clear {pkg} > /dev/null 2>&1", shell=True)
-            subprocess.run(f"pm clear {pkg} > /dev/null 2>&1", shell=True)
+            kill_roblox_process(pkg)
+            CookieInjector._root_command(f"pm clear {shlex.quote(pkg)} >/dev/null 2>&1")
             msg(f"Logged out: {pkg}", "ok")
         except Exception as e:
             msg(f"Error {pkg}: {e}", "err")
@@ -1197,10 +1294,8 @@ def change_android_id(new_id=None):
     try:
         if not new_id:
             new_id = hashlib.md5(str(random.getrandbits(128)).encode()).hexdigest()[:16]
-        rc = subprocess.run(["su", "-c", "settings", "put", "secure", "android_id", new_id], capture_output=True, text=True, timeout=5).returncode
-        if rc != 0:
-            rc = subprocess.run(["settings", "put", "secure", "android_id", new_id], capture_output=True, text=True, timeout=5).returncode
-        return new_id if rc == 0 else None
+        ok, _ = CookieInjector._root_command(f"settings put secure android_id {shlex.quote(new_id)}")
+        return new_id if ok else None
     except Exception:
         return None
 def auto_change_android_id_loop():
@@ -1216,7 +1311,8 @@ def auto_change_android_id_loop():
 def capture_screenshot():
     screenshot_path = None
     try:
-        fd, screenshot_path = tempfile.mkstemp(prefix="zm-screen-", suffix=".png", dir="/storage/emulated/0/Download")
+        ss_dir = "/storage/emulated/0/Download" if os.path.isdir("/storage/emulated/0/Download") else tempfile.gettempdir()
+        fd, screenshot_path = tempfile.mkstemp(prefix="zm-screen-", suffix=".png", dir=ss_dir)
         os.close(fd)
         ok, _ = CookieInjector._root_command(f"screencap -p {shlex.quote(screenshot_path)}")
         if not ok or not 0 < os.path.getsize(screenshot_path) <= MAX_CAPTURE_BYTES:
@@ -1379,22 +1475,45 @@ def download_file(url, dest, binary=True):
     finally:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
+def _read_cookie_db(db_path):
+    try:
+        with closing(sqlite3.connect(Path(db_path).as_uri() + "?mode=ro", uri=True, timeout=3)) as con:
+            cur = con.cursor()
+            cur.execute("SELECT value FROM cookies WHERE name=? AND host_key IN ('.roblox.com','roblox.com','www.roblox.com') AND value<>''", (".ROBLOSECURITY",))
+            row = cur.fetchone()
+            if row:
+                return row[0]
+    except (OSError, sqlite3.Error, ValueError):
+        pass
+    return None
 def xuat(package_name):
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+", str(package_name)):
         return None
-    for file_path in (f"/data/data/{package_name}/app_webview/Default/Network/Cookies",
-                      f"/data/data/{package_name}/app_webview/Default/Cookies"):
-        try:
-            if not os.path.isfile(file_path):
-                continue
-            with closing(sqlite3.connect(Path(file_path).as_uri() + "?mode=ro", uri=True, timeout=3)) as con:
-                cur = con.cursor()
-                cur.execute("SELECT value FROM cookies WHERE name=? AND host_key IN ('.roblox.com','roblox.com','www.roblox.com') AND value<>''", (".ROBLOSECURITY",))
-                row = cur.fetchone()
-                if row:
-                    return row[0]
-        except (OSError, sqlite3.Error, ValueError):
-            pass
+    candidates = (
+        f"/data/data/{package_name}/app_webview/Default/Network/Cookies",
+        f"/data/data/{package_name}/app_webview/Default/Cookies",
+    )
+    for file_path in candidates:
+        if os.path.isfile(file_path):
+            val = _read_cookie_db(file_path)
+            if val:
+                return val
+    if not (hasattr(os, "geteuid") and os.geteuid() == 0):
+        q = shlex.quote
+        with tempfile.TemporaryDirectory(prefix="hudy-xuat-") as tmp:
+            for file_path in candidates:
+                ok, _ = CookieInjector._root_command(f"test -f {q(file_path)}")
+                if not ok:
+                    continue
+                local_db = os.path.join(tmp, "Cookies")
+                copy_cmd = f"cp {q(file_path)} {q(local_db)} && chown {os.getuid()}:{os.getgid()} {q(local_db)} && chmod 600 {q(local_db)}"
+                for ext in ("-wal", "-shm"):
+                    copy_cmd += f"; if [ -f {q(file_path + ext)} ]; then cp {q(file_path + ext)} {q(local_db + ext)} && chown {os.getuid()}:{os.getgid()} {q(local_db + ext)} && chmod 600 {q(local_db + ext)}; fi"
+                ok_cp, _ = CookieInjector._root_command(copy_cmd)
+                if ok_cp and os.path.isfile(local_db):
+                    val = _read_cookie_db(local_db)
+                    if val:
+                        return val
     return None
 class Bypass:
     def __init__(self, cookie):
@@ -1661,16 +1780,32 @@ class CookieInjector:
             msg(f"SQLite cookie error: {type(e).__name__}", "err")
             return False
     @staticmethod
+    def _find_su_bin():
+        for candidate in ("/system/bin/su", "/system/xbin/su", "/sbin/su", "/su/bin/su", "/vendor/bin/su", "/system_ext/bin/su"):
+            if os.path.isfile(candidate):
+                return candidate
+        return shutil.which("su") or shutil.which("tsu")
+    @staticmethod
     def _root_command(command):
         try:
             shell = "/system/bin/sh" if os.path.isfile("/system/bin/sh") else "sh"
-            command = "PATH=/system/bin:/system/xbin:/vendor/bin:$PATH; export PATH; " + command
-            cmd = [shell, "-c", command] if hasattr(os, "geteuid") and os.geteuid() == 0 else ["su", "-c", command]
+            wrapped = "PATH=/system/bin:/system/xbin:/vendor/bin:$PATH; export PATH; " + command
             env = os.environ.copy()
             env.pop("LD_LIBRARY_PATH", None)
             env.pop("LD_PRELOAD", None)
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=20, env=env)
-            return r.returncode == 0, (r.stdout + "\n" + r.stderr).strip() if r.stderr.strip() else r.stdout.strip()
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                r = subprocess.run([shell, "-c", wrapped], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, env=env)
+                out = (r.stdout + "\n" + r.stderr).strip() if r.stderr.strip() else r.stdout.strip()
+                return r.returncode == 0, out
+            su_bin = CookieInjector._find_su_bin()
+            if su_bin:
+                r = subprocess.run([su_bin, "-c", wrapped], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, env=env)
+                out = (r.stdout + "\n" + r.stderr).strip() if r.stderr.strip() else r.stdout.strip()
+                if r.returncode == 0:
+                    return True, out
+            r = subprocess.run([shell, "-c", wrapped], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, env=env)
+            out = (r.stdout + "\n" + r.stderr).strip() if r.stderr.strip() else r.stdout.strip()
+            return r.returncode == 0, out
         except (OSError, subprocess.TimeoutExpired):
             return False, ""
     @staticmethod
@@ -1813,6 +1948,10 @@ class CookieInjector:
                     break
                 if CookieInjector.inject_to_package(pkg, ck):
                     CookieInjector._consume_cookie(ck)
+                    with _data_lock:
+                        accounts = dict(load_accounts())
+                        accounts[pkg] = str(uid)
+                        save_accounts(list(accounts.items()))
                     count += 1
                     msg(f"Inject OK -> {pkg} (UID: {uid})", "ok")
                 else:
@@ -1918,8 +2057,9 @@ def put_key_delta():
                 with open(hwid_file, "r", encoding="utf-8", errors="ignore") as f:
                     hwid = f.read().strip()
             if not hwid:
-                aid = subprocess.run(["settings", "get", "secure", "android_id"], capture_output=True, text=True).stdout.strip()
-                ser = subprocess.run(["getprop", "ro.serialno"], capture_output=True, text=True).stdout.strip()
+                _, aid = CookieInjector._root_command("settings get secure android_id")
+                _, ser = CookieInjector._root_command("getprop ro.serialno")
+                aid, ser = aid.strip(), ser.strip()
                 if aid or ser:
                     hwid = hashlib.sha256(f"{aid}{ser}".encode("utf-8")).hexdigest()
             if not hwid:
@@ -2414,45 +2554,11 @@ def _zm_ping_loop(key):
         _zm_stop.wait(50)
 def _zm_start():
     cfg = _zm_load_cfg()
-    uname = cfg.get("web_username", "")
     apikey = cfg.get("api_key", "")
-    print(_tr('\x1b[1;35m[HuDy Manager] Kiem tra dang nhap...\x1b[0m'))
-    do_login = not uname
-    if uname:
-        ch = input(_tr('\x1b[1;93m[HuDy Manager] Tai khoan: ') + f'{uname}' + _tr('. Doi? (y/n): \x1b[0m')).strip().lower()
-        if ch == "y":
-            do_login = True
-    if do_login or not apikey:
-        wu = input("\x1b[1;35m[HuDy Manager] Username: \x1b[0m").strip()
-        wp = input("\x1b[1;35m[HuDy Manager] Password: \x1b[0m").strip()
-        try:
-            d = requests.post(_zm_auth_url + "?action=login", json={"username": wu, "password": wp}, timeout=10).json()
-            if d.get("success"):
-                cfg.update({"web_username": wu, "api_key": d["user"]["api_key"]})
-                _zm_save_cfg(cfg)
-                apikey = cfg["api_key"]
-                print(_tr('\x1b[1;32m[HuDy Manager] Dang nhap thanh cong!\x1b[0m'))
-            else:
-                print(_tr('\x1b[1;31m[HuDy Manager] Loi: ') + f"{d.get('message')}" + '\x1b[0m')
-                ak = input(_tr('\x1b[1;35m[HuDy Manager] Nhap API Key thu cong: \x1b[0m')).strip()
-                if ak:
-                    cfg["api_key"] = ak
-                    _zm_save_cfg(cfg)
-                    apikey = ak
-        except Exception as e:
-            print(_tr('\x1b[1;31m[HuDy Manager] Loi ket noi: ') + f'{e}' + '\x1b[0m')
-            ak = input(_tr('\x1b[1;35m[HuDy Manager] Nhap API Key thu cong: \x1b[0m')).strip()
-            if ak:
-                cfg["api_key"] = ak
-                _zm_save_cfg(cfg)
-                apikey = ak
     if not apikey:
-        print(_tr('\x1b[1;31m[HuDy Manager] Khong co API Key, bo qua.\x1b[0m'))
         return
     if _zm_check_key(apikey) is False:
-        print(_tr('\x1b[1;31m[HuDy Manager] API Key khong hop le!\x1b[0m'))
         return
-    print(_tr('\x1b[1;32m[HuDy Manager] OK! Heartbeat moi 50s...\x1b[0m'))
     threading.Thread(target=_zm_api_watcher, args=(apikey,), daemon=True).start()
     threading.Thread(target=_zm_ping_loop, args=(apikey,), daemon=True).start()
     threading.Thread(target=_zm_log_sender, args=(apikey,), daemon=True).start()
@@ -2717,7 +2823,7 @@ def handle_cookie():
     elif c == "2":
         CookieInjector.inject()
     elif c == "3":
-        ck = prompt(_tr('Nhap .ROBLOSECURITY:')).strip()
+        ck = CookieInjector._clean_cookie(prompt(_tr('Nhap .ROBLOSECURITY:')).strip())
         uid = CookieInjector.verify_cookie(ck)
         if uid:
             msg(f"Valid! UID: {uid} ({get_username(uid)})", "ok")
@@ -2814,7 +2920,7 @@ def handle_configure_delay():
             wh_url, wh_dev, wh_iv = load_config(apply=False)
             if save_config(wh_url, wh_dev, wh_iv):
                 msg(_tr('Da luu cau hinh!'), "ok")
-                break
+                return
         try:
             if ch == "15":
                 set_rejoin_delay()
@@ -2944,6 +3050,9 @@ def handle_list_packages():
         print(f"{LY}  [{mark}] {i}. {LW}{pkg}{RS}")
     divider("-", 62, LB)
     c = prompt(_tr('So (cach phay) hoac "all":')).strip()
+    if not c:
+        wait_back_menu()
+        return
     if c.lower() == "all":
         rejoin_packages = list(pkgs)
     else:
