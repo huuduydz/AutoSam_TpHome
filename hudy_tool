@@ -202,6 +202,9 @@ def _tr(text):
     return _TRANSLATION_PATTERN.sub(lambda m: _EN[m.group(0)], text)
 def check_version():
     global NEED_PREMIUM
+    if not VERSION_URL:
+        NEED_PREMIUM = False
+        return True
     NEED_PREMIUM = None
     try:
         with requests.get(VERSION_URL, timeout=(5, 8), headers={"Cache-Control": "no-cache"}, allow_redirects=False) as r:
@@ -239,6 +242,9 @@ def _secret_prompt(txt):
         return None
 def verify_user_token():
     global IS_PREMIUM
+    if not TOKEN_VERIFY_URL:
+        IS_PREMIUM = True
+        return True
     IS_PREMIUM = False
     if type(NEED_PREMIUM) is not bool:
         return False
@@ -2952,14 +2958,6 @@ def handle_list_packages():
     wait_back_menu()
 def main():
     load_config()
-    while not check_version():
-        try:
-            if prompt(_tr('Enter thu lai kiem tra phien ban; 0 de thoat:')).strip() == "0":
-                return
-        except (EOFError, KeyboardInterrupt):
-            return
-    if not verify_user_token():
-        return
     threading.Thread(target=check_update, daemon=True).start()
     load_config()
     threading.Thread(target=auto_install_helper, daemon=True).start()
