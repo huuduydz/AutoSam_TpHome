@@ -1561,7 +1561,7 @@ end)"""
         lua_code = f"""-- [HuDy Auto Inject: {script_name}]
 task.spawn(function()
     repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer
-    task.wait(2)
+    task.wait(0.1)
     pcall(function()
         loadstring(game:HttpGet("{script_content_raw}", true))()
     end)
